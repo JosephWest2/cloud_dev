@@ -24,10 +24,10 @@ document. An optional user profile_file uses the same contract:
 | `image` | Manifest image key, with the same character/length rules as deployment |
 | `disk_gb` | Integer 8–16384; actual image size and volume constraints checked later |
 
-The launch slice (#8) must preserve the selected market. Until Spot launches
+The launch path preserves explicit market selection. Until Spot launches
 are implemented, `devbox up agent` using the default profile must explain that
 Spot is unsupported and show `devbox up agent --on-demand`. It must not launch
-On-Demand implicitly. `--on-demand` is a future launch override, not a doctor
+On-Demand implicitly. `--on-demand` is a launch override, not a doctor
 option. No market fallback is implemented here.
 
 ## Deployment manifest
@@ -71,7 +71,8 @@ must be investigated rather than bypassed. Read [IAM limitations](iam.md) and
 
 Ordinary CLI commands read only this JSON export, never OpenTofu state or an
 infrastructure apply. After an intentional foundation change, review, apply and
-re-export. Invalid manifest scope/schema prevents all resource calls; independent
+re-export. Invalid manifest scope/schema prevents doctor foundation calls and new allocation;
+scoped inventory, cleanup and dispatched-request reconciliation remain available. Independent
 STS and local prerequisite checks can still run. STS identity must succeed before
 resource validation. Timeout/cancellation retains exit 4; resource failures use
 exit 1 and allowlisted diagnostics, never raw SDK errors. Foundation check names
@@ -80,7 +81,7 @@ are `foundation_network`, `foundation_image`, `foundation_template`,
 resource client's identity cannot be verified). Pass code is `foundation_verified`,
 failure code `foundation_drift`, timeout code `foundation_timeout`.
 
-Future inventory/mutations scope by expected account, region, deployment and
+Inventory/mutations scope by expected account, region, deployment and
 stable owner. STS identity verification must precede mutations. Required creation
 tags include `ManagedBy=devbox`, `Deployment`, `Owner`, `Profile`, `Name`,
 `RequestId`, and `CreatedAt`; tags do not replace corresponding IAM restrictions.
@@ -129,3 +130,97 @@ No interactive session command exists in this slice. Session bytes must have a
 separate stream lifecycle from structured results; #9 must settle and document
 whether interactive commands reject `--json` or provide a distinct control
 channel before implementing them. Never mix terminal bytes with a JSON object.
+
+## Instance lifecycle and request recovery (#8)
+
+`up agent --on-demand --name NAME` requests exactly one On-Demand instance. The
+explicit flag is required even for a custom On-Demand profile. Spot is rejected;
+there is no type or market fallback. The first profile instance type is selected.
+The manifest's exact AMI and numeric launch-template version are used; profile
+disk size overrides the template's root size with encrypted gp3 and deletion on
+termination. Existing deployed-resource validation runs before allocation.
+Instance and volume creation receive the seven required dynamic tags. ENIs use
+the template network settings; the operator policy does not permit dynamic ENI tags.
+EC2's immutable `aws:ec2launchtemplate:id` and `aws:ec2launchtemplate:version` tags
+provide template identity in inventory ([AWS documentation](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/launch-instances-from-launch-template.html)).
+
+`ls` includes all currently visible managed instances, including recently terminated
+ones. `down NAME_OR_ID` selects one nonterminated instance; multiple live name
+matches fail with their IDs. If only terminated names match, it reports those
+observations without mutation. Names cannot look like EC2 instance IDs. Creation
+performs name checks before and after launch, but these are best effort under EC2
+eventual consistency. Concurrent new requests may allocate distinct instances with
+the same name, and may not detect the collision until a later inventory call.
+Names are not globally unique locks. Use explicit IDs for collision cleanup.
+
+Every lifecycle resource client shares the configuration/credentials used for STS
+account verification. Inventory uses explicit region and managed/deployment/owner
+filters, then validates reservation account and instance tags. ID lookup validates
+the same scope. Teardown revalidates the ID immediately before mutation; IAM scope
+conditions enforce the resource tags at termination. Inventory, teardown, and
+reconciliation of a dispatched receipt require only valid user scope and identity:
+missing or broken manifest/profile/receipt files never gate `ls` or `down`.
+
+Request receipts live at `$XDG_STATE_HOME/devbox/requests/REQUEST_ID.json`, defaulting
+to `~/.local/state/devbox/requests`. XDG_STATE_HOME must be absolute. A schema-v1
+receipt contains a random 32-hex request ID, identical stable EC2 client token,
+original UTC creation timestamp, complete effective launch parameters and template
+pins, state, and any observed instance IDs. No credentials or inventory cache is
+stored. Files are 0600 and newly created directories 0700. Atomic replacement and
+file/directory fsync precede mutation. A separate persistent `.lock` file uses
+Linux advisory locking across processes; keep the state on a local filesystem
+supporting fsync and flock. Do not edit receipts, remove lock files while commands
+run, or restore stale copies over newer receipts. Receipts are trusted local replay
+records, not an authorization boundary or authoritative inventory.
+
+Before the first mutation, stderr prints the saved request ID, receipt location,
+and resume command. `--json` stdout remains one result object. After process exit:
+
+```sh
+devbox up --resume REQUEST_ID --aws-profile devbox-operator --timeout 5m --json
+```
+
+Use the original scope/configuration; AWS credentials may be refreshed. Resume
+rejects profile/name/market flags. A `prepared` receipt compares the current
+profile/manifest with the entire saved launch specification, verifies deployed
+resources and reconciles the request ID before it can dispatch. Changed parameters
+are rejected. The state becomes `dispatched` durably **before** RunInstances; SDK
+retries within this initial call use the same client token and unchanged input.
+An `observed` receipt records instance IDs. A dispatched/observed resume reconciles
+scoped RequestId and client token without loading the current manifest/profile,
+changing parameters, or issuing RunInstances again. Terminated request matches
+are returned as already terminated; they are never relaunched.
+
+Reconciliation makes at most five inventory attempts with 1/2/4/8 second delays,
+within the command deadline. If AWS remains invisible or unavailable, the outcome
+is unresolved, and the same resume command is safe to repeat. It can remain
+unresolved permanently, including a crash between the durable dispatch marker and
+actual send, or a terminated instance disappearing from inventory. There is no
+promise of forward progress and no reset/force-relaunch option. A fresh `up` always
+creates an independent request, even with the same name: it is **not** a safe retry
+of an uncertain launch. Losing receipts does not prevent `ls` or `down`. This policy
+avoids relying on an indefinite token-retention guarantee; AWS describes
+[idempotent requests](https://docs.aws.amazon.com/ec2/latest/devguide/ec2-api-idempotency.html)
+and [eventual consistency](https://docs.aws.amazon.com/ec2/latest/devguide/eventual-consistency.html).
+
+Lifecycle JSON adds `code`, `message`, `status`, `instances`, and where applicable
+`request_id`/`receipt_path` to the common envelope. Errors retain all known recovery
+IDs. Instance records include actual image/type/market, template pins, original
+creation tags, EC2 state, `ssm`, `bootstrap`, `readiness`, and EBS mappings with root
+and delete-on-termination flags. SSM/bootstrap/readiness are `not_observed`: an
+allocation success does not claim a ready shell. Fields missing in AWS remain
+empty/unknown rather than inferred from the current profile/manifest.
+
+Teardown bounds termination and per-volume observation to 30 polls each, with
+backoff capped at 8 seconds and the shared deadline (default 20s; maximum 5m).
+Stopped/stopping instances can be terminated; shutting-down instances are observed
+without another mutation. Lost termination responses still enter observation.
+Only EC2's explicit terminated state establishes `terminated`/`already_terminated`.
+`no_managed_match` (exit 0) means no matching inventory, with no verified termination.
+Root deletion is separate: `deleted` requires a captured exact volume ID and EC2
+`deleted` or `InvalidVolume.NotFound`; `retained` means deletion-on-termination was
+false; `unavailable` means root mapping evidence is missing; `not_observed` means
+no deletion was observed yet. Retained/unavailable evidence can accompany a
+successful EC2 termination. A timeout is exit 4 and keeps IDs. Service failures,
+conflicts and unresolved outcomes use exit 1; usage/config/profile errors use 2.
+Receipt paths/IDs are also preserved when a later receipt save fails.

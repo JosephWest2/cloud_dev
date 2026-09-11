@@ -1,11 +1,10 @@
 # devbox
 
-A Go CLI for disposable AWS development machines. This checkout implements
-configuration, prerequisite and deployed-resource checks, plus the OpenTofu
-foundation in [issue #7](https://github.com/JosephWest2/cloud_dev/issues/7).
+A Go CLI for disposable AWS development machines. This checkout implements configuration, deployed-resource checks, the OpenTofu
+foundation, and single-instance On-Demand launch, inventory and teardown.
 Follow the [foundation setup guide](docs/setup.md) to provision durable resources
-and export the CLI manifest. It does not launch a worker. Lifecycle commands
-arrive in #8 and SSH/editor/file-transfer access in #9.
+and export the CLI manifest. Use the lifecycle commands below after setup. SSH/editor/file-transfer access and
+runtime readiness observation arrive in #9.
 
 ## Install from a checkout
 
@@ -114,7 +113,7 @@ identity fails, unless the deadline expires or the command is canceled; remainin
 executable probes are then explicitly skipped.
 Invalid configuration/profile schemas prevent even the STS identity call.
 A missing/wrong-scope/unsupported manifest or failed identity check prevents
-deployed-resource calls. No EC2 mutation exists in this slice.
+deployed-resource calls. `doctor` is read-only; `up` and `down` perform the explicit lifecycle mutations.
 
 Install the **AWS Session Manager plugin**, then verify
 `session-manager-plugin --version`. Follow AWS's
@@ -157,3 +156,40 @@ Spot behavior and structured-output rules, and
 [foundation validation evidence](docs/acceptance/07-foundation.md) and
 [IAM boundaries](docs/iam.md). Run `make infra-check` with OpenTofu 1.12.6 for
 formatting, provider validation and mock-provider infrastructure tests.
+
+## Launch, rediscover and remove a devbox
+
+```sh
+devbox up agent --on-demand --name smoke --timeout 5m --json
+devbox ls --json
+devbox down smoke --timeout 5m --json
+devbox down smoke --json
+```
+
+Use your configured operator profile, or pass `--aws-profile devbox-operator`.
+The initial launch path requires explicit On-Demand and selects the first profile
+instance type; Spot and automatic fallback are unsupported. `up` verifies the
+foundation before allocating. Allocation success reports exact image, type,
+market and template pins; SSM/bootstrap/readiness remain `not_observed` until #9.
+
+`ls` rediscovers instances from AWS after a restart, without local instance IDs.
+`down` revalidates scope before termination and reports root-volume deletion
+separately. Duplicate friendly names require explicit instance IDs. A repeated
+teardown reports an observed already-terminated instance or `no_managed_match`;
+the latter does not verify any particular termination.
+
+Before launching, devbox durably saves a non-secret request receipt and prints its
+request ID to stderr. If the process exits or the launch outcome is uncertain:
+
+```sh
+devbox up --resume REQUEST_ID --timeout 5m --json
+```
+
+Use the original config/scope. Do not retry an uncertain launch with a fresh `up`.
+Receipts live under `${XDG_STATE_HOME:-$HOME/.local/state}/devbox/requests`.
+After dispatch, resume only reconciles AWS; it never sends another launch. An
+outcome can remain unresolved, including a crash immediately before sending.
+Losing the receipt cannot prevent `ls` or cleanup by `down INSTANCE_ID`.
+Read the [recovery/output contract](docs/contracts.md#instance-lifecycle-and-request-recovery-8)
+and [live acceptance procedure](docs/acceptance/08-lifecycle.md) for guarantees,
+volume verification, and recovery instructions. Live #8 acceptance is pending.

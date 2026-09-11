@@ -23,9 +23,9 @@ permissions or constrain an administrator.
 | IAM doctor reads | Exact two roles and instance profile; no IAM writes |
 
 Creation tags must be supplied on **both instance and volume** tag specifications
-by the future launch command; the template deliberately does not invent dynamic
+by the launch command; the template deliberately does not invent dynamic
 request/name/time tags. Spot is the profile's preserved default, but this initial
-operator role permits only explicit On-Demand; #8 must explain `--on-demand`.
+operator role permits only explicit On-Demand; the CLI requires `--on-demand`.
 
 AWS IAM cannot enforce every CLI invariant. The template ARN condition does not
 pin a numeric version. Template-resource conditions restrict resource overrides,
@@ -52,9 +52,9 @@ These permissions require `Resource="*"` and cannot be isolated by inventory tag
   are granted to instance credentials. Development processes with host privileges
   can access the instance role; it is not a secret store.
 
-Inventory filters and instance-ID scope validation in #8 remain mandatory,
+Inventory filters and instance-ID scope validation are implemented in #8,
 because the read APIs expose account-wide regional inventory. STS identity checks
-precede resource reads and must precede later mutations. IAM is additive: source
+precede resource reads and precede mutations. IAM is additive: source
 administrator credentials or another attached policy can grant more authority;
 run live tests under the restricted role. Organization/session policies, resource
 policies and service behavior require integration evidence; policy simulation
