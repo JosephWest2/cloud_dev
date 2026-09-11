@@ -1,11 +1,11 @@
 # Issue #7 validation
 
-Automated checks: September 10, 2026. Live setup: September 11, 2026.
+Automated checks: September 10–11, 2026. Live setup: September 11, 2026.
 Host: Arch Linux, linux/amd64.
-**Live acceptance is in progress. The state bucket is deployed and its backend
-migration and locking are verified; foundation deployment is still pending.**
-Do not close #7 until the selected-account workflow below has been executed and
-its results recorded. Worker allocation/cleanup and real SSH belong to #8/#9.
+**Issue #7 foundation acceptance is complete.** The state bucket and foundation
+are deployed; migration, real locking and all 12 operator-profile doctor checks
+pass. The IAM simulator discrepancy below remains a signed-tunnel integration
+gate for #9. Worker allocation/cleanup and real SSH belong to #8/#9.
 
 ## Automated evidence
 
@@ -39,7 +39,7 @@ policy authorization proof, real AMI confirmation or evidence that bootstrap ran
 Actual regional AMI selection remains a local setup input, never a made-up ID
 committed as a deployable default.
 
-## Human live acceptance (selected test account only)
+## Live acceptance procedure (selected test account only)
 
 Follow [setup](../setup.md) first. Keep generated outputs under
 `infra/foundation/acceptance-output/` (ignored), inspect them locally, and record
@@ -173,31 +173,69 @@ resolve them for expected-allowed cases. See [IAM limits](../iam.md).
 ## Live results (September 11, 2026)
 
 The user explicitly selected and authenticated the setup profile with a non-root
-IAM administrator, then authorized applying the reviewed state-bootstrap plan.
+IAM administrator, then authorized applying both reviewed plans separately.
 Account/resource identifiers and raw output are retained only in the ignored
 local inputs and `infra/foundation/acceptance-output/`.
 
 - Selected-account bootstrap apply: **passed**. Six additions: one S3 bucket and
-  its five protection configurations; no worker, network or IAM resources applied.
+  its five protection configurations; no worker allocated.
 - Bootstrap state migration: **passed**. Local state migrated to the bucket's
   bootstrap key; all six resources remain in inventory. A protected local recovery
   copy was retained. The following plan reported no changes.
 - S3 protections: **passed via AWS APIs**. AES256 default encryption, versioning,
   all four public-access blocks, bucket-owner-enforced ownership and non-TLS Deny.
-  The remote state object has AES256 encryption and a nonempty version ID.
+  Both remote state objects have AES256 encryption and nonempty version IDs.
 - Native S3 locking: **passed live**. An open OpenTofu console held the `.tflock`
   object; a competing plan failed to acquire it. Exiting the console removed the
   current lock object and a subsequent plan succeeded without drift. Backend
   cache inspection confirmed encryption, lockfiles and selected account/key.
+  Contention and release were verified separately in both initialized roots.
 - Ohio AMI provenance: **passed**. Resolved an exact Canonical Ubuntu 24.04 amd64
   server AMI; EC2 confirmed owner, release/name, architecture, availability and an
   8 GiB root snapshot. Exact IDs/creation evidence are saved locally.
-- Foundation live plan: **passed**, saved but not applied. Thirteen expected
-  network/IAM/template/document additions, zero changes/deletions. Reviewed the
-  exact AMI, zero-ingress group, root settings, IMDSv2 and selected trust principal.
-- Foundation apply, exported manifest and operator-profile doctor: **pending**.
-- Access Analyzer and targeted IAM decisions: **pending**.
-- State bucket is retained for the ongoing setup; full teardown: **pending**.
+- Foundation live plan/apply: **passed**. Thirteen expected network/IAM/template/
+  document additions, zero changes/deletions; subsequent plan reports no changes.
+  No instance, EIP, NAT gateway or paid endpoint was created.
+- Manifest and deployed-resource doctor: **passed** under the restricted operator
+  role. Schema-v2 export pins numeric template/document version 1. All 12 checks
+  pass, including actual network, image, template, IAM and readiness documents.
+  Separate EC2 API inspection confirmed zero ingress, encrypted 100 GiB gp3 root
+  deleted on termination, required IMDSv2 and the exact exported AMI/version.
+- Browser-login compatibility: **fixed and verified**. The pinned Go SDK cannot
+  directly resolve a role source containing only `login_session`; setup now
+  documents AWS's `credential_process` bridge. The new safe diagnostic has an
+  isolated regression test. The configured bridge works with the restricted role.
+- Local tools: AWS CLI 2.34.32, OpenSSH and Session Manager plugin 1.2.835.0 pass
+  doctor. The plugin was installed locally from AWS's signature-verified package.
+- Access Analyzer: **passed**, zero findings in all four deployed documents
+  (two permissions policies and two trust policies).
+- IAM simulations: **21 expected decisions passed**, covering scoped termination,
+  PassRole, tag/template/IAM write denials, SSM instance/document restrictions and
+  own-session cleanup. Expected allows have no missing context; per-resource
+  results were checked for requests containing both instance and document ARNs.
+- EC2 authorization dry runs: **passed** using the restricted operator. The valid
+  tagged template request returned `DryRunOperation`; wrong owner, missing
+  RequestId, IMDSv1 and unencrypted root variants returned `UnauthorizedOperation`.
+  Every request used both `DryRun=true` and CLI `--dry-run`; no worker was launched.
+- Signed session channel simulation: **inconclusive; #9 runtime gate**. The
+  simulator returns implicit deny with no matches/context missing for the scoped
+  OpenDataChannel session ARN. Independent custom-policy comparisons reproduce
+  this for an exact ARN, AWS's documented session prefix and even a hypothetical
+  `Resource="*"` policy when the simulated resource is a session ARN. Only `*` for
+  both policy and simulated resource allows. This indicates an action/resource
+  model limitation; it does not prove effective authorization. Keep the scoped
+  policy from AWS's SSH instructions and test an actual signed tunnel in #9.
+  No live permissions were broadened. See [IAM details](../iam.md).
+- Invalid-manifest CLI checks: **passed**. Separate temporary copies with wrong
+  account, wrong region or schema-v1 report `manifest_unavailable` and skip the
+  foundation checks. The original export remains valid.
+- Artifact checks: **passed**. The export contains only documented schema fields;
+  local inputs, plans, state/backend files and acceptance output are Git-ignored.
+  Credentials are obtained through the normal chain and are absent from exports.
+- Retention: the foundation and state bucket are intentionally retained for #8/#9.
+  Durable teardown is documented in setup; it was not performed on this retained
+  deployment. Bootstrap runtime, worker allocation/cleanup and SSH remain #8/#9
+  acceptance work.
 
 ## Independent PR review
 
@@ -218,3 +256,6 @@ corrected before the final handoff:
 
 The reviewer rechecked the corrections and reported no remaining actionable
 findings. This is code-review evidence, not live AWS acceptance.
+
+The reviewer also checked the browser-login diagnostic and process-bridge setup
+after live validation, and reported no actionable findings.

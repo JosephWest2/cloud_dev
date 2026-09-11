@@ -65,7 +65,13 @@ session ARN prefix, following AWS's [SSH user-policy example](https://docs.aws.a
 Current Session Manager plugins sign that request; a StartSession grant alone is
 insufficient. The instance transport role's channel grants remain `Resource="*"`.
 Check the actual signed tunnel during #9 acceptance; the generic ssmmessages
-authorization table does not describe the user-session ARN behavior.
+authorization table does not describe the user-session ARN behavior. During
+live foundation validation, IAM simulation denied session-ARN requests even with
+an exact ARN or hypothetical wildcard policy, while wildcard policy/resource
+simulation allowed the action. This conflicts with AWS's scoped SSH example and
+appears to reflect the simulator's resource model. It is not evidence to broaden
+the deployed grant or claim the tunnel works; see the
+[recorded comparisons](acceptance/07-foundation.md#live-results-september-11-2026).
 
 References: [EC2 launch policies](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ExamplePolicies_EC2.html),
 [EC2 authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ec2.html),

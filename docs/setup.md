@@ -172,6 +172,24 @@ role_session_name = devbox-DEPLOYMENT-OWNER
 region = us-east-2
 ```
 
+If the setup profile uses browser-based `aws login`, the pinned Go SDK cannot
+use that `login_session` profile directly as a role's `source_profile`. The AWS
+CLI can, so a successful CLI identity check alone does not expose this SDK issue.
+Create a process bridge (replace `YOUR_EXISTING_SETUP_PROFILE` in the command):
+
+```sh
+aws configure set credential_process 'aws configure export-credentials --profile YOUR_EXISTING_SETUP_PROFILE --format process' --profile devbox-setup-credentials
+aws configure set region us-east-2 --profile devbox-setup-credentials
+aws configure set source_profile devbox-setup-credentials --profile devbox-operator
+```
+
+This delegates temporary-credential retrieval to the already authenticated AWS
+CLI through the normal credential chain. It stores a command, not access keys.
+Do not run the export command by itself or log its output. Keep the bridge and
+source profile distinct to avoid recursion. SSO and other supported source-profile
+mechanisms can use the original profile directly. See AWS's
+[credential-process compatibility instructions](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html).
+
 The exact session name is required by the operator trust policy and scopes its
 SSM session cleanup permissions. Your source identity must be allowed to assume
 that exact role; a permissions boundary or organization policy may additionally

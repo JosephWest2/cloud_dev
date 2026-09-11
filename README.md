@@ -94,8 +94,9 @@ a nonexistent selected profile fails instead of falling back to another identity
 A role profile may explicitly use `credential_source=Environment`. If no profile
 is selected, the normal SDK default chain applies, including environment
 credentials. `doctor` always verifies the resulting account with STS
-`GetCallerIdentity`. The selection behavior is tested against the pinned SDK;
-see [AWS SDK configuration](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-gosdk.html).
+`GetCallerIdentity`. The selection behavior is tested against the pinned SDK.
+Browser-based `aws login` profiles need the documented [process bridge](docs/setup.md#4-configure-the-restricted-operator-and-run-doctor) when used as the operator role's source with the pinned Go SDK; `doctor` provides an actionable error.
+See [AWS SDK configuration](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-gosdk.html).
 
 ## Run prerequisite checks
 

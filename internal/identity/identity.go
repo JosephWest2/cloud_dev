@@ -26,6 +26,10 @@ func safeError(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
 		return &Failure{"timeout", "AWS identity check timed out or was canceled; check connectivity and retry with --timeout 60s"}
 	}
+	var source awsconfig.SharedConfigAssumeRoleError
+	if errors.As(err, &source) {
+		return &Failure{"role_source_unavailable", "cannot load the assume-role profile's credential source; check source_profile; for an aws login source use the credential_process bridge in docs/setup.md"}
+	}
 	var api smithy.APIError
 	if errors.As(err, &api) {
 		switch api.ErrorCode() {

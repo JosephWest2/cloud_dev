@@ -77,3 +77,34 @@ func TestSDKCredentialSelection(t *testing.T) {
 		t.Fatal("missing explicit profile must not fall back to environment credentials")
 	}
 }
+
+func TestBrowserLoginRoleSourceHasActionableBridge(t *testing.T) {
+	testutil.IsolateAWS(t)
+	path := testutil.Write(t, filepath.Join(t.TempDir(), "config"), `[profile login]
+region=us-east-2
+login_session=arn:aws:iam::123456789012:user/SECRET
+[profile operator]
+region=us-east-2
+role_arn=arn:aws:iam::123456789012:role/operator
+source_profile=login
+`)
+	t.Setenv("AWS_CONFIG_FILE", path)
+	_, err := Load(context.Background(), config.Config{Region: "us-east-2", AWSProfile: "operator"})
+	var failure *Failure
+	if !errors.As(err, &failure) || failure.Code != "role_source_unavailable" || strings.Contains(err.Error(), "SECRET") || !strings.Contains(err.Error(), "credential_process") {
+		t.Fatalf("expected safe actionable login-source diagnostic: %v", err)
+	}
+	// The pinned SDK accepts the documented process bridge as a role source.
+	// Loading configuration must not execute the helper or call STS.
+	testutil.Write(t, path, `[profile bridge]
+region=us-east-2
+credential_process=nonexistent-helper-must-not-run
+[profile operator]
+region=us-east-2
+role_arn=arn:aws:iam::123456789012:role/operator
+source_profile=bridge
+`)
+	if _, err := Load(context.Background(), config.Config{Region: "us-east-2", AWSProfile: "operator"}); err != nil {
+		t.Fatal(err)
+	}
+}
