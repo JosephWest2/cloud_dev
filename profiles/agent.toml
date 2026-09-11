@@ -1,0 +1,6 @@
+schema_version = 1
+name = "agent"
+market = "spot"
+instance_types = ["c7i.2xlarge", "c7a.2xlarge", "c6i.2xlarge", "c6a.2xlarge"]
+image = "agent"
+disk_gb = 100

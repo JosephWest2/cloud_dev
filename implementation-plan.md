@@ -1,6 +1,6 @@
 # Cloud dev implementation plan
 
-Status: draft for discussion. Based on [the product proposal](cloud-dev-tool-plan.md). No implementation or AWS deployment has been performed.
+Status: implementation plan based on [the product proposal](cloud-dev-tool-plan.md). The CLI/configuration foundation is implemented in issue #6; no AWS deployment has been performed.
 
 Each numbered chunk delivers a usable workflow through infrastructure, CLI, configuration, and documentation. Its human acceptance test is the completion gate. Internal PRs may be smaller, but an infrastructure-only or CLI-only PR does not complete a chunk.
 
@@ -19,10 +19,11 @@ Track the interactive release in [#5](https://github.com/JosephWest2/cloud_dev/i
 | --- | --- | --- |
 | First release | **Confirmed:** interactive devboxes, followed by coding agents | Decided |
 | Stack | **Confirmed:** Go CLI using the AWS SDK for Go v2, OpenTofu for durable infrastructure, TOML for user configuration and machine profiles | Decided |
-| AWS scope | One personal account and region; explicit profile and stable owner identifier | Chunk 1 |
+| AWS scope | **Confirmed:** one personal account and region per configuration; explicit profile and stable owner identifier | Decided in #6 |
 | Region | User prefers central US near Chicago; propose Ohio (`us-east-2`), pending selection | Chunk 1 |
 | Networking | Dedicated VPC; public IPv4 for outbound access; no inbound security-group rules | Chunk 1 |
-| Remote access | Native SSM shell for `ssh`; SSM Run Command for noninteractive `exec` | Chunk 1; change if editor/SCP access is required |
+| Remote access | **Confirmed:** real SSH over SSM, including editor and file-transfer support; SSM Run Command remains proposed for noninteractive `exec` | Decided in #6; implement sshd, authentication, host-key verification and proxy in #7/#9 |
+| Local platform | **Confirmed:** Linux, starting with Arch Linux | Decided in #6 |
 | Base OS | **Confirmed:** Ubuntu LTS | Decided |
 | Image and architecture | Propose x86-64; select the Ubuntu LTS release and pin the actual AMI ID with provenance | Chunk 1 |
 | Spend controls | Explicit On-Demand opt-in, configurable instance count limit, proposed 2-hour default TTL once cleanup ships | Chunks 1–4 |
@@ -31,7 +32,7 @@ Track the interactive release in [#5](https://github.com/JosephWest2/cloud_dev/i
 | GitHub identity | Select GitHub App or limited token; separate agent and runner credentials | Chunks 5 and 9 |
 | CI trust and trigger | Trusted repository jobs first; decide whether fork PRs are supported; hosted launcher workflow before webhook autoscaling | Chunk 9 |
 
-The first-release priority, Go + OpenTofu + TOML stack, and Ubuntu LTS base OS are confirmed. Other entries remain proposals. The user currently uses Arch locally and selected Ubuntu for the remote machines. The user has no existing VPC or authentication constraints and requested an explanation of networking tradeoffs before choosing. Personal/single-account scope and local client platform support still need confirmation. See [decision notes](design-decisions.md) for the confirmed decisions and network comparisons.
+The first-release priority, Go + OpenTofu + TOML stack, Ubuntu LTS base OS, personal account scope, Linux/Arch local target, and SSH-over-SSM editor/file-transfer access are confirmed. Other entries remain proposals. The user has no existing VPC or authentication constraints and requested an explanation of networking tradeoffs before choosing. See [decision notes](design-decisions.md) for confirmed decisions and network comparisons.
 
 ## Shared implementation contracts
 
