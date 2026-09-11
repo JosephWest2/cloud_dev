@@ -82,3 +82,20 @@ Report the up/ls/down results and any errors, excluding credentials. Record the
 actual test date, chosen scope locally, observed identities/pins/market, restart
 rediscovery, termination/deletion, and repeat-teardown outcome here before closing
 #8. SSH/bootstrap readiness remains #9's acceptance gate.
+
+## Independent PR review
+
+A separate agent reviewed PR #13 after creation and found one teardown race:
+the fresh scope-validation read could omit EBS mappings after another caller
+started termination, discarding root-volume IDs captured in the initial lookup.
+The fix retains previously captured mappings while preferring fresh flags for
+matching volume IDs. Controlled cases cover both terminated and shutting-down
+revalidation responses without mappings. The reviewer rechecked the fix and
+reported no remaining actionable findings.
+
+Additional tests exercise the pinned EC2 SDK's real request serialization and
+503 retry (unchanged token and full request), process-to-process lock contention
+after atomic receipt replacement, and duplicate request IDs, unexpected tokens,
+concurrent friendly-name collisions, and terminated-request replay. Final
+`make check` and `go test -race ./internal/lifecycle ./internal/cli` pass.
+This review and automated evidence do not replace the pending live procedure.

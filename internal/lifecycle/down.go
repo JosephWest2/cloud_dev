@@ -58,7 +58,22 @@ func (s *Service) Down(ctx context.Context, target string) (Outcome, error) {
 	if len(current) != 1 {
 		return result, failure("target_unresolved", "selected instance is no longer visible; termination is unverified; retry down with the returned ID")
 	}
-	chosen = current[0]
+	fresh := current[0]
+	// Later EC2 reads can drop mappings once another caller starts termination.
+	// Keep every captured volume ID while preferring fresh flags when available.
+	known := map[string]bool{}
+	for _, v := range fresh.Volumes {
+		known[v.ID] = true
+	}
+	for _, v := range chosen.Volumes {
+		if !known[v.ID] {
+			fresh.Volumes = append(fresh.Volumes, v)
+			if v.Root && fresh.RootDeletion == "unavailable" {
+				fresh.RootDeletion = v.Deletion
+			}
+		}
+	}
+	chosen = fresh
 	result.Instances[0] = chosen
 	if name != "" && chosen.Name != name {
 		return result, failure("scope_mismatch", "instance name changed during lookup; inspect inventory before retrying by explicit ID")

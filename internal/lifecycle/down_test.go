@@ -176,3 +176,33 @@ func TestDownRetainedRoot(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
+
+func TestConcurrentTerminationRetainsEarlierRootMapping(t *testing.T) {
+	for _, state := range []types.InstanceStateName{types.InstanceStateNameTerminated, types.InstanceStateNameShuttingDown} {
+		t.Run(string(state), func(t *testing.T) {
+			calls, volumeCalls := 0, 0
+			api := &fakeEC2{describe: func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+				calls++
+				i := worker("i-12345678")
+				if calls >= 2 {
+					i.State.Name = state
+					i.BlockDeviceMappings = nil
+				}
+				if calls >= 3 {
+					i.State.Name = types.InstanceStateNameTerminated
+				}
+				return inventory(i), nil
+			}, volumes: func(in *ec2.DescribeVolumesInput) (*ec2.DescribeVolumesOutput, error) {
+				volumeCalls++
+				if len(in.VolumeIds) != 1 || in.VolumeIds[0] != "vol-12345678" {
+					t.Fatal("lost root ID")
+				}
+				return nil, &smithy.GenericAPIError{Code: "InvalidVolume.NotFound"}
+			}}
+			result, err := testService(api).Down(context.Background(), "smoke")
+			if err != nil || len(result.Instances[0].Volumes) != 1 || result.Instances[0].RootDeletion != "deleted" || volumeCalls != 1 || api.terminations != 0 {
+				t.Fatalf("concurrent teardown lost evidence: %+v %v", result, err)
+			}
+		})
+	}
+}

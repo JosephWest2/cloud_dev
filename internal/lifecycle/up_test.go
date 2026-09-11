@@ -319,3 +319,50 @@ func TestRunInvalidConfigManifestIdentityPreventLaunch(t *testing.T) {
 		})
 	}
 }
+
+func TestRequestAndConcurrentNameConflictsPreserveIDs(t *testing.T) {
+	for _, variant := range []string{"request_duplicate", "request_token", "name_collision", "terminated"} {
+		t.Run(variant, func(t *testing.T) {
+			s, m, p, store, api := setupUp(t)
+			r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
+			r.State = "dispatched"
+			unlock, _ := store.Lock(context.Background(), r.RequestID)
+			if err := store.Save(r); err != nil {
+				t.Fatal(err)
+			}
+			unlock()
+			first := launched(launchInput(r))
+			second := launched(launchInput(r))
+			second.InstanceId = aws.String("i-87654321")
+			api.describe = func(in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
+				switch variant {
+				case "request_duplicate":
+					return inventory(first, second), nil
+				case "request_token":
+					first.ClientToken = aws.String("different")
+					return inventory(first), nil
+				case "name_collision":
+					for _, f := range in.Filters {
+						if aws.ToString(f.Name) == "tag:Name" {
+							return inventory(first, second), nil
+						}
+					}
+				case "terminated":
+					first.State.Name = types.InstanceStateNameTerminated
+				}
+				return inventory(first), nil
+			}
+			result, err := s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
+			if api.launches != 0 || len(result.Instances) == 0 {
+				t.Fatalf("missing conflicts or duplicate allocation: %+v", result)
+			}
+			if variant == "terminated" {
+				if err != nil || result.Status != "already_terminated" {
+					t.Fatalf("%+v %v", result, err)
+				}
+			} else if err == nil {
+				t.Fatal("conflict accepted")
+			}
+		})
+	}
+}
