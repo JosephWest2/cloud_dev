@@ -22,4 +22,6 @@ infra-check:
 	$(TOFU) -chdir=infra/state-bootstrap test
 	$(TOFU) -chdir=infra/foundation init -backend=false -input=false -lockfile=readonly
 	$(TOFU) -chdir=infra/foundation validate
-	$(TOFU) -chdir=infra/foundation test
+	@tofu_test_output=$$(mktemp); trap 'rm -f "$$tofu_test_output"' EXIT; \
+	  $(TOFU) -chdir=infra/foundation test -json -verbose > "$$tofu_test_output" || { cat "$$tofu_test_output"; exit 1; }; \
+	  DEVBOX_TEST_TOFU_OUTPUT="$$tofu_test_output" go test ./internal/foundation -run TestOpenTofuExport -v

@@ -10,7 +10,7 @@ its results recorded. Worker allocation/cleanup and real SSH belong to #8/#9.
 - OpenTofu **1.12.6**, AWS provider **6.64.0**, signed provider downloads with
   committed dependency lockfiles for both roots.
 - `make check`: Go formatting, dependency checksums, build, vet and tests pass.
-- `go test -race ./...`: passes. `bash -n infra/foundation/bootstrap.sh` passes.
+- `go test -race ./...` and `GOTOOLCHAIN=go1.24.0 go test ./...`: pass. `bash -n infra/foundation/bootstrap.sh` passes.
   Generated state/input/plan/backend/acceptance paths are confirmed ignored.
 - `make infra-check`: recursive format check, both provider-backed validations,
   and five mock-provider tests (four foundation runs, one state-backend plan).
@@ -28,6 +28,9 @@ its results recorded. Worker allocation/cleanup and real SSH belong to #8/#9.
 - Doctor tests prevent resource calls after invalid/wrong-scope/schema-v1 manifests
   or identity failures, preserve timeout classification and redact provider errors.
   Canonical JSON digest vectors include percent encoding, plus signs and HTML.
+- `make infra-check` also feeds the real mock-provider export into the Go
+  manifest parser and verifies bootstrap/IAM/readiness digests against OpenTofu
+  resource values; the exporter-to-CLI contract passes.
 
 Mock plan/apply evidence checks configuration logic only. It is not an AWS plan,
 policy authorization proof, real AMI confirmation or evidence that bootstrap ran.

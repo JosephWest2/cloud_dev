@@ -1,4 +1,8 @@
 mock_provider "aws" {
+  mock_resource "aws_vpc" { defaults = { id = "vpc-0123456789abcdef0" } }
+  mock_resource "aws_route_table" { defaults = { id = "rtb-0123456789abcdef0" } }
+  mock_resource "aws_internet_gateway" { defaults = { id = "igw-0123456789abcdef0" } }
+
   mock_resource "aws_iam_instance_profile" { defaults = { arn = "arn:aws:iam::123456789012:instance-profile/devbox-test-test-owner" } }
   mock_resource "aws_iam_role" { defaults = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-instance" } }
   mock_resource "aws_subnet" { defaults = { id = "subnet-0123456789abcdef0", arn = "arn:aws:ec2:us-east-2:123456789012:subnet/subnet-0123456789abcdef0" } }
@@ -22,6 +26,10 @@ mock_provider "aws" {
       }]
     }
   }
+}
+override_resource {
+  target = aws_iam_role.operator
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-operator" }
 }
 variables {
   account_id             = "123456789012"
