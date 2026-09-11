@@ -1,6 +1,12 @@
 # Stack, region, and networking decisions
 
-Status: decisions and discussion notes, September 10, 2026. The user confirmed interactive devboxes first, coding agents second, and selected Go + OpenTofu + TOML with Ubuntu LTS for remote machines. Region and networking remain open. No implementation or deployment has been performed.
+Status: decisions and discussion notes, September 10, 2026. The user confirmed interactive devboxes first, coding agents second, and selected Go + OpenTofu + TOML with Ubuntu LTS for remote machines. The CLI/configuration foundation is implemented in issue #6. Region and networking remain open; no AWS deployment has been performed.
+
+## Confirmed during issue #6
+
+- One personal AWS account and region per configuration, an explicitly selected AWS profile, and a stable owner identifier. Actual account/profile/owner values are supplied locally, not inferred or recorded in the repository.
+- Linux, starting with the user's Arch Linux environment, is the initial local platform. Other platforms are not claimed supported.
+- **SSH over SSM** is the first-release access mode, including remote editor and file-transfer support. A native Session Manager shell alone does not satisfy the requirement. Local prerequisites are OpenSSH and the AWS Session Manager plugin. Foundation/shell work must configure remote sshd, SSH authentication, host-key verification and a usable SSM proxy; no inbound SSH port is needed. Exact key management remains implementation work for #7/#9.
 
 ## Selected stack
 
@@ -67,6 +73,6 @@ Propose temporary local AWS credentials through a named profile, preferably IAM 
 
 1. Is Ohio (`us-east-2`) with public IPv4, blocked inbound connections, and SSM access acceptable for the initial deployment?
 2. Will workers handle only your trusted repositories, or also arbitrary third-party code/fork PRs or particularly sensitive data?
-3. For interactive development, do you need terminal access only, or an editor such as VS Code Remote SSH and file transfer in the first release?
+3. Select exact SSH key management and host-key verification for the confirmed SSH/editor/file-transfer access mode during foundation/shell implementation.
 
-Account ownership/scope and exact AWS login can be settled during setup planning. Ohio and the proposed network are recommendations pending selection.
+Account scope is confirmed above; actual AWS login and account values are configured during setup. Ohio and the proposed network are recommendations pending selection.

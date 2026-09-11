@@ -1,0 +1,8 @@
+schema_version = 1
+expected_account = "123456789012" # Replace with your intended AWS account.
+region = "us-east-2" # Example only; choose your deployment region.
+deployment = "personal-dev"
+owner = "replace-with-stable-owner" # Keep this fixed across machines and logins.
+aws_profile = "devbox" # Existing AWS shared configuration profile; no credentials here.
+manifest = "deployment.json" # Relative to this config file.
+# profile_file = "agent.toml" # Optional; defaults to the embedded agent profile.

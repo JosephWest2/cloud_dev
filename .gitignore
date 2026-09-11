@@ -1,0 +1,7 @@
+/bin/
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfplan
+/config.toml
+/deployment.json
