@@ -5,6 +5,9 @@ go 1.24.0
 require (
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.4
+	github.com/aws/aws-sdk-go-v2/service/ec2 v1.332.0
+	github.com/aws/aws-sdk-go-v2/service/iam v1.64.0
+	github.com/aws/aws-sdk-go-v2/service/ssm v1.78.0
 	github.com/aws/aws-sdk-go-v2/service/sts v1.50.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/pelletier/go-toml/v2 v2.4.3

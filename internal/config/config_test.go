@@ -95,16 +95,25 @@ func TestManifestScopeAndPinnedResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, data := range []string{
-		strings.Replace(testutil.Manifest, `"schema_version":1`, `"schema_version":2`, 1),
+		strings.Replace(testutil.Manifest, `"schema_version":2`, `"schema_version":1`, 1),
 		strings.Replace(testutil.Manifest, "123456789012", "000000000000", 1),
 		strings.Replace(testutil.Manifest, "us-east-2", "us-west-2", 1),
 		strings.Replace(testutil.Manifest, `"deployment":"test"`, `"deployment":"different"`, 1),
 		strings.Replace(testutil.Manifest, "test-owner", "other-owner", 1),
 		strings.Replace(testutil.Manifest, `"launch_template_version":"1"`, `"launch_template_version":"$Latest"`, 1),
 		strings.Replace(testutil.Manifest, "ami-12345678", "ubuntu-latest", 1),
+		strings.Replace(testutil.Manifest, `"ubuntu_release":"24.04"`, `"ubuntu_release":"22.04"`, 1),
+		strings.Replace(testutil.Manifest, `"owner_account":"099720109477"`, `"owner_account":"000000000000"`, 1),
+		strings.Replace(testutil.Manifest, `"launch_template_version":"1"`, `"launch_template_version":"9999999999999999999999"`, 1),
+		strings.Replace(testutil.Manifest, `"version":"1"`, `"version":"$Latest"`, 1),
+		strings.Replace(testutil.Manifest, `"architecture":"x86_64"`, `"architecture":"arm64"`, 1),
+		strings.Replace(testutil.Manifest, `"development_user":"devbox"`, `"development_user":"root"`, 1),
+		strings.Replace(testutil.Manifest, "rtb-12345678", "SECRET", 1),
+		strings.Replace(testutil.Manifest, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "SECRET", 1),
+		strings.Replace(testutil.Manifest, "role/devbox-instance", "role/devbox-operator", 1),
 		strings.Replace(testutil.Manifest, `"images":{"agent"`, `"images":{"missing"`, 1),
 		testutil.Manifest + `{ "secret": "SECRET" }`,
-		strings.Replace(testutil.Manifest, `"schema_version":1`, `"secret":"SECRET","schema_version":1`, 1),
+		strings.Replace(testutil.Manifest, `"schema_version":2`, `"secret":"SECRET","schema_version":2`, 1),
 	} {
 		testutil.Write(t, c.Manifest, data)
 		_, err := LoadManifest(c.Manifest, c, p)

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/foundation"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 )
 
@@ -37,14 +38,15 @@ type Result struct {
 }
 
 type Dependencies struct {
-	Identity func(context.Context, config.Config) error
-	Plugin   func(context.Context) error
-	SSH      func(context.Context) error
-	GOOS     string
+	Identity   func(context.Context, config.Config) error
+	Foundation func(context.Context, config.Config, config.Manifest, config.Profile) []foundation.Check
+	Plugin     func(context.Context) error
+	SSH        func(context.Context) error
+	GOOS       string
 }
 
 func DefaultDependencies() Dependencies {
-	return Dependencies{Identity: identity.Check, Plugin: CheckPlugin, SSH: CheckSSH, GOOS: runtime.GOOS}
+	return Dependencies{Identity: identity.Check, Foundation: foundation.CheckDeployment, Plugin: CheckPlugin, SSH: CheckSSH, GOOS: runtime.GOOS}
 }
 
 func CheckSSH(ctx context.Context) error {
@@ -120,10 +122,11 @@ func Run(ctx context.Context, path string, overrides config.Overrides, deps Depe
 			add("aws_identity", "skip", "profile_required", "fix the profile before AWS identity verification", 0)
 		} else {
 			add("profile", "pass", "profile_valid", "agent profile is valid; Spot defaults are preserved; initial launches will require explicit --on-demand until Spot support ships", 0)
-			if _, err := config.LoadManifest(c.Manifest, c, p); err != nil {
+			m, manifestErr := config.LoadManifest(c.Manifest, c, p)
+			if err := manifestErr; err != nil {
 				add("manifest", "fail", "manifest_unavailable", err.Error(), ExitPrerequisite)
 			} else {
-				add("manifest", "pass", "manifest_valid", "deployment manifest schema and scope are valid; deployed-resource validation arrives in issue #7", 0)
+				add("manifest", "pass", "manifest_valid", "version 2 deployment manifest schema, scope and exact resource pins are valid", 0)
 			}
 			if err := deps.Identity(ctx, c); err != nil {
 				code, message, exit := "identity_unavailable", "cannot verify AWS identity; check the selected profile, credentials and connectivity", ExitPrerequisite
@@ -135,8 +138,31 @@ func Run(ctx context.Context, path string, overrides config.Overrides, deps Depe
 					}
 				}
 				add("aws_identity", "fail", code, message, exit)
+				add("foundation", "skip", "identity_required", "verify the expected AWS account before deployed-resource checks", 0)
 			} else {
 				add("aws_identity", "pass", "account_verified", "AWS credentials are valid and match expected_account", 0)
+				if manifestErr != nil {
+					add("foundation", "skip", "manifest_required", "export a valid matching manifest before deployed-resource checks", 0)
+				} else if ctx.Err() != nil {
+					add("foundation", "skip", "check_canceled", "resource checks canceled; retry with --timeout 60s", ExitTimeout)
+				} else if deps.Foundation == nil {
+					add("foundation", "fail", "foundation_unavailable", "deployed-resource checker unavailable; reinstall devbox", ExitPrerequisite)
+				} else {
+					checks := deps.Foundation(ctx, c, m, p)
+					if len(checks) == 0 {
+						add("foundation", "fail", "foundation_unavailable", "deployed-resource checks returned no results; reinstall devbox", ExitPrerequisite)
+					}
+					for _, check := range checks {
+						if errors.Is(check.Err, context.Canceled) || errors.Is(check.Err, context.DeadlineExceeded) {
+							add(check.Name, "fail", "foundation_timeout", "deployed-resource check timed out or was canceled; retry with --timeout 60s", ExitTimeout)
+						} else if check.Err != nil {
+							// Dependency output is untrusted; only package-generated allowlisted messages escape.
+							add(check.Name, "fail", "foundation_drift", foundation.Message(check.Name), ExitPrerequisite)
+						} else {
+							add(check.Name, "pass", "foundation_verified", "deployed resource settings match the trusted foundation export", 0)
+						}
+					}
+				}
 			}
 		}
 	}

@@ -1,10 +1,11 @@
 # devbox
 
 A Go CLI for disposable AWS development machines. This checkout implements
-[issue #6](https://github.com/JosephWest2/cloud_dev/issues/6): installation,
-versioned configuration, and read-only prerequisite checks. It cannot yet
-provision, launch, connect to, or terminate a machine. The OpenTofu foundation
-comes in #7, lifecycle operations in #8, and shell access in #9.
+configuration, prerequisite and deployed-resource checks, plus the OpenTofu
+foundation in [issue #7](https://github.com/JosephWest2/cloud_dev/issues/7).
+Follow the [foundation setup guide](docs/setup.md) to provision durable resources
+and export the CLI manifest. It does not launch a worker. Lifecycle commands
+arrive in #8 and SSH/editor/file-transfer access in #9.
 
 ## Install from a checkout
 
@@ -67,8 +68,8 @@ cp examples/config.toml "${XDG_CONFIG_HOME:-$HOME/.config}/devbox/config.toml"
 ```
 
 Edit that file: replace `expected_account`, `aws_profile`, `deployment`, and
-`owner`, and choose your region. Ohio in the example is a placeholder choice,
-not an agreed deployment location. Never put access keys, secret keys, session
+`owner`. The implemented foundation supports Ohio (`us-east-2`); use the same
+scope as your foundation export. Never put access keys, secret keys, session
 tokens or other credentials in devbox TOML or deployment manifests.
 
 Configuration precedence:
@@ -105,12 +106,14 @@ devbox --config ./my-config.toml doctor --timeout 60s
 ```
 
 `doctor` checks user config, the agent profile, deployment manifest structure and
-scope, AWS credentials and expected account, Linux, and the Session Manager
+scope, AWS credentials and expected account, deployed network/image/template/IAM
+and readiness-document settings, Linux, and the Session Manager
 plugin and OpenSSH client. Independent local checks still run if the config or
 identity fails, unless the deadline expires or the command is canceled; remaining
 executable probes are then explicitly skipped.
 Invalid configuration/profile schemas prevent even the STS identity call.
-No EC2 launch client or mutation exists in this slice.
+A missing/wrong-scope/unsupported manifest or failed identity check prevents
+deployed-resource calls. No EC2 mutation exists in this slice.
 
 Install the **AWS Session Manager plugin**, then verify
 `session-manager-plugin --version`. Follow AWS's
@@ -122,20 +125,20 @@ the executable starts; it does not claim a live remote session works.
 The first release will use **SSH over SSM**, supporting real SSH, remote editors
 and file transfer while keeping inbound ports closed. Install the OpenSSH client
 (`sudo pacman -S --needed openssh` on Arch) and verify `ssh -V`.
-The foundation/shell slices must configure remote sshd, SSH authentication,
-host-key verification and the SSM proxy command before access works. No SSH
+The foundation configures remote sshd and a `devbox` user. The shell slice must
+add SSH authentication, host-key verification and the SSM proxy before access works. No SSH
 keys are generated or uploaded in this slice, and local probe success does not
 validate remote authentication or editor/file-transfer integration.
 OpenTofu is a foundation setup tool, not an installed prerequisite for ordinary
-CLI commands; its installation and resource validation belong to #7.
+CLI commands; installation and provisioning are covered by the setup guide.
 
 From a clean configuration, expect actionable failures for missing configuration
 and the plugin. After configuring identity, expect a **missing deployment
-manifest** until the foundation exists. Provision and export it in #7; do not
-invent resource IDs to make a real setup pass. A present manifest is currently
-validated locally only; AWS resource existence, network/IAM properties, and image
-compatibility are not checked yet. Even a passing doctor is not a launch-readiness
-guarantee at this stage.
+manifest** until the foundation exists. Follow [setup](docs/setup.md) to provision
+and export it; do not invent IDs to make real setup pass. Doctor checks the
+actual resources against that export. It does not launch a machine, exercise
+runtime bootstrap/SSH, or prove effective IAM authorization. Live foundation
+acceptance remains [documented separately](docs/acceptance/07-foundation.md).
 
 Checks default to a 20-second deadline (`--timeout` accepts up to 5 minutes).
 Each local executable probe is capped at 5 seconds within that deadline. Refresh expired
@@ -150,4 +153,6 @@ from that group. Interactive session process handling will be defined in #9.
 
 See [schema and output contracts](docs/contracts.md) for fields, exit statuses,
 Spot behavior and structured-output rules, and
-[validation evidence](docs/acceptance/06-cli-foundation.md) for this slice's checks.
+[foundation validation evidence](docs/acceptance/07-foundation.md) and
+[IAM boundaries](docs/iam.md). Run `make infra-check` with OpenTofu 1.12.6 for
+formatting, provider validation and mock-provider infrastructure tests.

@@ -1,0 +1,4 @@
+bucket              = "REPLACE-unique-devbox-state-bucket"
+key                 = "bootstrap/terraform.tfstate"
+region              = "us-east-2"
+allowed_account_ids = ["123456789012"]

@@ -1,4 +1,4 @@
-// Package config defines the version 1 user, workload, and deployment contracts.
+// Package config defines the versioned user, workload, and deployment contracts.
 package config
 
 import (
@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/JosephWest2/cloud_dev/profiles"
@@ -48,10 +49,33 @@ type Manifest struct {
 	SubnetIDs          []string         `json:"subnet_ids"`
 	SecurityGroupID    string           `json:"security_group_id"`
 	InstanceProfileARN string           `json:"instance_profile_arn"`
+	RouteTableID       string           `json:"route_table_id"`
+	InternetGatewayID  string           `json:"internet_gateway_id"`
+	DevelopmentUser    string           `json:"development_user"`
+	BootstrapSHA256    string           `json:"bootstrap_sha256"`
+	Readiness          Document         `json:"readiness"`
+	Roles              map[string]Role  `json:"roles"`
 	Images             map[string]Image `json:"images"`
 }
 
+type Document struct {
+	Name          string `json:"name"`
+	Version       string `json:"version"`
+	ContentSHA256 string `json:"content_sha256"`
+}
+
+type Role struct {
+	ARN          string `json:"arn"`
+	TrustSHA256  string `json:"trust_sha256"`
+	PolicyName   string `json:"policy_name"`
+	PolicySHA256 string `json:"policy_sha256"`
+}
+
 type Image struct {
+	UbuntuRelease         string `json:"ubuntu_release"`
+	OwnerAccount          string `json:"owner_account"`
+	Name                  string `json:"name"`
+	RootDeviceName        string `json:"root_device_name"`
 	AMIID                 string `json:"ami_id"`
 	Architecture          string `json:"architecture"`
 	LaunchTemplateID      string `json:"launch_template_id"`
@@ -175,7 +199,7 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	var m Manifest
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return m, errors.New("deployment manifest missing; provision the OpenTofu foundation (issue #7) and export deployment.json beside the config, or set manifest to its path")
+		return m, errors.New("deployment manifest missing; follow docs/setup.md to provision the OpenTofu foundation and export deployment.json beside the config, or set manifest to its path")
 	}
 	if err != nil {
 		return m, errors.New("cannot read deployment manifest; check its path and permissions")
@@ -188,11 +212,39 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	if d.Decode(new(any)) != io.EOF {
 		return m, errors.New("deployment manifest must contain exactly one JSON object")
 	}
-	if m.SchemaVersion != 1 {
-		return m, errors.New("unsupported manifest schema_version; use version 1")
+	if m.SchemaVersion != 2 {
+		return m, errors.New("unsupported manifest schema_version; re-export version 2 from the foundation")
 	}
 	if m.Account != c.ExpectedAccount || m.Region != c.Region || m.Deployment != c.Deployment || m.Owner != c.Owner {
 		return m, errors.New("deployment manifest scope differs from expected account, region, deployment or owner; select the matching configuration and foundation export")
+	}
+	if m.Region != "us-east-2" {
+		return m, errors.New("foundation currently supports us-east-2 in commercial AWS only")
+	}
+	if len(m.Deployment) > 23 || len(m.Owner) > 23 {
+		return m, errors.New("foundation deployment and owner must each fit 23 characters")
+	}
+	if len(m.SubnetIDs) != 1 || len(m.Images) != 1 || p.Image != "agent" {
+		return m, errors.New("foundation requires one subnet and the agent image")
+	}
+	if !resourceID(m.RouteTableID, "rtb") || !resourceID(m.InternetGatewayID, "igw") || m.DevelopmentUser != "devbox" || !digestRE.MatchString(m.BootstrapSHA256) {
+		return m, errors.New("manifest requires route table, internet gateway, devbox user and bootstrap digest; re-export the foundation")
+	}
+	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`).MatchString(m.Readiness.Name) || !numericVersion(m.Readiness.Version) || !digestRE.MatchString(m.Readiness.ContentSHA256) {
+		return m, errors.New("manifest readiness requires a name, positive numeric version and content digest")
+	}
+	roleRE := regexp.MustCompile(`^arn:aws:iam::` + c.ExpectedAccount + `:role/[A-Za-z0-9+=,.@_/-]+$`)
+	if len(m.Roles) != 2 {
+		return m, errors.New("manifest requires exactly the instance and operator roles")
+	}
+	for _, key := range []string{"instance", "operator"} {
+		role := m.Roles[key]
+		if !roleRE.MatchString(role.ARN) || !labelRE.MatchString(role.PolicyName) || !digestRE.MatchString(role.TrustSHA256) || !digestRE.MatchString(role.PolicySHA256) {
+			return m, errors.New("manifest roles require scoped ARNs, policy names and trust/policy digests")
+		}
+	}
+	if m.Roles["instance"].ARN == m.Roles["operator"].ARN {
+		return m, errors.New("instance and operator roles must differ")
 	}
 	if !resourceID(m.VPCID, "vpc") || !resourceID(m.SecurityGroupID, "sg") || len(m.SubnetIDs) == 0 {
 		return m, errors.New("manifest requires valid vpc_id, security_group_id and subnet_ids; re-export the foundation")
@@ -202,7 +254,7 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 			return m, errors.New("manifest contains an invalid subnet ID")
 		}
 	}
-	arnRE := regexp.MustCompile(`^arn:aws(-us-gov|-cn)?:iam::` + c.ExpectedAccount + `:instance-profile/[A-Za-z0-9+=,.@_/-]+$`)
+	arnRE := regexp.MustCompile(`^arn:aws:iam::` + c.ExpectedAccount + `:instance-profile/[A-Za-z0-9+=,.@_/-]+$`)
 	if !arnRE.MatchString(m.InstanceProfileARN) {
 		return m, errors.New("manifest instance_profile_arn must identify an IAM instance profile in the expected account")
 	}
@@ -210,9 +262,20 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 		return m, errors.New("manifest does not resolve the profile image; export an image with the matching key")
 	}
 	for key, img := range m.Images {
-		if !labelRE.MatchString(key) || !resourceID(img.AMIID, "ami") || !resourceID(img.LaunchTemplateID, "lt") || !versionRE.MatchString(img.LaunchTemplateVersion) || (img.Architecture != "x86_64" && img.Architecture != "arm64") {
+		if img.UbuntuRelease != "24.04" || img.OwnerAccount != "099720109477" || !ubuntuNameRE.MatchString(img.Name) || img.RootDeviceName != "/dev/sda1" {
+			return m, errors.New("manifest must pin Canonical Ubuntu 24.04 amd64 server provenance and /dev/sda1 root device")
+		}
+		if !labelRE.MatchString(key) || !resourceID(img.AMIID, "ami") || !resourceID(img.LaunchTemplateID, "lt") || !numericVersion(img.LaunchTemplateVersion) || img.Architecture != "x86_64" {
 			return m, errors.New("manifest images require an exact AMI ID, architecture, launch template ID and positive numeric version (not $Latest or $Default)")
 		}
 	}
 	return m, nil
+}
+
+var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
+var ubuntuNameRE = regexp.MustCompile(`^ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-[0-9.]+$`)
+
+func numericVersion(s string) bool {
+	n, err := strconv.ParseInt(s, 10, 64)
+	return err == nil && n > 0 && versionRE.MatchString(s)
 }

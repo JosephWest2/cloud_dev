@@ -1,4 +1,4 @@
-# Version 1 CLI contracts
+# CLI contracts (config/profile/results v1, deployment v2)
 
 ## User configuration and workload profile
 
@@ -32,45 +32,53 @@ option. No market fallback is implemented here.
 
 ## Deployment manifest
 
-The foundation (#7) will export a non-secret JSON document with this exact
-schema. The following IDs are illustrative fixtures, not deployable resources:
+The foundation exports a non-secret schema-v2 JSON object using
+`tofu output -json deployment_manifest`. Schema 1 is deliberately rejected:
+re-export after applying the foundation. Unknown fields and trailing JSON are
+rejected. User config, workload profiles and result envelopes stay at version 1.
 
-```json
-{
-  "schema_version": 1,
-  "account": "123456789012",
-  "region": "us-east-2",
-  "deployment": "personal-dev",
-  "owner": "stable-owner",
-  "vpc_id": "vpc-0123456789abcdef0",
-  "subnet_ids": ["subnet-0123456789abcdef0"],
-  "security_group_id": "sg-0123456789abcdef0",
-  "instance_profile_arn": "arn:aws:iam::123456789012:instance-profile/devbox",
-  "images": {
-    "agent": {
-      "ami_id": "ami-0123456789abcdef0",
-      "architecture": "x86_64",
-      "launch_template_id": "lt-0123456789abcdef0",
-      "launch_template_version": "1"
-    }
-  }
-}
-```
+| Manifest field | Contract |
+| --- | --- |
+| `schema_version` | Integer 2 |
+| `account`, `region`, `deployment`, `owner` | Must equal effective config; foundation currently Ohio only, labels at most 23 characters |
+| `vpc_id`, `subnet_ids`, `security_group_id` | Exact EC2 IDs, exactly one subnet |
+| `route_table_id`, `internet_gateway_id` | Exact EC2 IDs for explicit public route/association |
+| `instance_profile_arn` | Exact commercial-AWS IAM profile ARN in expected account |
+| `development_user` | `devbox` |
+| `bootstrap_sha256` | Lowercase SHA-256 of the exact decoded template user-data bytes |
+| `readiness` | `name`, positive numeric string `version`, `content_sha256` of canonical JSON |
+| `roles` | Exactly `instance` and `operator`, each with distinct scoped `arn`, `trust_sha256`, `policy_name`, `policy_sha256` |
+| `images` | Exactly `agent`, with the image fields below |
 
-Every illustrated field is required. Unknown fields and missing/unsupported
-schema versions are rejected. Exactly one JSON object is permitted. Account,
-region, deployment and owner must match effective user config; the IAM instance
-profile ARN must identify the same account. At least one subnet is required.
-Each image entry pins an AMI ID, architecture (`x86_64` or `arm64`), launch-template
-ID and positive numeric version string. `$Latest`, `$Default`, and AMI aliases
-are invalid. The workload image key must exist in `images`.
+Image fields are `ami_id`, `architecture="x86_64"`, `ubuntu_release="24.04"`,
+`owner_account="099720109477"`, exact Canonical `name`
+(`ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-SERIAL`),
+`root_device_name="/dev/sda1"`, `launch_template_id` and a positive signed-64-bit
+numeric `launch_template_version` string. No `$Latest`, `$Default` or AMI aliases.
+The standard Ubuntu LTS AMI is selected explicitly in the setup guide and its
+regional ID and provenance are exported. All hashes have 64 lowercase hex digits.
 
-The foundation must additionally validate the actual resources, region/partition,
-image provenance, architecture and selected instance types, networking, IAM,
-encrypted/delete-on-termination root volumes, and IMDSv2. This is not proof that
-the chosen AMI is Ubuntu LTS; exact Ubuntu release/AMI and region/networking
-remain decisions for #7. Ordinary CLI operations must never parse OpenTofu state
-or invoke an infrastructure apply.
+The export is trusted local configuration, not a signed attestation. Doctor
+verifies actual resource scope, configured routing/DNS/egress and zero ingress,
+image provenance/state/architecture/root size, instance-type architecture,
+template security settings and user-data digest, IAM role/profile membership,
+trust/policy digests with no extra policies, and exact readiness document version
+and content. IAM/document hashes use decoded JSON with sorted keys and compact
+encoding equivalent to OpenTofu `jsonencode`; JSON formatting alone is ignored.
+Policy array shapes remain significant. Any unexplained service normalization
+must be investigated rather than bypassed. Read [IAM limitations](iam.md) and
+[setup](setup.md) before treating these checks as a live acceptance gate.
+
+Ordinary CLI commands read only this JSON export, never OpenTofu state or an
+infrastructure apply. After an intentional foundation change, review, apply and
+re-export. Invalid manifest scope/schema prevents all resource calls; independent
+STS and local prerequisite checks can still run. STS identity must succeed before
+resource validation. Timeout/cancellation retains exit 4; resource failures use
+exit 1 and allowlisted diagnostics, never raw SDK errors. Foundation check names
+are `foundation_network`, `foundation_image`, `foundation_template`,
+`foundation_iam`, `foundation_readiness` (and `foundation_identity` when the
+resource client's identity cannot be verified). Pass code is `foundation_verified`,
+failure code `foundation_drift`, timeout code `foundation_timeout`.
 
 Future inventory/mutations scope by expected account, region, deployment and
 stable owner. STS identity verification must precede mutations. Required creation
@@ -88,7 +96,7 @@ untrusted command argument. `version` adds `version`; `--help` adds `help`.
 Human messages may evolve; automation should use schema version, status and code.
 
 ```json
-{"schema_version":1,"command":"doctor","ok":false,"exit_code":1,"checks":[{"name":"manifest","status":"fail","code":"manifest_unavailable","message":"deployment manifest missing; provision the OpenTofu foundation (issue #7) and export deployment.json beside the config, or set manifest to its path"}]}
+{"schema_version":1,"command":"doctor","ok":false,"exit_code":1,"checks":[{"name":"manifest","status":"fail","code":"manifest_unavailable","message":"deployment manifest missing; follow docs/setup.md to provision the OpenTofu foundation and export deployment.json beside the config, or set manifest to its path"}]}
 ```
 
 This excerpt shows one check; real doctor results also contain the other checks.
@@ -112,10 +120,10 @@ the overall deadline/cancellation are `skip` with `check_canceled` (4), not
 installation failures. Other local execution failures are prerequisites (1).
 
 The agreed first-release access mode is real SSH over SSM, including editor and
-file-transfer support. #7/#9 must provide remote sshd and SSH authentication,
-host-key verification, and a proxy interface that OpenSSH-based tools can use
-without opening inbound ports. Doctor currently probes the local `ssh` client
-and Session Manager plugin; remote/key/editor checks belong to those slices.
+file-transfer support. The foundation provides remote sshd and a `devbox` user; #9 must add SSH
+authentication, host-key verification, and a proxy interface that OpenSSH-based tools can use
+without opening inbound ports. Doctor probes the local `ssh` client and Session Manager plugin and verifies
+foundation settings; runtime/key/editor checks belong to #9.
 
 No interactive session command exists in this slice. Session bytes must have a
 separate stream lifecycle from structured results; #9 must settle and document

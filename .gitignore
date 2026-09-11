@@ -5,3 +5,19 @@
 *.tfplan
 /config.toml
 /deployment.json
+# Local infrastructure inputs, plans, migration backups and provider scratch data.
+*.tfvars
+*.tfvars.json
+*.auto.tfvars
+*.plan
+*.plan.json
+*.tfplan.*
+*.tfstate*
+*.backup
+*.lock.info
+crash.log
+crash.*.log
+**/backend.hcl
+/infra/state-bootstrap/backend.tf
+**/deployment.json
+/infra/**/acceptance-output/
