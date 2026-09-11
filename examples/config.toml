@@ -1,6 +1,6 @@
 schema_version = 1
 expected_account = "123456789012" # Replace with your intended AWS account.
-region = "us-east-2" # Example only; choose your deployment region.
+region = "us-east-2" # Current foundation supports Ohio only.
 deployment = "personal-dev"
 owner = "replace-with-stable-owner" # Keep this fixed across machines and logins.
 aws_profile = "devbox" # Existing AWS shared configuration profile; no credentials here.

@@ -17,11 +17,17 @@ manifest = "deployment.json"
 `
 
 const Manifest = `{
-"schema_version":1,"account":"123456789012","region":"us-east-2",
+"schema_version":2,"account":"123456789012","region":"us-east-2",
 "deployment":"test","owner":"test-owner","vpc_id":"vpc-12345678",
 "subnet_ids":["subnet-12345678"],"security_group_id":"sg-12345678",
 "instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/devbox",
-"images":{"agent":{"ami_id":"ami-12345678","architecture":"x86_64",
+"route_table_id":"rtb-12345678","internet_gateway_id":"igw-12345678",
+"development_user":"devbox","bootstrap_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+"readiness":{"name":"devbox-test-readiness","version":"1","content_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+"roles":{
+"instance":{"arn":"arn:aws:iam::123456789012:role/devbox-instance","policy_name":"devbox-instance","trust_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","policy_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+"operator":{"arn":"arn:aws:iam::123456789012:role/devbox-operator","policy_name":"devbox-operator","trust_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","policy_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},
+"images":{"agent":{"ubuntu_release":"24.04","owner_account":"099720109477","name":"ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-20260901","root_device_name":"/dev/sda1","ami_id":"ami-12345678","architecture":"x86_64",
 "launch_template_id":"lt-12345678","launch_template_version":"1"}}}
 `
 

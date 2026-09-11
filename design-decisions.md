@@ -1,6 +1,6 @@
 # Stack, region, and networking decisions
 
-Status: decisions and discussion notes, September 10, 2026. The user confirmed interactive devboxes first, coding agents second, and selected Go + OpenTofu + TOML with Ubuntu LTS for remote machines. The CLI/configuration foundation is implemented in issue #6. Region and networking remain open; no AWS deployment has been performed.
+Status: decisions and discussion notes, September 10, 2026. The user confirmed interactive devboxes first, coding agents second, and selected Go + OpenTofu + TOML with Ubuntu LTS for remote machines. The CLI/configuration foundation is implemented in issue #6. Issue #7 implements Ohio, Ubuntu 24.04 x86_64 and a public subnet with no inbound rules as starting choices; no AWS deployment has been performed.
 
 ## Confirmed during issue #6
 
@@ -76,3 +76,24 @@ Propose temporary local AWS credentials through a named profile, preferably IAM 
 3. Select exact SSH key management and host-key verification for the confirmed SSH/editor/file-transfer access mode during foundation/shell implementation.
 
 Account scope is confirmed above; actual AWS login and account values are configured during setup. Ohio and the proposed network are recommendations pending selection.
+
+
+## Issue #7 implementation choices
+
+Foundation setup now targets only `us-east-2`, Canonical Ubuntu 24.04 LTS amd64
+standard server, one public subnet and HTTP/HTTPS egress with zero security-group
+ingress. The exact AMI is resolved explicitly during setup, checked for Canonical
+provenance and exported with a numeric launch-template version. These bounded
+implementation choices are not evidence of an authorized/live deployment.
+
+Access remains SSH over SSM. Bootstrap creates a sudo-capable `devbox` user and
+sshd with public-key-only authentication; keys, host trust and the editor proxy
+remain #9. A fixed, versioned SSM Command document reports pending/complete/failed
+bootstrap markers without exposing a general command runner. The manifest is v2
+because it now includes these contracts and IAM/bootstrap content digests.
+
+State starts locally in the S3 bootstrap root and migrates to an encrypted,
+versioned S3 backend using native lockfiles; foundation uses a separate key.
+Pinned tooling is OpenTofu 1.12.6 with AWS provider 6.64.0. See
+[setup and recovery](docs/setup.md), [IAM limits](docs/iam.md), and
+[live acceptance status](docs/acceptance/07-foundation.md).

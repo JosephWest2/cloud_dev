@@ -13,6 +13,7 @@ import (
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/doctor"
+	"github.com/JosephWest2/cloud_dev/internal/foundation"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 	"github.com/JosephWest2/cloud_dev/internal/testutil"
 )
@@ -60,7 +61,9 @@ func TestDoctorStructuredResults(t *testing.T) {
 				tc.alter(t, path)
 			}
 			calls, pluginCalls := 0, 0
-			deps := doctor.Dependencies{GOOS: "linux", Identity: func(context.Context, config.Config) error { calls++; return tc.identityErr }, Plugin: func(context.Context) error { pluginCalls++; return tc.pluginErr }, SSH: func(context.Context) error { return tc.sshErr }}
+			deps := doctor.Dependencies{GOOS: "linux", Foundation: func(context.Context, config.Config, config.Manifest, config.Profile) []foundation.Check {
+				return []foundation.Check{{Name: "foundation_test"}}
+			}, Identity: func(context.Context, config.Config) error { calls++; return tc.identityErr }, Plugin: func(context.Context) error { pluginCalls++; return tc.pluginErr }, SSH: func(context.Context) error { return tc.sshErr }}
 			var out, diag bytes.Buffer
 			code := Run(context.Background(), []string{"doctor", "--config", path, "--json"}, &out, &diag, deps)
 			if code != tc.wantExit || calls != tc.wantCalls || pluginCalls != 1 {
