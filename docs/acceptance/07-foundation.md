@@ -1,7 +1,9 @@
 # Issue #7 validation
 
-Date: September 10, 2026. Development host: Arch Linux, linux/amd64.
-**Live acceptance is pending. No AWS resource was created during implementation.**
+Automated checks: September 10, 2026. Live setup: September 11, 2026.
+Host: Arch Linux, linux/amd64.
+**Live acceptance is in progress. The state bucket is deployed and its backend
+migration and locking are verified; foundation deployment is still pending.**
 Do not close #7 until the selected-account workflow below has been executed and
 its results recorded. Worker allocation/cleanup and real SSH belong to #8/#9.
 
@@ -20,7 +22,7 @@ its results recorded. Worker allocation/cleanup and real SSH belong to #8/#9.
   and checks launch tags, PassRole, scoped termination and inline-policy size.
 - State mock plan checks encryption, versioning, public-access blocking and no
   forced bucket deletion. Native S3 locking is configured in backend blocks;
-  actual locking needs the live check below.
+  live backend locking also passed during the selected-account setup below.
 - Controlled Go API responses exercise successful resource validation, exact
   numeric API requests, network/image/template drift, bad root sizing, altered
   bootstrap/readiness content, foreign resources, added IAM policies including
@@ -168,14 +170,34 @@ not proof of a tested tag boundary. Simulations do not execute AWS requests or
 model all SCPs/session/resource policies. Record `MissingContextValues` and
 resolve them for expected-allowed cases. See [IAM limits](../iam.md).
 
-## Results to fill after human testing
+## Live results (September 11, 2026)
 
-- Selected-account bootstrap/migration/foundation apply: **pending**.
-- Exact Ohio AMI ID and Canonical creation/name evidence: **pending**.
-- Operator-profile doctor and API inspection: **pending**.
-- S3 encryption/versioning/actual lock contention: **pending**.
+The user explicitly selected and authenticated the setup profile with a non-root
+IAM administrator, then authorized applying the reviewed state-bootstrap plan.
+Account/resource identifiers and raw output are retained only in the ignored
+local inputs and `infra/foundation/acceptance-output/`.
+
+- Selected-account bootstrap apply: **passed**. Six additions: one S3 bucket and
+  its five protection configurations; no worker, network or IAM resources applied.
+- Bootstrap state migration: **passed**. Local state migrated to the bucket's
+  bootstrap key; all six resources remain in inventory. A protected local recovery
+  copy was retained. The following plan reported no changes.
+- S3 protections: **passed via AWS APIs**. AES256 default encryption, versioning,
+  all four public-access blocks, bucket-owner-enforced ownership and non-TLS Deny.
+  The remote state object has AES256 encryption and a nonempty version ID.
+- Native S3 locking: **passed live**. An open OpenTofu console held the `.tflock`
+  object; a competing plan failed to acquire it. Exiting the console removed the
+  current lock object and a subsequent plan succeeded without drift. Backend
+  cache inspection confirmed encryption, lockfiles and selected account/key.
+- Ohio AMI provenance: **passed**. Resolved an exact Canonical Ubuntu 24.04 amd64
+  server AMI; EC2 confirmed owner, release/name, architecture, availability and an
+  8 GiB root snapshot. Exact IDs/creation evidence are saved locally.
+- Foundation live plan: **passed**, saved but not applied. Thirteen expected
+  network/IAM/template/document additions, zero changes/deletions. Reviewed the
+  exact AMI, zero-ingress group, root settings, IMDSv2 and selected trust principal.
+- Foundation apply, exported manifest and operator-profile doctor: **pending**.
 - Access Analyzer and targeted IAM decisions: **pending**.
-- Foundation teardown or intentional retention: **pending**.
+- State bucket is retained for the ongoing setup; full teardown: **pending**.
 
 ## Independent PR review
 
