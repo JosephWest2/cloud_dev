@@ -30,7 +30,15 @@ func TestOpenTofuExport(t *testing.T) {
 	found := false
 	for scanner.Scan() {
 		var event struct {
-			Type  string `json:"type"`
+			Type    string `json:"type"`
+			Message string `json:"@message"`
+			Summary struct {
+				Status string `json:"status"`
+			} `json:"test_summary"`
+			Diagnostic struct {
+				Summary string `json:"summary"`
+				Detail  string `json:"detail"`
+			} `json:"diagnostic"`
 			State struct {
 				Values struct {
 					Outputs map[string]struct {
@@ -48,6 +56,15 @@ func TestOpenTofuExport(t *testing.T) {
 		}
 		if err := json.Unmarshal(scanner.Bytes(), &event); err != nil {
 			t.Fatal(err)
+		}
+		if event.Type == "test_run" || event.Type == "test_summary" {
+			t.Log(event.Message)
+		}
+		if event.Type == "test_summary" && event.Summary.Status != "pass" {
+			t.Error("OpenTofu test suite did not pass")
+		}
+		if event.Type == "diagnostic" {
+			t.Log(event.Diagnostic.Summary, event.Diagnostic.Detail)
 		}
 		if event.Type != "test_state" {
 			continue

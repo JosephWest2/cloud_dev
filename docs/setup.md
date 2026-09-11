@@ -190,6 +190,9 @@ make build
 
 The explicit flag avoids the setup `AWS_PROFILE` environment overriding TOML.
 Install the local OpenSSH client and Session Manager plugin per the README.
+Use a currently supported plugin (at least 1.2.764.0 as of this implementation;
+see AWS's [release history](https://docs.aws.amazon.com/systems-manager/latest/userguide/plugin-version-history.html)).
+Doctor checks executability; the human setup check must verify the version.
 All checks should pass **using the operator profile**. Doctor reads the actual
 network, pinned image/template, instance-type architectures, instance-profile
 membership, both role trusts and sole inline policies, and the pinned readiness

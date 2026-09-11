@@ -107,6 +107,12 @@ run "policy_contract" {
     error_message = "Termination must require matching owner and deployment."
   }
   assert {
+    condition = length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if s.Sid == "OwnSessionChannels" && contains(s.Action, "ssmmessages:OpenDataChannel") && s.Resource == ["arn:aws:ssm:us-east-2:123456789012:session/devbox-test-test-owner-*"]
+    ]) == 1
+    error_message = "The operator needs signed data-channel access scoped to its own sessions."
+  }
+  assert {
     condition     = length(local.operator_policy) <= 10240 && length(local.instance_policy) <= 10240
     error_message = "Inline policies exceed IAM role quotas."
   }

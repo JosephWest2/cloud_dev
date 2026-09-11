@@ -24,6 +24,8 @@ printf '%s\n' 'devbox ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/devbox
 chmod 0440 /etc/sudoers.d/devbox
 visudo -cf /etc/sudoers.d/devbox
 ssh-keygen -A
+# Noble uses socket activation; ssh.service may not have created this yet.
+install -d -o root -g root -m 0755 /run/sshd
 /usr/sbin/sshd -t
 systemctl enable --now ssh
 systemctl restart ssh

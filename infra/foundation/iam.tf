@@ -91,7 +91,7 @@ locals {
       Condition = { StringEquals = merge(local.ssm_scope, { "aws:RequestedRegion" = var.region }) }
     },
     {
-      Sid      = "CloseOwnSessions", Effect = "Allow", Action = ["ssm:TerminateSession", "ssm:ResumeSession"]
+      Sid      = "OwnSessionChannels", Effect = "Allow", Action = ["ssm:TerminateSession", "ssm:ResumeSession", "ssmmessages:OpenDataChannel"]
       Resource = ["arn:aws:ssm:${var.region}:${var.account_id}:session/${local.name}-*"]
     },
     { Sid = "ReadinessDocument", Effect = "Allow", Action = ["ssm:SendCommand", "ssm:GetDocument"], Resource = [aws_ssm_document.readiness.arn] }

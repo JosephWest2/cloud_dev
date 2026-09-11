@@ -19,7 +19,7 @@ permissions or constrain an administrator.
 | `TerminateInstances` | Account/region and all three managed/deployment/owner resource tags |
 | SSM SSH | Matching instance tags; document-access check; only AWS-StartSSHSession |
 | SSM readiness | Matching instance tags; only this foundation's fixed parameterless Command document |
-| SSM session cleanup | Session ARN prefix from exact deployment/owner role-session name, enforced in trust |
+| SSM session data channel and cleanup | Session ARN prefix from exact deployment/owner role-session name, enforced in trust |
 | IAM doctor reads | Exact two roles and instance profile; no IAM writes |
 
 Creation tags must be supplied on **both instance and volume** tag specifications
@@ -59,6 +59,13 @@ administrator credentials or another attached policy can grant more authority;
 run live tests under the restricted role. Organization/session policies, resource
 policies and service behavior require integration evidence; policy simulation
 alone is insufficient. This personal foundation intentionally scopes to one owner.
+
+The operator's `ssmmessages:OpenDataChannel` permission is scoped to its SSM
+session ARN prefix, following AWS's [SSH user-policy example](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-getting-started-enable-ssh-connections.html).
+Current Session Manager plugins sign that request; a StartSession grant alone is
+insufficient. The instance transport role's channel grants remain `Resource="*"`.
+Check the actual signed tunnel during #9 acceptance; the generic ssmmessages
+authorization table does not describe the user-session ARN behavior.
 
 References: [EC2 launch policies](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ExamplePolicies_EC2.html),
 [EC2 authorization reference](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ec2.html),

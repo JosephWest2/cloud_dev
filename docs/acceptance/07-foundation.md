@@ -84,15 +84,15 @@ Deny, and encrypted state objects with version IDs. Check both local backend
 blocks/cache entries specify `encrypt=true` and `use_lockfile=true`, the correct
 bucket/account, and distinct keys (do not publish `.terraform` contents).
 
-For an actual concurrency check, in terminal A run `tofu apply -refresh-only
--var-file=foundation.tfvars` and leave it at its approval prompt. In terminal B,
-in the same initialized foundation root and using the same setup profile, run
+For an actual concurrency check, in terminal A run `tofu console
+-var-file=foundation.tfvars` in the initialized foundation root and leave its
+interactive prompt open. OpenTofu console holds the state lock without changing
+resources. In terminal B, using the same root and setup profile, run
 `tofu plan -lock-timeout=1s -var-file=foundation.tfvars`. Expect an acquiring-state-
 lock error identifying the live lock. Inspect the matching key plus `.tflock`
-with `head-object`, then cancel terminal A. Confirm a new plan succeeds and the
-current lock object is gone. Never force-unlock the live process; if the first
-command completes before the check, retry the controlled test. Keep evidence
-of contention rather than merely asserting the option is enabled.
+with `head-object`, then exit terminal A's console. Confirm a new plan succeeds
+and the current lock object is gone. Never force-unlock the live process. Keep
+evidence of contention rather than merely asserting the option is enabled.
 
 ### Deployed template/API inspection
 
@@ -160,6 +160,7 @@ each must be denied. Also simulate these targeted cases using the
 | Launch instance/volume with omitted dynamic tag, wrong scope, encryption false or IMDSv1 | Denied |
 | SSM StartSession with owned instance and AWS-StartSSHSession document-access check | Allowed |
 | SSM StartSession/SendCommand on another owner's instance | Denied |
+| ssmmessages:OpenDataChannel on the configured role-session ARN prefix / another prefix | Allowed / denied |
 | SendCommand using AWS-RunShellScript instead of the fixed readiness document | Denied |
 
 Use complete API-specific context; an implicit deny from a missing context key is
@@ -175,3 +176,23 @@ resolve them for expected-allowed cases. See [IAM limits](../iam.md).
 - S3 encryption/versioning/actual lock contention: **pending**.
 - Access Analyzer and targeted IAM decisions: **pending**.
 - Foundation teardown or intentional retention: **pending**.
+
+## Independent PR review
+
+A different agent reviewed PR #12 after creation and found three issues, all
+corrected before the final handoff:
+
+- Ubuntu 24.04 socket activation may leave `/run/sshd` absent before the first
+  service start. Bootstrap now creates its root-owned 0755 runtime directory
+  before validating sshd configuration. The reviewer checked Canonical's package
+  behavior and confirmed the fix; actual cloud-init execution remains a live gate.
+- Current Session Manager plugins sign the operator's OpenDataChannel request.
+  The operator policy now grants `ssmmessages:OpenDataChannel` only on the same
+  deployment/owner session prefix used for cleanup, following AWS's SSH policy.
+  A native infrastructure assertion checks the grant and its scope.
+- A no-drift refresh-only apply cannot reliably hold a lock at a prompt. The live
+  concurrency procedure now uses an open OpenTofu console; the reviewer reproduced
+  console-versus-plan lock contention locally with 1.12.6.
+
+The reviewer rechecked the corrections and reported no remaining actionable
+findings. This is code-review evidence, not live AWS acceptance.
