@@ -58,10 +58,20 @@ func TestProfileContract(t *testing.T) {
 		t.Fatalf("embedded Spot default: %+v %v", p, err)
 	}
 	base := "schema_version=1\nname='agent'\nmarket='spot'\ninstance_types=['c7i.2xlarge']\nimage='agent'\ndisk_gb=100\n"
+	for _, instanceType := range []string{"c7i.2xlarge", "c7i.metal-24xl", "u-12tb1.112xlarge"} {
+		data := strings.Replace(base, "c7i.2xlarge", instanceType, 1)
+		p, err := LoadProfile(testutil.Write(t, filepath.Join(t.TempDir(), "agent.toml"), data))
+		if err != nil || len(p.InstanceTypes) != 1 || p.InstanceTypes[0] != instanceType {
+			t.Fatalf("valid EC2 instance type %q rejected: %v", instanceType, err)
+		}
+	}
 	for _, data := range []string{
 		strings.Replace(base, "schema_version=1", "schema_version=2", 1),
 		strings.Replace(base, "market='spot'", "market='automatic'", 1),
 		strings.Replace(base, "['c7i.2xlarge']", "[]", 1),
+		strings.Replace(base, "c7i.2xlarge", "c7i/metal-24xl", 1),
+		strings.Replace(base, "c7i.2xlarge", "c7i.", 1),
+		strings.Replace(base, "c7i.2xlarge", "c7i.metal.24xl", 1),
 		strings.Replace(base, "disk_gb=100", "disk_gb=-1", 1),
 		base + "secret='SECRET'\n",
 	} {

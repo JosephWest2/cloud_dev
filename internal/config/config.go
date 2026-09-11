@@ -62,7 +62,7 @@ var (
 	accountRE = regexp.MustCompile(`^[0-9]{12}$`)
 	regionRE  = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]+$`)
 	labelRE   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,62}$`)
-	typeRE    = regexp.MustCompile(`^[a-z0-9-]+\.[a-z0-9]+$`)
+	typeRE    = regexp.MustCompile(`^[a-z0-9-]+\.[a-z0-9-]+$`)
 	versionRE = regexp.MustCompile(`^[1-9][0-9]*$`)
 )
 

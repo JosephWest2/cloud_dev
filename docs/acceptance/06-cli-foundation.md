@@ -31,6 +31,10 @@ Initial toolchain: `go1.27.0-X:nodwarf5`; module minimum: Go 1.24.0.
 - The GPT-6 high-effort follow-up review reported no remaining findings. The
   reviewer independently verified SIGINT and SIGTERM: each returned one valid
   JSON result, exit 4, and terminated the isolated credential helper.
+- A fresh pre-merge GPT-6 high-effort review found that profile validation rejected
+  valid hyphenated EC2 size names such as `c7i.metal-24xl`. The validator now
+  accepts them, with regression tests retaining malformed-name rejection.
+  The reviewer also ran `go test -race ./...` successfully.
 
 ## Clean configuration installation
 
