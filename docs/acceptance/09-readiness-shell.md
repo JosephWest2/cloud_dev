@@ -1,8 +1,9 @@
 # Issue #9 readiness and SSH acceptance
 
 Implementation and controlled verification: September 12, 2026.
-**Live foundation update, SSH, file transfer and editor acceptance remain pending.**
-No live AWS resources were changed for this slice by the implementation agent.
+**Live foundation update and operator doctor validation are complete.**
+Worker readiness, interactive SSH, file transfer, editor and cleanup acceptance
+remain pending.
 
 ## Controlled evidence
 
@@ -212,3 +213,25 @@ signals in text/JSON, uname/user, Ctrl-C/resize/exit, transfer comparison, edito
 save/reconnect, failure diagnostics, termination/root deletion and repeated down.
 Do not close #9 or mark parent MVP acceptance complete before the required live
 evidence is recorded.
+
+
+## Live foundation update (September 12, 2026)
+
+- Confirmed the refreshed setup identity matches the previously selected account.
+- Verified the dedicated Ed25519 public key matches the local identity and the
+  key loaded in ssh-agent. Configured the local identity path and reused the
+  existing deployment variables and S3 backend; all local inputs remain ignored.
+- Reviewed the saved live plan: exactly two in-place changes (launch template
+  bootstrap/public key and the fixed SSM readiness document), zero additions or
+  deletions. No IAM, networking, AMI, or other resource changes were planned.
+- Applied that saved plan successfully. Exported manifest v3 with numeric
+  launch-template version 2 and readiness document version 2.
+- Rebuilt the CLI. All 12 doctor checks passed using the restricted operator
+  profile, including actual resource scope, unchanged IAM/network settings and
+  updated template/document hashes.
+- Scoped inventory was empty before worker acceptance. No worker was allocated
+  during this foundation update. Local plan summary and doctor/inventory evidence
+  are retained in the ignored foundation acceptance-output directory.
+
+Live shell, transfer/editor, failure/recovery and teardown checks are still the
+remaining acceptance gate; the issue and PR remain open/draft.

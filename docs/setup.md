@@ -154,10 +154,10 @@ tofu output -json deployment_manifest > "${XDG_CONFIG_HOME:-$HOME/.config}/devbo
 ```
 
 Only export the named output. Do not export full state or all provider diagnostics.
-This schema-v2 JSON is non-secret, but contains account/resource identifiers; keep
+This schema-v3 JSON is non-secret, but contains account/resource identifiers; keep
 it local. The manifest is trusted configuration: protect it from unauthorized
-edits. It is not signed and is not an IAM authorization token. Existing schema-v1
-fixtures must be replaced with a real schema-v2 export.
+edits. It is not signed and is not an IAM authorization token. Existing schema-v1/v2
+exports must be replaced with a real schema-v3 export.
 
 Durable resources are VPC/subnet/IGW/routing, security group, two IAM roles and
 policies, instance profile, launch template and fixed SSM readiness document.
