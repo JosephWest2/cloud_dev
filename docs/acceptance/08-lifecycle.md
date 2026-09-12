@@ -1,8 +1,10 @@
 # Issue #8 validation
 
 Implementation and controlled tests: September 11, 2026.
-**Live allocation/cleanup acceptance is pending. No worker was launched during
-implementation. Keep issue #8 open until the live results are recorded.**
+**Issue #8 live allocation/cleanup acceptance is complete.** The operator-profile
+launch, new-terminal rediscovery, termination, root-volume deletion and repeated
+teardown all passed on September 11, 2026 (September 12 UTC). The test worker is
+terminated and its root volume is deleted. SSH/readiness acceptance belongs to #9.
 
 ## Controlled evidence
 
@@ -23,12 +25,12 @@ resource evidence remains in [#7 acceptance](07-foundation.md). This slice requi
 no infrastructure apply. Controlled tests cannot establish live IAM authorization,
 EC2 token behavior, root deletion, or bootstrap/SSM readiness.
 
-## Live procedure — pause for the user
+## Live acceptance procedure
 
 Use the existing selected test configuration and restricted `devbox-operator`
 profile from #7. Authenticate outside devbox. These commands allocate a billable
 On-Demand instance until cleanup. Run from this checkout; keep result files outside
-Git. `jq` is only used to inspect output in this procedure.
+Git.
 
 ```sh
 make build
@@ -98,9 +100,9 @@ Additional tests exercise the pinned EC2 SDK's real request serialization and
 after atomic receipt replacement, and duplicate request IDs, unexpected tokens,
 concurrent friendly-name collisions, and terminated-request replay. Final
 `make check` and `go test -race ./internal/lifecycle ./internal/cli` pass.
-This review and automated evidence do not replace the pending live procedure.
+These controlled checks complement the live results recorded below.
 
-## Live attempt — September 11, 2026 (September 12 UTC)
+## Initial rejected attempt — September 11, 2026 (September 12 UTC)
 
 After refreshing the browser login for the setup profile, all 12 doctor checks
 passed under `devbox-operator`. The first live On-Demand request for `smoke`
@@ -114,9 +116,11 @@ No matching instance was found through scoped request reconciliation or a separa
 EC2 client-token inventory query. The exact SDK request with `DryRun=true` returned
 `DryRunOperation`, establishing permission-check success without allocating.
 Regional Standard On-Demand quota was 32 vCPUs; this was not a quota rejection.
-No follow-up allocation was attempted, no permissions were broadened, and the
-original receipt remains dispatched. Await AWS verification before continuing
-live acceptance; inspect/reconcile the existing request before any separate launch.
+No follow-up allocation was attempted while verification was pending, and no
+permissions were broadened. The original receipt remains dispatched. After the
+user received AWS confirmation, scoped inventory was empty and reconciliation
+found no original request match. The separately confirmed CloudTrail rejection
+and completed verification justified a new request for the successful test below.
 
 The live failure exposed a diagnostic gap: PendingVerification was reduced to an
 unresolved outcome. The CLI now preserves this specific allowlisted service code
@@ -126,8 +130,42 @@ precedence if an instance appears. Arbitrary service codes/messages are neither
 stored nor echoed. The receipt remains dispatched and cannot launch again.
 The original receipt predates this fix and is intentionally not manually edited;
 its rejection evidence comes from CloudTrail. Controlled original/restart and
-redaction tests cover the new behavior. Allocation, restart rediscovery,
-termination and root-volume deletion acceptance are still pending.
+redaction tests cover the new behavior. The completed lifecycle results follow.
 
 The independent reviewer also rechecked this diagnostic fix and found no actionable
 issues. `make check`, lifecycle/CLI race tests, and `make build` pass after the fix.
+
+
+## Completed live lifecycle — September 11, 2026 (September 12 UTC)
+
+The user ran the workflow under `devbox-operator` in the existing Ohio foundation
+and supplied the JSON results. No changes to the selected account, deployment,
+owner, infrastructure or operator permissions were needed after AWS verification.
+
+| Observation | Result |
+| --- | --- |
+| Doctor | All 12 local, identity and deployed-foundation checks passed |
+| New launch | `up agent --on-demand --name smoke --timeout 5m --json` returned `allocated`, exit 0 |
+| Request | `8536eaf9e14db5dca5df8f3a4fd3f923`, created `2026-09-12T03:24:41.563592553Z` |
+| Instance | `i-03552eeeb6ee46dc6`, profile `agent`, name `smoke` |
+| Exact image | `ami-00adec9774170bad2` |
+| Exact template | `lt-0ef8072b1bcc495b1`, numeric version `1` |
+| Type and actual market | `c7i.2xlarge`, `on-demand` |
+| Restart rediscovery | In a new terminal, `ls --json` found the same instance/request/pins and reported `running`, exit 0 |
+| Root mapping | `/dev/sda1`, `vol-0dd89fc7073abd22d`, root=true, delete_on_termination=true |
+| First teardown | `down smoke --timeout 5m --json` returned `terminated`, EC2 state `terminated`, root deletion `deleted`, exit 0 |
+| Repeated teardown | The same command returned `already_terminated`, EC2 state `terminated`, exit 0 |
+
+The initial pending launch response had no root mappings and honestly reported
+`root_volume_deletion=unavailable`. The new-terminal inventory supplied the root
+volume ID. First teardown retained that ID and explicitly verified deletion.
+Repeated teardown no longer received block-device mappings from EC2 and returned
+`root_volume_deletion=unavailable` with an empty volume list. That describes the
+later observation; it does not retract the earlier verified deletion or falsely
+claim new deletion evidence. The controlled no-match test separately covers the
+case after terminated inventory disappears.
+
+Each invocation emitted parseable JSON; the request receipt announcement remained
+on stderr. `ls` obtains inventory from AWS and does not read receipts or cached
+instance IDs. SSM, bootstrap and readiness stayed `not_observed`, as expected for
+#8; no SSH/readiness result is claimed. The durable foundation is retained for #9.

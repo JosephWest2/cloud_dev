@@ -192,4 +192,5 @@ outcome can remain unresolved, including a crash immediately before sending.
 Losing the receipt cannot prevent `ls` or cleanup by `down INSTANCE_ID`.
 Read the [recovery/output contract](docs/contracts.md#instance-lifecycle-and-request-recovery-8)
 and [live acceptance procedure](docs/acceptance/08-lifecycle.md) for guarantees,
-volume verification, and recovery instructions. Live #8 acceptance is pending.
+volume verification, and recovery instructions. Live #8 acceptance passed, including
+new-terminal rediscovery, EC2 termination and verified root-volume deletion.
