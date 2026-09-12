@@ -86,6 +86,12 @@ func probeError(err error) error {
 }
 
 func observationError(i *Instance, err error) {
+	if i.SSM == "" || i.SSM == "not_observed" {
+		i.SSM = "unknown"
+	}
+	if i.Bootstrap == "" || i.Bootstrap == "not_observed" {
+		i.Bootstrap = "unknown"
+	}
 	i.Readiness = "unknown"
 	i.ObservationCode = "probe_unavailable"
 	var f *Failure

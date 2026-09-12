@@ -153,6 +153,12 @@ func Load(path string, overrides Overrides) (Config, error) {
 	if c.SSHIdentityFile != "" && !filepath.IsAbs(c.SSHIdentityFile) {
 		c.SSHIdentityFile = filepath.Join(filepath.Dir(path), c.SSHIdentityFile)
 	}
+	if c.SSHIdentityFile != "" {
+		c.SSHIdentityFile, err = filepath.Abs(c.SSHIdentityFile)
+		if err != nil {
+			return c, errors.New("cannot resolve ssh_identity_file to an absolute path")
+		}
+	}
 	if c.ProfileFile != "" && !filepath.IsAbs(c.ProfileFile) {
 		c.ProfileFile = filepath.Join(filepath.Dir(path), c.ProfileFile)
 	}

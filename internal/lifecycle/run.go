@@ -19,12 +19,13 @@ type Dependencies struct {
 	Store *Store
 }
 type Result struct {
-	SchemaVersion int    `json:"schema_version"`
-	Command       string `json:"command"`
-	OK            bool   `json:"ok"`
-	ExitCode      int    `json:"exit_code"`
-	Code          string `json:"code"`
-	Message       string `json:"message"`
+	RecoveryPrefix string `json:"-"`
+	SchemaVersion  int    `json:"schema_version"`
+	Command        string `json:"command"`
+	OK             bool   `json:"ok"`
+	ExitCode       int    `json:"exit_code"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
 	Outcome
 }
 
@@ -58,6 +59,7 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 	if err != nil {
 		return fail(failure("config_invalid", err.Error()), 2)
 	}
+	r.RecoveryPrefix = config.CommandPrefix(path, c)
 	var m config.Manifest
 	var p config.Profile
 	var store Store

@@ -19,7 +19,9 @@ No live AWS resources were changed for this slice by the implementation agent.
   host-key mismatch, concurrent trust writes, path/proxy escaping, bounded startup
   output filtering and binary passthrough, plugin version/logging guards,
   child-only token handoff, rejected out-of-scope StartSession, startup timeout,
-  and SSM cleanup on success/failure. The installed 1.2.835.0 plugin was exercised
+  and SSM cleanup on success/failure. A local inetd-mode sshd fixture verifies
+  a real OpenSSH master/multiplexed shell and preserves remote exit status 4,
+  without a listening port or changes to existing keys. The installed 1.2.835.0 plugin was exercised
   locally with isolated invalid test credentials and a loopback endpoint.
 - A Linux PTY test verifies foreground terminal ownership, interrupt delivery,
   resize and terminal mode restoration. Controlled SSH subprocess tests verify
@@ -194,7 +196,18 @@ that action does not terminate the EC2 instance.
 
 ## Live results and independent PR review
 
-Pending. Record actual test date, selected scope locally (no secrets), readiness
+A fresh agent reviewed draft PR #14 after creation. The review found a relative
+IdentityFile path that could fail from an editor's different working directory;
+it is now absolute, with a different-directory OpenSSH regression test. Review
+also confirmed the remote-exit-4/setup-timeout collision and hidden cleanup
+diagnostics found during local review. Fixes separate setup errors from SSH exit
+status, preserve sanitized proxy diagnostics, allow bounded SSM cleanup, and
+keep concurrent configuration variants in separate immutable files. The reviewer
+reported no blocking actionable findings in the reviewed working tree. A later
+race check found shared diagnostic-buffer writes, now serialized for non-file
+writers and covered by the race suite.
+
+Live evidence remains pending. Record actual test date, selected scope locally (no secrets), readiness
 signals in text/JSON, uname/user, Ctrl-C/resize/exit, transfer comparison, editor
 save/reconnect, failure diagnostics, termination/root deletion and repeated down.
 Do not close #9 or mark parent MVP acceptance complete before the required live

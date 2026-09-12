@@ -210,3 +210,10 @@ handoff/restoration, Ctrl-C and resize. Plugin setup now kills the entire ordina
 child process group before waiting for EOF, preventing a helper from extending
 the timeout by holding the pipe open. Shared launch receipt schema stays v1;
 manifest v3 binds the public key through rendered bootstrap/template pins.
+
+Review fixes additionally distinguish remote exit codes from setup errors, make
+identity paths absolute, preserve cleanup diagnostics, and store configuration
+variants separately so simultaneous callers cannot replace each other's selected
+profile. Non-file diagnostic writers shared by master/client are serialized.
+A local inetd-mode OpenSSH integration test now covers a real master/multiplexed
+shell and remote exit 4 without opening a listener or changing existing keys.

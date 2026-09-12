@@ -184,6 +184,8 @@ func artifacts(ctx context.Context, c config.Config, i lifecycle.Instance, confi
     ServerAliveCountMax 3
     ProxyCommand %s
 `, a.Alias, i.ID, identity, a.Alias, known, strings.Join(quoted, " "))
+	configHash := sha256.Sum256([]byte(a.Config))
+	a.ConfigPath = filepath.Join(a.Directory, "config-"+hex.EncodeToString(configHash[:8]))
 	if err = atomicFile(a.ConfigPath, []byte(a.Config)); err != nil {
 		return a, fail("ssh_config_unavailable", "cannot save generated SSH configuration")
 	}

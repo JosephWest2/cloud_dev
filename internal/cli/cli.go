@@ -281,12 +281,18 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 		}
 	}
 	if !r.OK {
+		prefix := r.RecoveryPrefix
+		if prefix == "" {
+			prefix = "devbox"
+		}
 		fmt.Fprintf(stderr, "devbox: %s: %s\n", r.Code, r.Message)
 		for _, i := range r.Instances {
-			fmt.Fprintf(stderr, "devbox: retained instance %s; inspect: devbox ls --json; retry access: devbox ssh %s; cleanup: devbox down %s --timeout 5m (same config/profile/region; manual cleanup until TTL ships)\n", i.ID, i.ID, i.ID)
+			fmt.Fprintf(stderr, "devbox: retained instance %s; inspect: %s ls --json; cleanup: %s down %s --timeout 5m (manual cleanup until TTL ships)\n", i.ID, prefix, prefix, i.ID)
 		}
 		if r.RequestID != "" {
-			fmt.Fprintf(stderr, "devbox: request %s; recover with devbox up --resume %s using the same config/profile/region\n", r.RequestID, r.RequestID)
+			if lifecycle.ValidRequest(r.RequestID) {
+				fmt.Fprintf(stderr, "devbox: request %s; recover with %s up --resume %s\n", r.RequestID, prefix, r.RequestID)
+			}
 		}
 	}
 	return r.ExitCode

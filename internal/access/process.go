@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -157,17 +158,33 @@ func proxy(ctx, setup context.Context, service *lifecycle.Service, c config.Conf
 	return 0, nil
 }
 
-func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdout, stderr io.Writer) int {
+type lockedWriter struct {
+	mu     sync.Mutex
+	writer io.Writer
+}
+
+func (w *lockedWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writer.Write(p)
+}
+
+func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdout, stderr io.Writer) (int, error) {
+	// Preserve a real terminal descriptor; serialize other writers shared by
+	// the master and interactive client (including embedded callers/test buffers).
+	if _, ok := stderr.(*os.File); !ok {
+		stderr = &lockedWriter{writer: stderr}
+	}
 	// Use a short private /tmp path to stay within Unix socket path limits even
 	// when XDG_STATE_HOME is long. Nothing secret is written to the control file.
 	dir, err := os.MkdirTemp("", "devbox-ssh-")
 	if err != nil {
-		return 1
+		return 1, fail("ssh_local_unavailable", "cannot create private control directory or start OpenSSH")
 	}
 	defer os.RemoveAll(dir)
 	socket := dir + "/control"
 	master := exec.CommandContext(ctx, "ssh", "-F", a.ConfigPath, "-M", "-N", "-S", socket, "-o", "ControlPersist=no", a.Alias)
-	master.WaitDelay = 2 * time.Second
+	master.WaitDelay = 7 * time.Second
 	master.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	master.Cancel = func() error {
 		if master.Process == nil {
@@ -175,11 +192,12 @@ func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdou
 		}
 		return syscall.Kill(-master.Process.Pid, syscall.SIGTERM)
 	}
-	// Diagnostics from SSH can include the plugin's credential-provider messages.
-	// Keep setup errors allowlisted; the interactive client's remote stderr is user data.
+	// The proxy discards provider/plugin stderr and filters startup output.
+	// Preserve its sanitized recovery IDs and ordinary OpenSSH diagnostics.
+	master.Stderr = stderr
 	if err = master.Start(); err != nil {
 		fmt.Fprintln(stderr, "devbox: cannot start OpenSSH")
-		return 1
+		return 1, fail("ssh_local_unavailable", "cannot create private control directory or start OpenSSH")
 	}
 	done := make(chan error, 1)
 	go func() { done <- master.Wait() }()
@@ -190,13 +208,24 @@ func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdou
 		exec.CommandContext(closeCtx, "ssh", "-F", a.ConfigPath, "-S", socket, "-O", "exit", a.Alias).Run()
 		syscall.Kill(-master.Process.Pid, syscall.SIGTERM)
 		if !stopped {
-			master.Process.Kill()
-			<-done
+			select {
+			case <-done:
+			case <-time.After(7 * time.Second):
+				master.Process.Kill()
+				<-done
+			}
 		}
+		// The proxy supervisor shares the master's group until its own worker
+		// has finished bounded SSM cleanup. Reap that group before returning.
+		deadline := time.Now().Add(7 * time.Second)
+		for syscall.Kill(-master.Process.Pid, 0) == nil && time.Now().Before(deadline) {
+			time.Sleep(20 * time.Millisecond)
+		}
+		syscall.Kill(-master.Process.Pid, syscall.SIGKILL)
 	}()
 	for {
 		if setup.Err() != nil {
-			return 4
+			return 4, setup.Err()
 		}
 		checkCtx, cancel := context.WithTimeout(setup, 500*time.Millisecond)
 		e := exec.CommandContext(checkCtx, "ssh", "-F", a.ConfigPath, "-S", socket, "-O", "check", a.Alias).Run()
@@ -206,15 +235,15 @@ func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdou
 		}
 		select {
 		case <-setup.Done():
-			return 4
+			return 4, setup.Err()
 		case <-done:
 			stopped = true
-			return 255
+			return 255, nil
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
 	shell := exec.CommandContext(ctx, "ssh", "-F", a.ConfigPath, "-S", socket, "-o", "ControlMaster=no", "-o", "ProxyCommand=false", "-tt", a.Alias)
 	shell.Stdin, shell.Stdout, shell.Stderr = stdin, stdout, stderr
 	shell.WaitDelay = 2 * time.Second
-	return exitCode(shell.Run())
+	return exitCode(shell.Run()), nil
 }

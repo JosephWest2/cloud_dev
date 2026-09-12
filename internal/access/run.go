@@ -21,7 +21,7 @@ type Options struct {
 type Dependencies struct {
 	New           func(context.Context, config.Config) (*lifecycle.Service, error)
 	Prerequisites func(context.Context, config.Config, config.Manifest) error
-	Shell         func(context.Context, context.Context, Artifacts, io.Reader, io.Writer, io.Writer) int
+	Shell         func(context.Context, context.Context, Artifacts, io.Reader, io.Writer, io.Writer) (int, error)
 }
 type Result struct {
 	lifecycle.Result
@@ -60,6 +60,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		r.ExitCode = 2
 		return r
 	}
+	r.RecoveryPrefix = config.CommandPrefix(o.ConfigPath, c)
 	m, err := config.LoadManifest(c.Manifest, c, config.Profile{Image: "agent"})
 	if err != nil {
 		return failure(fail("manifest_invalid", err.Error()))
@@ -84,8 +85,10 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		return failure(err)
 	}
 	i := &r.Instances[0]
-	r.RequestID = i.RequestID
-	fmt.Fprintf(stderr, "devbox: selected instance %s; inspect: devbox ls; retry: devbox ssh %s; teardown: devbox down %s --timeout 5m (use the same config/profile/region; manual cleanup is required)\n", i.ID, i.ID, i.ID)
+	if lifecycle.ValidRequest(i.RequestID) {
+		r.RequestID = i.RequestID
+	}
+	fmt.Fprintf(stderr, "devbox: selected instance %s; inspect: %s ls; retry: %s ssh %s; teardown: %s down %s --timeout 5m (manual cleanup is required)\n", i.ID, r.RecoveryPrefix, r.RecoveryPrefix, i.ID, r.RecoveryPrefix, i.ID)
 	if err = service.WaitReady(setup, m, i, stderr); err != nil {
 		return failure(err)
 	}
@@ -103,6 +106,13 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	case "proxy":
 		code, e := proxy(ctx, setup, service, c, i.ID, stdin, stdout, stderr)
 		if e != nil {
+			if code == 255 {
+				r.OK = false
+				r.ExitCode = 255
+				r.Code = "plugin_connection_failed"
+				r.Message = "SSM SSH transport failed; check credentials, signed OpenDataChannel permission and remote sshd; retry or clean up by instance ID"
+				return r
+			}
 			return failure(e)
 		}
 		r.ExitCode = code
@@ -111,9 +121,9 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		if shell == nil {
 			shell = interactive
 		}
-		r.ExitCode = shell(ctx, setup, a, stdin, stdout, stderr)
-		if r.ExitCode == 4 {
-			return failure(context.DeadlineExceeded)
+		r.ExitCode, err = shell(ctx, setup, a, stdin, stdout, stderr)
+		if err != nil {
+			return failure(err)
 		}
 	default:
 		return failure(fail("usage_invalid", "unknown access command"))

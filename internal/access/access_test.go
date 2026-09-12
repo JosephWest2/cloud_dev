@@ -171,7 +171,7 @@ case " $* " in
  *" -O check "*) exit 0;;
  *" -O exit "*) exit 0;;
  *" -M "*) sleep 5;;
- *) sleep .08; exit 7;;
+ *) sleep .08; exit 4;;
 esac
 `
 	ssh := testutil.Write(t, filepath.Join(dir, "ssh"), script)
@@ -179,7 +179,50 @@ esac
 	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 	setup, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if code := interactive(context.Background(), setup, a, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); code != 7 {
+	if code, err := interactive(context.Background(), setup, a, strings.NewReader(""), &bytes.Buffer{}, &bytes.Buffer{}); code != 4 || err != nil {
 		t.Fatalf("session killed by setup deadline: %d", code)
+	}
+}
+
+func TestConfigIdentityIsAbsoluteAndProfilesDoNotOverwrite(t *testing.T) {
+	c, i, path := fixture(t)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	relative, err := filepath.Rel(cwd, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	testutil.Write(t, path, testutil.Config+"ssh_identity_file='keys/dedicated'\n")
+	c, err = config.Load(relative, config.Overrides{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := filepath.Join(filepath.Dir(path), "keys", "dedicated")
+	if c.SSHIdentityFile != expected {
+		t.Fatalf("identity is cwd dependent: %s", c.SSHIdentityFile)
+	}
+	a, err := artifacts(context.Background(), c, i, relative, "/bin/devbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("ssh", "-G", "-F", a.ConfigPath, a.Alias)
+	cmd.Dir = t.TempDir()
+	out, err := cmd.Output()
+	if err != nil || !strings.Contains(string(out), "identityfile "+expected) {
+		t.Fatalf("different cwd: %v %s", err, out)
+	}
+	c.AWSProfile = "second-profile"
+	second, err := artifacts(context.Background(), c, i, relative, "/bin/devbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ConfigPath == a.ConfigPath {
+		t.Fatal("concurrent profile can replace another invocation's config")
+	}
+	data, _ := os.ReadFile(a.ConfigPath)
+	if string(data) != a.Config {
+		t.Fatal("first configuration changed")
 	}
 }

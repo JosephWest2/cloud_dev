@@ -39,7 +39,8 @@ func supervise(args []string) int {
 		}
 		return err
 	}
-	cmd.WaitDelay = 2 * time.Second
+	// Allow the access proxy's independent 5s SSM cleanup before force-kill.
+	cmd.WaitDelay = 7 * time.Second
 	if err = cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start devbox worker")
 		return 1
