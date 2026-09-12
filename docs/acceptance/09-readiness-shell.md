@@ -2,8 +2,8 @@
 
 Implementation and controlled verification: September 12, 2026.
 **Live foundation, operator doctor, worker readiness and SSH command checks are complete.**
-Live automated terminal input/interrupt/resize/exit checks also pass. User terminal
-confirmation, file transfer, editor and cleanup acceptance remain pending.
+Live terminal input/interrupt/resize/exit and SCP/SFTP checks pass, and the user
+confirmed keyboard input, Ctrl-C and exit. Editor and cleanup acceptance remain pending.
 
 ## Controlled evidence
 
@@ -101,7 +101,10 @@ sleep 60
 
 Expect `whoami` to print `devbox`. Interrupt sleep with Ctrl-C and verify the
 shell remains usable. Resize your terminal, run `stty size`, then `exit`. Check
-that your local terminal behaves normally. The worker remains allocated.
+that your local terminal behaves normally. A bare `exit` preserves the last shell
+status, including 130 after Ctrl-C; use `exit 0` for an explicitly successful exit.
+The CLI preserves that status and reports `remote_exit` for statuses 1–254.
+The worker remains allocated.
 
 Export configuration for external OpenSSH clients:
 
@@ -297,3 +300,23 @@ previous ignored disposition. Piped input keeps the existing path.
 
 User terminal confirmation, transfer/editor and teardown remain pending. The
 worker is retained; no additional machine was launched for this correction.
+
+
+## User terminal confirmation and transfers (September 12, 2026)
+
+- User terminal evidence confirmed `whoami` returned `devbox`, keyboard input
+  worked, Ctrl-C interrupted `sleep 30` and cleared an unfinished command, and
+  `exit` returned to the local shell.
+- Exiting immediately after Ctrl-C preserved status 130. The generic `ssh_failed`
+  diagnostic was misleading; statuses 1–254 now report `remote_exit` with the
+  numeric status and explain `exit 0`. Status 255 retains the ambiguous SSH
+  transport/authentication failure diagnostic. A live repeat of sleep/Ctrl-C/exit
+  verified exit 130 and the new message. `make check` passed, and independent
+  review found no actionable issue with the diagnostic change.
+- SCP uploaded and downloaded a 1 MiB binary fixture using the generated strict
+  SSH config; byte comparison passed. An explicit SFTP batch uploaded/downloaded
+  the same fixture and passed byte comparison. Temporary local and remote files
+  were removed. Sanitized results are in the ignored acceptance-output directory.
+
+Remote editor save/reconnect and final termination/root-volume deletion remain
+pending. The existing worker remains allocated for editor acceptance.

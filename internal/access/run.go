@@ -137,7 +137,10 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 		r.Code = r.Status
 		r.Message = "use the generated file with ssh/scp/sftp -F or your remote editor's SSH config setting"
 	}
-	if !r.OK {
+	if !r.OK && r.ExitCode > 0 && r.ExitCode < 255 {
+		r.Code = "remote_exit"
+		r.Message = fmt.Sprintf("SSH session closed with exit status %d; exit without an argument preserves the remote shell's last status (130 after Ctrl-C); use exit 0 for a successful shell exit; the instance remains allocated", r.ExitCode)
+	} else if !r.OK {
 		r.Code = "ssh_failed"
 		r.Message = "OpenSSH failed or the remote shell returned a nonzero exit status; for authentication failure load the matching key with ssh-add; inspect/retry or tear down the retained instance"
 	}
