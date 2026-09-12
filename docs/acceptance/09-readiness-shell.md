@@ -2,7 +2,8 @@
 
 Implementation and controlled verification: September 12, 2026.
 **Live foundation, operator doctor, worker readiness and SSH command checks are complete.**
-Human interactive SSH, file transfer, editor and cleanup acceptance remain pending.
+Live automated terminal input/interrupt/resize/exit checks also pass. User terminal
+confirmation, file transfer, editor and cleanup acceptance remain pending.
 
 ## Controlled evidence
 
@@ -267,3 +268,32 @@ Local sanitized results are in the ignored foundation acceptance-output director
 The existing worker remains allocated for the human terminal/editor checks; do
 not launch another worker. Interactive Ctrl-C/resize/exit, transfer/editor and
 termination/root-deletion evidence remain required before closing #9.
+
+
+## Interactive keyboard correction (September 12, 2026)
+
+The user reached the remote prompt but could not type. Local process inspection
+showed the SSH master stopped in a background process group, while its multiplexed
+client owned the foreground group. OpenSSH passes the client's terminal file
+descriptors to its master; Linux stopped that master when it tried to read input.
+The earlier real-SSH test used a pipe, and the terminal test did not include the
+SSH master/client pair, so neither exercised this failure.
+
+After authentication, the multiplexed client now joins the master's group and
+makes that group the terminal foreground owner. The worker restores the original
+foreground group and termios after master/proxy cleanup, preserving SIGTTOU's
+previous ignored disposition. Piped input keeps the existing path.
+
+- A new real OpenSSH/controlling-PTY regression reproduced the missing keyboard
+  input before the fix. It now checks that both SSH processes share the foreground
+  group, keyboard commands run remotely, Ctrl-C interrupts a command, resize
+  reaches the remote terminal, and exit 4 is preserved. Both normal exit and
+  SIGTERM cancellation restore terminal ownership and modes.
+- The actual rebuilt `devbox ssh smoke --aws-profile devbox-operator` was exercised
+  through a controlling PTY against the existing worker. `whoami` returned
+  `devbox`, a typed command printed `KEYBOARD_OK`, Ctrl-C interrupted `sleep 30`,
+  `stty size` returned `37 101` after a local resize, and `exit` returned code 0.
+- `make check` and `go test -race ./internal/access ./cmd/devbox` passed.
+
+User terminal confirmation, transfer/editor and teardown remain pending. The
+worker is retained; no additional machine was launched for this correction.

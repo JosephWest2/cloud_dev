@@ -16,7 +16,8 @@ import (
 
 // Exercise an actual OpenSSH master and multiplexed shell over an inetd stdio
 // server. No listening port, AWS calls, existing keys or authorized_keys changes.
-func TestLocalSSHMasterPreservesRemoteExitStatus(t *testing.T) {
+func localSSHConfig(t *testing.T) string {
+	t.Helper()
 	sshd, err := exec.LookPath("sshd")
 	if err != nil {
 		t.Skip("local inetd sshd fixture unavailable")
@@ -40,6 +41,11 @@ func TestLocalSSHMasterPreservesRemoteExitStatus(t *testing.T) {
 	host, _ := os.ReadFile(hostKey + ".pub")
 	known := testutil.Write(t, filepath.Join(dir, "known_hosts"), "local-test "+strings.Join(strings.Fields(string(host))[:2], " ")+"\n")
 	cfg := testutil.Write(t, filepath.Join(dir, "client_config"), "Host local-test\n HostName local-test\n User "+who.Username+"\n IdentityFile "+clientKey+"\n IdentitiesOnly yes\n BatchMode yes\n StrictHostKeyChecking yes\n UserKnownHostsFile "+known+"\n GlobalKnownHostsFile /dev/null\n ProxyCommand "+ShellQuote(sshd)+" -i -f "+ShellQuote(server)+"\n")
+	return cfg
+}
+
+func TestLocalSSHMasterPreservesRemoteExitStatus(t *testing.T) {
+	cfg := localSSHConfig(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	setup, stop := context.WithTimeout(ctx, 5*time.Second)

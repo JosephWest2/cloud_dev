@@ -197,6 +197,9 @@ func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdou
 		return 1, fail("ssh_local_unavailable", "cannot create private control directory or start OpenSSH")
 	}
 	defer os.RemoveAll(dir)
+	// Restore after master/proxy cleanup, which can also touch terminal modes.
+	restoreTerminal := func() {}
+	defer func() { restoreTerminal() }()
 	socket := dir + "/control"
 	master := exec.CommandContext(ctx, "ssh", "-F", a.ConfigPath, "-M", "-N", "-S", socket, "-o", "ControlPersist=no", a.Alias)
 	master.WaitDelay = 7 * time.Second
@@ -259,6 +262,7 @@ func interactive(ctx, setup context.Context, a Artifacts, stdin io.Reader, stdou
 	}
 	shell := exec.CommandContext(ctx, "ssh", "-F", a.ConfigPath, "-S", socket, "-o", "ControlMaster=no", "-o", "ProxyCommand=false", "-tt", a.Alias)
 	shell.Stdin, shell.Stdout, shell.Stderr = stdin, stdout, stderr
+	restoreTerminal = foregroundShell(shell, stdin, master.Process.Pid)
 	shell.WaitDelay = 2 * time.Second
 	return exitCode(shell.Run()), nil
 }
