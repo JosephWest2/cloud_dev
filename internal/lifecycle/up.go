@@ -2,10 +2,12 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 )
 
 type UpOptions struct {
@@ -128,9 +130,16 @@ func (s *Service) Up(ctx context.Context, m config.Manifest, p config.Profile, o
 			}
 		}
 	}
-	if runErr != nil && (apiCode(runErr, "UnauthorizedOperation") || apiCode(runErr, "AuthFailure") || apiCode(runErr, "IdempotentParameterMismatch") || apiCode(runErr, "InsufficientInstanceCapacity")) {
-		return result, failure("launch_rejected", "EC2 rejected the launch; check restricted operator permissions, original request parameters and capacity; resume this request to inspect its outcome before considering a separate launch")
+	// Keep only recognized service codes, never the raw SDK/provider message.
+	// A service error does not undo dispatch or authorize a later allocation.
+	var apiErr smithy.APIError
+	if errors.As(runErr, &apiErr) && launchFailure(apiErr.ErrorCode()) != nil {
+		r.LaunchErrorCode = apiErr.ErrorCode()
+		if err = store.Save(r); err != nil {
+			return result, err
+		}
 	}
+
 	return s.reconcile(ctx, r, store, result)
 }
 func (s *Service) requestMatches(ctx context.Context, r Receipt) ([]Instance, error) {
@@ -175,6 +184,9 @@ func (s *Service) reconcile(ctx context.Context, r Receipt, store Store, result 
 			}
 		}
 	}
+	if err := launchFailure(r.LaunchErrorCode); err != nil {
+		return result, err
+	}
 	return result, failure("outcome_unresolved", "launch outcome remains unresolved; safely repeat up --resume with this request ID; use ls/down for inspection and cleanup; a new up is an independent allocation and is not a safe retry")
 }
 func (s *Service) finish(ctx context.Context, r Receipt, store Store, result Outcome, found []Instance) (Outcome, error) {
@@ -183,6 +195,7 @@ func (s *Service) finish(ctx context.Context, r Receipt, store Store, result Out
 		return result, failure("request_ambiguous", "multiple instances match this request; inspect all returned IDs and clean up by explicit ID; no further allocation performed")
 	}
 	r.State = "observed"
+	r.LaunchErrorCode = ""
 	r.InstanceIDs = []string{found[0].ID}
 	if err := store.Save(r); err != nil {
 		return result, err
@@ -210,4 +223,17 @@ func (s *Service) finish(ctx context.Context, r Receipt, store Store, result Out
 	}
 	result.Status = "allocated"
 	return result, nil
+}
+
+// Messages describe the original launch response, not current account status.
+// Reconciliation always takes precedence when AWS subsequently exposes an instance.
+func launchFailure(code string) error {
+	switch code {
+	case "PendingVerification":
+		return failure("launch_pending_verification", "EC2 reported pending account verification during the original launch; wait for AWS's confirmation email and contact AWS Support if validation remains pending; keep this request ID and use up --resume to reconcile before considering a separate launch; resume does not resubmit")
+	case "UnauthorizedOperation", "AuthFailure", "IdempotentParameterMismatch", "InsufficientInstanceCapacity":
+		return failure("launch_rejected", "EC2 rejected the original launch; check restricted operator permissions, original request parameters and capacity; resume this request to inspect its outcome before considering a separate launch")
+	default:
+		return nil
+	}
 }

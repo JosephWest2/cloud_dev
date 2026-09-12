@@ -224,3 +224,14 @@ no deletion was observed yet. Retained/unavailable evidence can accompany a
 successful EC2 termination. A timeout is exit 4 and keeps IDs. Service failures,
 conflicts and unresolved outcomes use exit 1; usage/config/profile errors use 2.
 Receipt paths/IDs are also preserved when a later receipt save fails.
+
+Recognized launch rejections are preserved as the optional schema-v1 receipt field
+`launch_error_code` (an allowlisted EC2 code, never the service's raw message).
+A dispatched request still reconciles first and never resubmits. When no matching
+instance appears within the bound, `PendingVerification` produces
+`launch_pending_verification` with guidance to await the AWS verification email
+or contact AWS Support. The message describes the **original** response, not a
+fresh account-status check. Other previously recognized rejection codes retain
+`launch_rejected`; unknown/transport failures remain `outcome_unresolved`.
+Observation of an instance clears the historical error. Older receipts without
+this field remain readable; no rejected receipt is reset to prepared.

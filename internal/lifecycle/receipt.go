@@ -34,13 +34,14 @@ type Parameters struct {
 	BootstrapSHA256    string       `json:"bootstrap_sha256"`
 }
 type Receipt struct {
-	SchemaVersion int        `json:"schema_version"`
-	RequestID     string     `json:"request_id"`
-	ClientToken   string     `json:"client_token"`
-	CreatedAt     string     `json:"created_at"`
-	State         string     `json:"state"` // prepared -> dispatched -> observed; never moves back
-	Parameters    Parameters `json:"parameters"`
-	InstanceIDs   []string   `json:"instance_ids"`
+	SchemaVersion   int        `json:"schema_version"`
+	RequestID       string     `json:"request_id"`
+	ClientToken     string     `json:"client_token"`
+	CreatedAt       string     `json:"created_at"`
+	State           string     `json:"state"` // prepared -> dispatched -> observed; never moves back
+	Parameters      Parameters `json:"parameters"`
+	InstanceIDs     []string   `json:"instance_ids"`
+	LaunchErrorCode string     `json:"launch_error_code,omitempty"`
 }
 
 var requestRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -68,6 +69,9 @@ func (r Receipt) validate(id string) error {
 	}
 	if (r.State == "prepared" && len(r.InstanceIDs) != 0) || (r.State == "observed" && len(r.InstanceIDs) == 0) {
 		return failure("receipt_invalid", "request receipt state and observed identities disagree; restore an intact receipt")
+	}
+	if r.LaunchErrorCode != "" && (r.State != "dispatched" || launchFailure(r.LaunchErrorCode) == nil) {
+		return failure("receipt_invalid", "request receipt has an invalid recorded launch error; restore an intact receipt")
 	}
 	for _, id := range r.InstanceIDs {
 		if !instanceRE.MatchString(id) {

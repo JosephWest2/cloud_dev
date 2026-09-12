@@ -99,3 +99,35 @@ after atomic receipt replacement, and duplicate request IDs, unexpected tokens,
 concurrent friendly-name collisions, and terminated-request replay. Final
 `make check` and `go test -race ./internal/lifecycle ./internal/cli` pass.
 This review and automated evidence do not replace the pending live procedure.
+
+## Live attempt — September 11, 2026 (September 12 UTC)
+
+After refreshing the browser login for the setup profile, all 12 doctor checks
+passed under `devbox-operator`. The first live On-Demand request for `smoke`
+selected the manifest's pinned AMI/template and `c7i.2xlarge`.
+
+CloudTrail records the original RunInstances call at **2026-09-12 01:53:25 UTC**
+with **Client.PendingVerification**. AWS reported that regional account validation
+was in progress and would be confirmed by email, normally within minutes but
+potentially taking four hours; unresolved validation requires AWS Support.
+No matching instance was found through scoped request reconciliation or a separate
+EC2 client-token inventory query. The exact SDK request with `DryRun=true` returned
+`DryRunOperation`, establishing permission-check success without allocating.
+Regional Standard On-Demand quota was 32 vCPUs; this was not a quota rejection.
+No follow-up allocation was attempted, no permissions were broadened, and the
+original receipt remains dispatched. Await AWS verification before continuing
+live acceptance; inspect/reconcile the existing request before any separate launch.
+
+The live failure exposed a diagnostic gap: PendingVerification was reduced to an
+unresolved outcome. The CLI now preserves this specific allowlisted service code
+in the receipt and gives static account-verification guidance after bounded
+reconciliation. Restart keeps the original diagnostic; AWS inventory takes
+precedence if an instance appears. Arbitrary service codes/messages are neither
+stored nor echoed. The receipt remains dispatched and cannot launch again.
+The original receipt predates this fix and is intentionally not manually edited;
+its rejection evidence comes from CloudTrail. Controlled original/restart and
+redaction tests cover the new behavior. Allocation, restart rediscovery,
+termination and root-volume deletion acceptance are still pending.
+
+The independent reviewer also rechecked this diagnostic fix and found no actionable
+issues. `make check`, lifecycle/CLI race tests, and `make build` pass after the fix.

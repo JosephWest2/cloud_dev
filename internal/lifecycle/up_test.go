@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/aws/smithy-go"
 )
 
 func setupUp(t *testing.T) (*Service, config.Manifest, config.Profile, Store, *fakeEC2) {
@@ -364,5 +365,64 @@ func TestRequestAndConcurrentNameConflictsPreserveIDs(t *testing.T) {
 				t.Fatal("conflict accepted")
 			}
 		})
+	}
+}
+
+func TestLaunchRejectionSurvivesRestartWithoutRawDiagnostics(t *testing.T) {
+	for _, code := range []string{"PendingVerification", "UnauthorizedOperation", "UnexpectedSecretCode"} {
+		t.Run(code, func(t *testing.T) {
+			s, m, p, store, api := setupUp(t)
+			api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(), nil }
+			api.run = func(*ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+				return nil, &smithy.GenericAPIError{Code: code, Message: "SECRET raw AWS message"}
+			}
+			first, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, quiet)
+			want := "outcome_unresolved"
+			if code == "PendingVerification" {
+				want = "launch_pending_verification"
+			} else if code == "UnauthorizedOperation" {
+				want = "launch_rejected"
+			}
+			var f *Failure
+			if !errors.As(err, &f) || f.Code != want || first.Status != "outcome_unresolved" || first.RequestID == "" {
+				t.Fatalf("original diagnostic: %+v %v", first, err)
+			}
+			resumed, err := testService(api).Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: first.RequestID}, store, quiet)
+			if !errors.As(err, &f) || f.Code != want || resumed.RequestID != first.RequestID || api.launches != 1 {
+				t.Fatalf("restart diagnostic or dispatch: %+v %v", resumed, err)
+			}
+			raw, err := os.ReadFile(store.Path(first.RequestID))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw)+f.Message, "SECRET") || strings.Contains(string(raw), "UnexpectedSecretCode") {
+				t.Fatal("untrusted SDK diagnostic persisted or exposed")
+			}
+		})
+	}
+}
+
+func TestObservedInstanceOverridesRecordedLaunchRejection(t *testing.T) {
+	s, m, p, store, api := setupUp(t)
+	r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
+	r.State = "dispatched"
+	r.LaunchErrorCode = "PendingVerification"
+	unlock, err := store.Lock(context.Background(), r.RequestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	i := launched(launchInput(r))
+	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(i), nil }
+	result, err := s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
+	if err != nil || result.Status != "allocated" || api.launches != 0 {
+		t.Fatalf("historical error overrode inventory: %+v %v", result, err)
+	}
+	saved, err := store.Load(r.RequestID)
+	if err != nil || saved.State != "observed" || saved.LaunchErrorCode != "" {
+		t.Fatalf("historical error not cleared: %+v %v", saved, err)
 	}
 }
