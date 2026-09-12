@@ -19,6 +19,7 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/lifecycle"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/smithy-go"
 )
 
 var sessionRE = regexp.MustCompile(`^[A-Za-z0-9_-]{1,96}$`)
@@ -97,6 +98,10 @@ func proxy(ctx, setup context.Context, service *lifecycle.Service, c config.Conf
 		}()
 	}
 	if err != nil {
+		var api smithy.APIError
+		if errors.As(err, &api) && api.ErrorCode() == "AccessDeniedException" {
+			return 1, fail("session_denied", "AWS denied StartSession; check the operator policy for the scoped instance and AWS-StartSSHSession document, including SessionDocumentAccessCheck")
+		}
 		return 1, fail("session_unavailable", "SSM could not start the SSH tunnel; check AWS-StartSSHSession/StartSession permissions and SSM connectivity")
 	}
 	if out == nil || !sessionRE.MatchString(aws.ToString(out.SessionId)) || aws.ToString(out.TokenValue) == "" || aws.ToString(out.StreamUrl) == "" {
@@ -152,6 +157,16 @@ func proxy(ctx, setup context.Context, service *lifecycle.Service, c config.Conf
 		command.Cancel()
 	}
 	err = command.Wait()
+	// OpenSSH terminates its proxy after closing an established connection.
+	// The SSH caller owns authentication/remote exit status; cancellation here
+	// is expected shutdown, not evidence of a transport failure.
+	if ctx.Err() != nil {
+		select {
+		case <-ready:
+			return 0, nil
+		default:
+		}
+	}
 	if copyErr != nil || err != nil {
 		return 255, fail("plugin_connection_failed", "SSM SSH transport failed; verify plugin version, current credentials, signed OpenDataChannel permission and remote sshd; retry by instance ID")
 	}

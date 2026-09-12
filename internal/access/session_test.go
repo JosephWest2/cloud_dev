@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	et "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
+	"github.com/aws/smithy-go"
 )
 
 type accessEC2 struct {
@@ -38,6 +39,7 @@ type sessionAPI struct {
 	*ssm.Client
 	starts, ends int
 	cleanupErr   bool
+	startErr     error
 }
 
 func (a *sessionAPI) StartSession(_ context.Context, in *ssm.StartSessionInput, _ ...func(*ssm.Options)) (*ssm.StartSessionOutput, error) {
@@ -45,6 +47,9 @@ func (a *sessionAPI) StartSession(_ context.Context, in *ssm.StartSessionInput, 
 		panic("unsafe session")
 	}
 	a.starts++
+	if a.startErr != nil {
+		return nil, a.startErr
+	}
 	return &ssm.StartSessionOutput{SessionId: aws.String("devbox-test-session"), StreamUrl: aws.String("wss://example.invalid"), TokenValue: aws.String("SECRET_TOKEN")}, nil
 }
 func (a *sessionAPI) TerminateSession(ctx context.Context, in *ssm.TerminateSessionInput, _ ...func(*ssm.Options)) (*ssm.TerminateSessionOutput, error) {
@@ -58,7 +63,7 @@ func (a *sessionAPI) TerminateSession(ctx context.Context, in *ssm.TerminateSess
 	return &ssm.TerminateSessionOutput{}, nil
 }
 func TestProxyScopeTokenHandoffAndCleanup(t *testing.T) {
-	for _, variant := range []string{"success", "startup failure", "timeout", "scope", "cleanup failure"} {
+	for _, variant := range []string{"success", "startup failure", "timeout", "scope", "cleanup failure", "denied", "API failure", "closed connection"} {
 		t.Run(variant, func(t *testing.T) {
 			testutil.IsolateAWS(t)
 			dir := t.TempDir()
@@ -68,6 +73,9 @@ func TestProxyScopeTokenHandoffAndCleanup(t *testing.T) {
 			if variant == "startup failure" {
 				behavior = "echo SECRET_STARTUP; echo SECRET_ERROR >&2; exit 1"
 			}
+			if variant == "closed connection" {
+				behavior = "printf 'SSH-2.0-test\\r\\n'; sleep 20"
+			}
 			if variant == "timeout" {
 				behavior = "sleep 20"
 			}
@@ -76,14 +84,48 @@ func TestProxyScopeTokenHandoffAndCleanup(t *testing.T) {
 			t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
 			c := config.Config{ExpectedAccount: "123456789012", Region: "us-east-2", Deployment: "test", Owner: "test-owner", AWSProfile: "test"}
 			api := &sessionAPI{cleanupErr: variant == "cleanup failure"}
+			if variant == "denied" {
+				api.startErr = &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "SECRET_PROVIDER"}
+			}
+			if variant == "API failure" {
+				api.startErr = &smithy.GenericAPIError{Code: "SECRET_CODE", Message: "SECRET_PROVIDER"}
+			}
 			s := &lifecycle.Service{Scope: c, API: &accessEC2{wrong: variant == "scope"}, SSM: api}
 			setup, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 			defer cancel()
 			var out, diag bytes.Buffer
-			code, err := proxy(context.Background(), setup, s, c, "i-12345678", strings.NewReader(""), &out, &diag)
+			ctx := context.Background()
+			if variant == "closed connection" {
+				var closeConnection context.CancelFunc
+				ctx, closeConnection = context.WithCancel(ctx)
+				defer closeConnection()
+				outWriter := &cancelWriter{Writer: &out, cancel: closeConnection}
+				// Cancel only once SSH identification is forwarded, as OpenSSH
+				// does when closing its established transport.
+				code, err := proxy(ctx, setup, s, c, "i-12345678", strings.NewReader(""), outWriter, &diag)
+				if code != 0 || err != nil || api.starts != 1 || api.ends != 1 {
+					t.Fatalf("normal proxy shutdown: %d %v", code, err)
+				}
+				return
+			}
+			code, err := proxy(ctx, setup, s, c, "i-12345678", strings.NewReader(""), &out, &diag)
 			if variant == "scope" {
 				if err == nil || api.starts != 0 || api.ends != 0 {
 					t.Fatal("out of scope session")
+				}
+				return
+			}
+			if variant == "denied" || variant == "API failure" {
+				want := "session_unavailable"
+				if variant == "denied" {
+					want = "session_denied"
+				}
+				var failure *lifecycle.Failure
+				if code != 1 || !errors.As(err, &failure) || failure.Code != want || api.starts != 1 || api.ends != 0 || strings.Contains(err.Error()+out.String()+diag.String(), "SECRET") {
+					t.Fatalf("unsafe API diagnostic: code=%d error=%v", code, err)
+				}
+				if _, e := os.Stat(argsFile); !os.IsNotExist(e) {
+					t.Fatal("plugin launched after denied session")
 				}
 				return
 			}
@@ -131,4 +173,16 @@ func TestInstalledPluginVersionAndStartupAdapter(t *testing.T) {
 	if err = copySSH(&out, bytes.NewReader(raw.Bytes())); err == nil || out.Len() != 0 {
 		t.Fatal("real plugin startup error entered SSH stream")
 	}
+}
+
+// cancelWriter models OpenSSH closing after receiving the SSH identification.
+type cancelWriter struct {
+	io.Writer
+	cancel context.CancelFunc
+}
+
+func (w *cancelWriter) Write(p []byte) (int, error) {
+	n, err := w.Writer.Write(p)
+	w.cancel()
+	return n, err
 }

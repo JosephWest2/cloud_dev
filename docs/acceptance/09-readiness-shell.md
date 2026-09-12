@@ -1,9 +1,8 @@
 # Issue #9 readiness and SSH acceptance
 
 Implementation and controlled verification: September 12, 2026.
-**Live foundation update and operator doctor validation are complete.**
-Worker readiness, interactive SSH, file transfer, editor and cleanup acceptance
-remain pending.
+**Live foundation, operator doctor, worker readiness and SSH command checks are complete.**
+Human interactive SSH, file transfer, editor and cleanup acceptance remain pending.
 
 ## Controlled evidence
 
@@ -208,7 +207,7 @@ reported no blocking actionable findings in the reviewed working tree. A later
 race check found shared diagnostic-buffer writes, now serialized for non-file
 writers and covered by the race suite.
 
-Live evidence remains pending. Record actual test date, selected scope locally (no secrets), readiness
+Remaining live evidence is listed below. Record actual test date, selected scope locally (no secrets), readiness
 signals in text/JSON, uname/user, Ctrl-C/resize/exit, transfer comparison, editor
 save/reconnect, failure diagnostics, termination/root deletion and repeated down.
 Do not close #9 or mark parent MVP acceptance complete before the required live
@@ -235,3 +234,36 @@ evidence is recorded.
 
 Live shell, transfer/editor, failure/recovery and teardown checks are still the
 remaining acceptance gate; the issue and PR remain open/draft.
+
+
+## Live readiness and SSH IAM correction (September 12, 2026)
+
+- The user's On-Demand `smoke` launch progressed from EC2 pending/SSM unregistered
+  to EC2 running/SSM online/bootstrap complete and returned `ready`.
+- Initial SSH failed before authentication. A direct SDK diagnostic exposed only
+  the allowlisted `AccessDeniedException` code and denied instance ARN. The
+  operator's `Bool` document-access condition rejected this explicit-document
+  request. Changed it to AWS's documented `BoolIfExists` pattern while retaining
+  account, region, ownership tags and the exact SSH document grant.
+- An independent agent reviewed the correction with no blocking findings. Mock
+  policy tests pin those restrictions. Reviewed and applied a saved plan whose
+  only resource change was that condition in the operator inline policy; exported
+  the updated manifest and passed operator doctor again.
+- Under the restricted operator, `AWS-StartSSHSession` port 22 succeeded and its
+  session was immediately terminated. Requests with omitted DocumentName,
+  explicit `SSM-SessionManagerRunShell`, and `AWS-StartPortForwardingSession` were
+  all denied on their document ARNs. No native shell/forwarding sessions opened.
+- Real OpenSSH using the generated strict config and installed plugin returned
+  exit 0, `Linux 7.0.0-1012-aws x86_64`, and user `devbox` on the existing worker.
+  This also verifies the scoped signed data-channel grant. Normal proxy shutdown
+  initially emitted a misleading transport error; expected cancellation after SSH
+  identification now closes quietly, with a regression test and unchanged bounded
+  SSM cleanup. A second live SSH run confirmed exit 0 without the false error. OpenSSH remains responsible for authentication/remote exit status.
+- API errors now distinguish an allowlisted `session_denied` diagnostic from
+  connectivity errors without printing raw provider messages. Controlled tests
+  cover denial/redaction/no plugin launch, and the access race suite passes.
+
+Local sanitized results are in the ignored foundation acceptance-output directory.
+The existing worker remains allocated for the human terminal/editor checks; do
+not launch another worker. Interactive Ctrl-C/resize/exit, transfer/editor and
+termination/root-deletion evidence remain required before closing #9.

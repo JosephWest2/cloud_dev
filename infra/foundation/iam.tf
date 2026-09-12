@@ -82,7 +82,9 @@ locals {
       Sid = "SSHOwnedInstances", Effect = "Allow", Action = ["ssm:StartSession"], Resource = ["${local.ec2}:instance/*"]
       Condition = {
         StringEquals = merge(local.ssm_scope, { "aws:RequestedRegion" = var.region })
-        Bool         = { "ssm:SessionDocumentAccessCheck" = "true" }
+        # Explicit session documents can omit this context key. Keep the check
+        # for default-document requests, and authorize only SSHDocument below.
+        BoolIfExists = { "ssm:SessionDocumentAccessCheck" = "true" }
       }
     },
     { Sid = "SSHDocument", Effect = "Allow", Action = ["ssm:StartSession"], Resource = ["arn:aws:ssm:${var.region}::document/AWS-StartSSHSession"] },

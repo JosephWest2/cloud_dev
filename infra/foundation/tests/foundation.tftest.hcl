@@ -114,6 +114,20 @@ run "policy_contract" {
     error_message = "The operator needs signed data-channel access scoped to its own sessions."
   }
   assert {
+    condition = length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if s.Sid == "SSHOwnedInstances" && try(s.Condition.BoolIfExists["ssm:SessionDocumentAccessCheck"], "false") == "true" && s.Resource == ["arn:aws:ec2:us-east-2:123456789012:instance/*"] && s.Condition.StringEquals["ssm:resourceTag/Owner"] == var.owner && s.Condition.StringEquals["ssm:resourceTag/Deployment"] == var.deployment && s.Condition.StringEquals["ssm:resourceTag/ManagedBy"] == "devbox" && s.Condition.StringEquals["aws:RequestedRegion"] == var.region
+    ]) == 1
+    error_message = "SSH must retain instance scope and the default-document check while accepting absent context for explicit documents."
+  }
+  assert {
+    condition = length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if contains(s.Action, "ssm:StartSession")
+      ]) == 2 && length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if s.Sid == "SSHDocument" && s.Action == ["ssm:StartSession"] && s.Resource == ["arn:aws:ssm:us-east-2::document/AWS-StartSSHSession"]
+    ]) == 1
+    error_message = "StartSession must authorize only scoped instances and the exact SSH session document."
+  }
+  assert {
     condition     = length(local.operator_policy) <= 10240 && length(local.instance_policy) <= 10240
     error_message = "Inline policies exceed IAM role quotas."
   }
