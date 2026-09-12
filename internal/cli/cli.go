@@ -10,9 +10,14 @@ import (
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/doctor"
+	"github.com/JosephWest2/cloud_dev/internal/lifecycle"
 )
 
 const help = `Usage: devbox [options] doctor
+       devbox [options] up agent --on-demand --name NAME
+       devbox [options] up --resume REQUEST_ID
+       devbox [options] ls
+       devbox [options] down NAME_OR_INSTANCE_ID
        devbox [--json] version
 
 Options may appear before or after the command:
@@ -21,14 +26,22 @@ Options may appear before or after the command:
   --aws-profile NAME    AWS profile (overrides AWS_PROFILE and user TOML)
   --region REGION       Explicit region (overrides user TOML)
   --timeout DURATION    Check deadline (default: 20s; maximum: 5m)
+  --name NAME           Friendly name for a new launch
+  --on-demand           Explicitly select supported On-Demand purchasing
+  --resume REQUEST_ID   Reconcile or resume a durable launch request
   --json                One versioned JSON result on stdout
   --help, -h            Show this help
 
 doctor checks local setup and AWS identity without provisioning resources.
-Launch, inventory, shell and teardown commands arrive in later MVP issues.
+up launches one instance; Spot is unsupported. ls/down use AWS inventory.
+SSM/bootstrap readiness and SSH access arrive in issue #9.
 `
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies) int {
+	return RunWithLifecycle(ctx, args, stdout, stderr, deps, lifecycle.Dependencies{})
+}
+
+func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies) int {
 	jsonMode := false
 	// Recognize JSON even on invalid invocations; never echo untrusted arguments.
 	for _, a := range args {
@@ -41,11 +54,20 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 		return emit(r, jsonMode, stdout, stderr)
 	}
 	var command, path string
+	var positional []string
+	var launch lifecycle.UpOptions
 	var overrides config.Overrides
 	timeout := 20 * time.Second
 	helpMode := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--on-demand" {
+			launch.OnDemand = true
+			continue
+		}
+		if a == "--spot" {
+			return fail("Spot is unsupported; use up agent --on-demand --name NAME")
+		}
 		if a == "--json" {
 			continue
 		}
@@ -55,7 +77,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 		}
 		key, val, hasVal := strings.Cut(a, "=")
 		switch key {
-		case "--config", "--aws-profile", "--region", "--timeout":
+		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--resume":
 			if !hasVal {
 				i++
 				if i >= len(args) || strings.HasPrefix(args[i], "--") {
@@ -67,6 +89,10 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 				return fail("option values must not be empty; run devbox --help")
 			}
 			switch key {
+			case "--name":
+				launch.Name = val
+			case "--resume":
+				launch.Resume = val
 			case "--config":
 				path = val
 			case "--aws-profile":
@@ -81,10 +107,14 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 				}
 			}
 		default:
-			if strings.HasPrefix(a, "-") || command != "" {
+			if strings.HasPrefix(a, "-") {
 				return fail("unknown option or extra argument; run devbox --help")
 			}
-			command = a
+			if command == "" {
+				command = a
+			} else {
+				positional = append(positional, a)
+			}
 		}
 	}
 	if helpMode || len(args) == 0 {
@@ -105,6 +135,24 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 		}
 		return 0
 	}
+	if command != "up" && (launch.OnDemand || launch.Name != "" || launch.Resume != "") {
+		return fail("launch options require up; run devbox --help")
+	}
+	if command != "up" && command != "down" && len(positional) > 0 {
+		return fail("extra argument; run devbox --help")
+	}
+	if command == "up" {
+		if launch.Resume != "" {
+			if !lifecycle.ValidRequest(launch.Resume) || len(positional) > 0 || launch.OnDemand || launch.Name != "" {
+				return fail("use up --resume REQUEST_ID without launch parameters")
+			}
+		} else if len(positional) != 1 || positional[0] != "agent" || !lifecycle.ValidName(launch.Name) {
+			return fail("use up agent --on-demand --name NAME")
+		}
+	}
+	if command == "down" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0])) {
+		return fail("use down with one friendly name or instance ID")
+	}
 	if command == "version" {
 		if jsonMode {
 			if err := json.NewEncoder(stdout).Encode(struct {
@@ -123,8 +171,8 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 		}
 		return 0
 	}
-	if command != "doctor" {
-		return fail("unknown or missing command; available commands: doctor, version; run devbox --help")
+	if command != "doctor" && command != "up" && command != "ls" && command != "down" {
+		return fail("unknown or missing command; available commands: doctor, up, ls, down, version; run devbox --help")
 	}
 	if path == "" {
 		var err error
@@ -135,6 +183,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
+	if command != "doctor" {
+		opts := lifecycle.Options{Command: command, UpOptions: launch}
+		if command == "down" {
+			opts.Target = positional[0]
+		}
+		return emitLifecycle(lifecycle.Run(ctx, path, overrides, opts, life, stderr), jsonMode, stdout, stderr)
+	}
 	return emit(doctor.Run(ctx, path, overrides, deps), jsonMode, stdout, stderr)
 }
 
@@ -153,6 +208,38 @@ func emit(r doctor.Result, jsonMode bool, stdout, stderr io.Writer) int {
 	}
 	if !r.OK {
 		fmt.Fprintln(stderr, "devbox: checks failed; follow the actions in the command result")
+	}
+	return r.ExitCode
+}
+
+func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) int {
+	if jsonMode {
+		if err := json.NewEncoder(stdout).Encode(r); err != nil {
+			fmt.Fprintln(stderr, "cannot write command result")
+			return doctor.ExitPrerequisite
+		}
+	} else {
+		if _, err := fmt.Fprintf(stdout, "%s: %s\n", r.Code, r.Message); err != nil {
+			return doctor.ExitPrerequisite
+		}
+		if r.RequestID != "" {
+			if _, err := fmt.Fprintf(stdout, "request=%s receipt=%q\n", r.RequestID, r.ReceiptPath); err != nil {
+				return doctor.ExitPrerequisite
+			}
+		}
+		for _, i := range r.Instances {
+			if _, err := fmt.Fprintf(stdout, "%s name=%q request=%q image=%s type=%s market=%s template=%s/%s ec2=%s ssm=%s bootstrap=%s readiness=%s root_deletion=%s\n", i.ID, i.Name, i.RequestID, i.Image, i.Type, i.Market, i.TemplateID, i.TemplateVersion, i.State, i.SSM, i.Bootstrap, i.Readiness, i.RootDeletion); err != nil {
+				return doctor.ExitPrerequisite
+			}
+			for _, v := range i.Volumes {
+				if _, err := fmt.Fprintf(stdout, "  volume=%s device=%q root=%t delete_on_termination=%t deletion=%s\n", v.ID, v.Device, v.Root, v.DeleteOnTermination, v.Deletion); err != nil {
+					return doctor.ExitPrerequisite
+				}
+			}
+		}
+	}
+	if !r.OK {
+		fmt.Fprintf(stderr, "devbox: %s: %s\n", r.Code, r.Message)
 	}
 	return r.ExitCode
 }
