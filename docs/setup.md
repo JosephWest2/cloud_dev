@@ -128,11 +128,19 @@ plan/apply, and fresh export. Old exports keep their pinned version; do not use
 
 ## 3. Apply the foundation and export
 
+First follow the [dedicated SSH key setup](acceptance/09-readiness-shell.md#configure-the-dedicated-key).
+Set `ssh_public_key` in foundation.tfvars to the public key's first two fields
+(type and base64, without comment/newline). Private keys never enter OpenTofu.
+This update exports manifest v3, a new bootstrap/template version and the pinned
+status/host-key probe. Existing workers do not acquire a rotated public key;
+inspect and manually remove them before replacing them with a new launch.
+
+
 ```sh
 cd infra/foundation
 cp foundation.tfvars.example foundation.tfvars
 cp backend.hcl.example backend.hcl
-# Edit ALL placeholder account/owner/principal/AMI/bucket values.
+# Edit ALL placeholder account/owner/principal/AMI/bucket/public-key values.
 # The foundation key must differ from the bootstrap key.
 tofu init -backend-config=backend.hcl
 tofu fmt -check
@@ -234,22 +242,22 @@ host-key verification, SSH proxy/editor/file transfer belong to #9.
 The template's minimal script creates the `devbox` development user, enables
 sshd, disables root/password/keyboard-interactive SSH, and permits only `devbox`
 SSH logins. The development user has passwordless sudo within its disposable
-machine. No SSH private/public key or AWS credential is embedded. SSH authentication
-will be implemented in #9; **this foundation alone cannot log you in**.
-The selected standard Ubuntu image must include the SSM agent snap; bootstrap
-fails if it is absent. Transport uses the regional SSM/ssmmessages endpoints.
+machine. Bootstrap installs only the dedicated Ed25519 **public** key; the private
+key stays local. The selected standard Ubuntu image must include SSM Agent snap
+>=3.3.40.0; bootstrap fails if it is absent or too old. Transport uses the regional
+SSM/ssmmessages endpoints without adding legacy message/IAM permissions.
 
-The fixed, parameterless SSM Command document reads root-owned files:
-
-- `/var/lib/devbox/bootstrap-complete` → stdout `complete`.
-- `/var/lib/devbox/bootstrap-failed` → stdout `failed`.
-- Neither file → stdout `pending`.
-
-The command exits zero for these three observable states. API/command failure is
-separate. #9 must send the exact manifest document version (and content hash),
-then parse the stable status; no arbitrary shell command is accepted. Completion
-requires successful sshd setup and an active SSM agent service. A failure before
-the agent is reachable is only observable as a bounded readiness timeout. The
+The fixed, parameterless SSM Command document emits JSON output schema 1:
+`bootstrap` is failed when `/var/lib/devbox/bootstrap-failed` exists, complete when
+only `/var/lib/devbox/bootstrap-complete` exists, and pending when neither exists.
+On complete only, `host_key` contains the public Ed25519 host key. The command
+exits zero for these observed states. API/command failure instead means unknown
+bootstrap; it is never fabricated as a failed marker. The CLI verifies the exact
+manifest document version and content hash before dispatch, then validates the
+invocation identity and bounded output. No arbitrary shell command is accepted.
+Completion requires sshd configuration and an active supported SSM agent. A failure
+before agent connectivity can only be observed as an unknown bootstrap/timeout.
+The
 marker is a readiness hint, not a security attestation against a root-capable
 worker. Inspect `/var/log/cloud-init-output.log` locally on the instance during
 later authorized troubleshooting; do not publish raw logs.

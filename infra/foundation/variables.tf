@@ -43,3 +43,12 @@ variable "ami_id" {
     error_message = "Resolve and paste an exact regional AMI ID."
   }
 }
+
+variable "ssh_public_key" {
+  type        = string
+  description = "Dedicated user-managed Ed25519 public key, exactly type and base64; never a private key."
+  validation {
+    condition     = can(regex("^ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAI[A-P][A-Za-z0-9+/]{42}$", var.ssh_public_key))
+    error_message = "Supply one Ed25519 public key without its comment or newline (the first two fields of the .pub file)."
+  }
+}

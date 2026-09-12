@@ -72,10 +72,10 @@ resource "aws_security_group" "devbox" {
 
 resource "aws_launch_template" "agent" {
   name                   = local.name
-  description            = "Ubuntu 24.04 x86_64; bootstrap v1"
+  description            = "Ubuntu 24.04 x86_64; dedicated SSH key and bootstrap v2"
   image_id               = data.aws_ami.ubuntu.id
   update_default_version = true
-  user_data              = filebase64("${path.module}/bootstrap.sh")
+  user_data              = base64encode(local.bootstrap)
   iam_instance_profile {
     arn = aws_iam_instance_profile.devbox.arn
   }
@@ -112,14 +112,29 @@ resource "aws_launch_template" "agent" {
 }
 
 locals {
+  bootstrap = replace(file("${path.module}/bootstrap.sh"), "@@DEVBOX_PUBLIC_KEY@@", var.ssh_public_key)
   readiness = jsonencode({
     schemaVersion = "2.2"
-    description   = "Read-only devbox bootstrap v1 status; no parameters"
+    description   = "Read-only devbox bootstrap status and public host key; output schema 1; no parameters"
     mainSteps = [{
       action = "aws:runShellScript", name = "bootstrapStatus"
       inputs = {
         timeoutSeconds = "10"
-        runCommand     = ["if test -f /var/lib/devbox/bootstrap-complete; then echo complete; elif test -f /var/lib/devbox/bootstrap-failed; then echo failed; else echo pending; fi"]
+        runCommand = [<<-PROBE
+          status=pending
+          host_key=''
+          if test -f /var/lib/devbox/bootstrap-failed; then
+            status=failed
+          elif test -f /var/lib/devbox/bootstrap-complete; then
+            status=complete
+            read -r key_type key_data key_comment < /etc/ssh/ssh_host_ed25519_key.pub || exit 1
+            test "$key_type" = ssh-ed25519 || exit 1
+            case "$key_data" in *[!A-Za-z0-9+/=]*|'') exit 1;; esac
+            host_key="$key_type $key_data"
+          fi
+          printf '{"schema_version":1,"bootstrap":"%s","host_key":"%s"}\n' "$status" "$host_key"
+        PROBE
+        ]
       }
     }]
   })

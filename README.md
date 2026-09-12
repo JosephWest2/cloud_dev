@@ -3,8 +3,11 @@
 A Go CLI for disposable AWS development machines. This checkout implements configuration, deployed-resource checks, the OpenTofu
 foundation, and single-instance On-Demand launch, inventory and teardown.
 Follow the [foundation setup guide](docs/setup.md) to provision durable resources
-and export the CLI manifest. Use the lifecycle commands below after setup. SSH/editor/file-transfer access and
-runtime readiness observation arrive in #9.
+and export the CLI manifest. Use the lifecycle commands below after setup. Readiness observation and real SSH
+over SSM (including editor/file transfer configuration) are implemented.
+See [SSH setup and acceptance](docs/acceptance/09-readiness-shell.md); live #9
+acceptance is pending. Existing deployments must apply the public-key/bootstrap
+update and export manifest v3 before new launches/access.
 
 ## Install from a checkout
 
@@ -149,7 +152,8 @@ errors, SDK errors, account ARNs, and credential values are never printed.
 On Linux, a supervised worker process keeps credential helpers and their shell
 descendants in one process group; that group is stopped when the command exits,
 including after a deadline. Credential helpers must not daemonize or detach
-from that group. Interactive session process handling will be defined in #9.
+from that group. SSH sessions transfer terminal ownership to the worker and
+restore it on exit; their lifetime is independent of the setup deadline.
 
 See [schema and output contracts](docs/contracts.md) for fields, exit statuses,
 Spot behavior and structured-output rules, and
@@ -162,6 +166,7 @@ formatting, provider validation and mock-provider infrastructure tests.
 ```sh
 devbox up agent --on-demand --name smoke --timeout 5m --json
 devbox ls --json
+devbox ssh smoke
 devbox down smoke --timeout 5m --json
 devbox down smoke --json
 ```
@@ -170,7 +175,8 @@ Use your configured operator profile, or pass `--aws-profile devbox-operator`.
 The initial launch path requires explicit On-Demand and selects the first profile
 instance type; Spot and automatic fallback are unsupported. `up` verifies the
 foundation before allocating. Allocation success reports exact image, type,
-market and template pins; SSM/bootstrap/readiness remain `not_observed` until #9.
+market and template pins; full readiness additionally requires EC2 running,
+SSM online and bootstrap complete. `up` waits up to 5m by default.
 
 `ls` rediscovers instances from AWS after a restart, without local instance IDs.
 `down` revalidates scope before termination and reports root-volume deletion

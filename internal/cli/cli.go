@@ -8,9 +8,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JosephWest2/cloud_dev/internal/access"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/doctor"
 	"github.com/JosephWest2/cloud_dev/internal/lifecycle"
+	"os"
 )
 
 const help = `Usage: devbox [options] doctor
@@ -18,6 +20,9 @@ const help = `Usage: devbox [options] doctor
        devbox [options] up --resume REQUEST_ID
        devbox [options] ls
        devbox [options] down NAME_OR_INSTANCE_ID
+       devbox [options] ssh NAME_OR_INSTANCE_ID
+       devbox [options] ssh-config NAME_OR_INSTANCE_ID
+       devbox [options] proxy INSTANCE_ID
        devbox [--json] version
 
 Options may appear before or after the command:
@@ -25,7 +30,7 @@ Options may appear before or after the command:
                         or ~/.config/devbox/config.toml)
   --aws-profile NAME    AWS profile (overrides AWS_PROFILE and user TOML)
   --region REGION       Explicit region (overrides user TOML)
-  --timeout DURATION    Check deadline (default: 20s; maximum: 5m)
+  --timeout DURATION    Setup deadline (up/access: 5m; others: 20s; max: 5m)
   --name NAME           Friendly name for a new launch
   --on-demand           Explicitly select supported On-Demand purchasing
   --resume REQUEST_ID   Reconcile or resume a durable launch request
@@ -34,7 +39,9 @@ Options may appear before or after the command:
 
 doctor checks local setup and AWS identity without provisioning resources.
 up launches one instance; Spot is unsupported. ls/down use AWS inventory.
-SSM/bootstrap readiness and SSH access arrive in issue #9.
+up waits for EC2 + SSM + bootstrap readiness. ssh uses real SSH over SSM.
+ssh-config supports editors/scp/sftp; proxy is its transport helper.
+ssh/proxy reject --json. Failed/finished sessions retain workers: run down.
 `
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies) int {
@@ -59,6 +66,7 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 	var overrides config.Overrides
 	timeout := 20 * time.Second
 	helpMode := false
+	timeoutSet := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--on-demand" {
@@ -100,6 +108,7 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 			case "--region":
 				overrides.Region = val
 			case "--timeout":
+				timeoutSet = true
 				var err error
 				timeout, err = time.ParseDuration(val)
 				if err != nil || timeout <= 0 || timeout > 5*time.Minute {
@@ -138,7 +147,8 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 	if command != "up" && (launch.OnDemand || launch.Name != "" || launch.Resume != "") {
 		return fail("launch options require up; run devbox --help")
 	}
-	if command != "up" && command != "down" && len(positional) > 0 {
+	isAccess := command == "ssh" || command == "ssh-config" || command == "proxy"
+	if command != "up" && command != "down" && !isAccess && len(positional) > 0 {
 		return fail("extra argument; run devbox --help")
 	}
 	if command == "up" {
@@ -149,6 +159,12 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		} else if len(positional) != 1 || positional[0] != "agent" || !lifecycle.ValidName(launch.Name) {
 			return fail("use up agent --on-demand --name NAME")
 		}
+	}
+	if isAccess && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0])) {
+		return fail("use ssh/ssh-config/proxy with one friendly name or instance ID")
+	}
+	if (command == "ssh" || command == "proxy") && jsonMode {
+		return fail("interactive ssh and proxy reject --json; use ssh-config --json for separate configuration metadata")
 	}
 	if command == "down" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0])) {
 		return fail("use down with one friendly name or instance ID")
@@ -171,8 +187,8 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 		return 0
 	}
-	if command != "doctor" && command != "up" && command != "ls" && command != "down" {
-		return fail("unknown or missing command; available commands: doctor, up, ls, down, version; run devbox --help")
+	if command != "doctor" && command != "up" && command != "ls" && command != "down" && !isAccess {
+		return fail("unknown or missing command; available commands: doctor, up, ls, down, ssh, ssh-config, proxy, version; run devbox --help")
 	}
 	if path == "" {
 		var err error
@@ -180,6 +196,29 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		if err != nil {
 			return fail(err.Error())
 		}
+	}
+
+	if !timeoutSet && (command == "up" || isAccess) {
+		timeout = 5 * time.Minute
+	}
+	if isAccess {
+		r := access.Run(ctx, access.Options{Command: command, Target: positional[0], ConfigPath: path, Overrides: overrides, Timeout: timeout}, os.Stdin, stdout, stderr, access.Dependencies{New: life.New})
+		if command == "ssh-config" {
+			if jsonMode {
+				if json.NewEncoder(stdout).Encode(r) != nil {
+					return 1
+				}
+			} else if r.OK {
+				if _, err := io.WriteString(stdout, r.SSHConfig); err != nil {
+					return 1
+				}
+			} else {
+				emitLifecycle(r.Result, false, stderr, stderr)
+			}
+		} else if !r.OK {
+			emitLifecycle(r.Result, false, stderr, stderr)
+		}
+		return r.ExitCode
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -231,6 +270,9 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 			if _, err := fmt.Fprintf(stdout, "%s name=%q request=%q image=%s type=%s market=%s template=%s/%s ec2=%s ssm=%s bootstrap=%s readiness=%s root_deletion=%s\n", i.ID, i.Name, i.RequestID, i.Image, i.Type, i.Market, i.TemplateID, i.TemplateVersion, i.State, i.SSM, i.Bootstrap, i.Readiness, i.RootDeletion); err != nil {
 				return doctor.ExitPrerequisite
 			}
+			if i.ProbeCommandID != "" || i.ObservationCode != "" {
+				fmt.Fprintf(stdout, "  probe_command=%s observation=%s\n", i.ProbeCommandID, i.ObservationCode)
+			}
 			for _, v := range i.Volumes {
 				if _, err := fmt.Fprintf(stdout, "  volume=%s device=%q root=%t delete_on_termination=%t deletion=%s\n", v.ID, v.Device, v.Root, v.DeleteOnTermination, v.Deletion); err != nil {
 					return doctor.ExitPrerequisite
@@ -240,6 +282,12 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 	}
 	if !r.OK {
 		fmt.Fprintf(stderr, "devbox: %s: %s\n", r.Code, r.Message)
+		for _, i := range r.Instances {
+			fmt.Fprintf(stderr, "devbox: retained instance %s; inspect: devbox ls --json; retry access: devbox ssh %s; cleanup: devbox down %s --timeout 5m (same config/profile/region; manual cleanup until TTL ships)\n", i.ID, i.ID, i.ID)
+		}
+		if r.RequestID != "" {
+			fmt.Fprintf(stderr, "devbox: request %s; recover with devbox up --resume %s using the same config/profile/region\n", r.RequestID, r.RequestID)
+		}
 	}
 	return r.ExitCode
 }

@@ -6,3 +6,7 @@ owner = "replace-with-stable-owner" # Keep this fixed across machines and logins
 aws_profile = "devbox" # Existing AWS shared configuration profile; no credentials here.
 manifest = "deployment.json" # Relative to this config file.
 # profile_file = "agent.toml" # Optional; defaults to the embedded agent profile.
+
+# Dedicated Ed25519 private key stays local; retain its matching .pub file.
+# Relative paths resolve beside this config; no tilde/environment expansion.
+# ssh_identity_file = "/home/YOU/.ssh/devbox_ed25519"

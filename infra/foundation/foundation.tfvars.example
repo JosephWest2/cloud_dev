@@ -4,3 +4,6 @@ deployment             = "personal-dev"
 owner                  = "replace-me"
 operator_principal_arn = "arn:aws:iam::123456789012:role/ExistingLoginRole"
 ami_id                 = "ami-00000000000000000" # Resolve using docs/setup.md, never apply this fixture.
+
+# Replace with your dedicated Ed25519 public key (first two fields, no comment).
+ssh_public_key = "ssh-ed25519 REPLACE_WITH_PUBLIC_KEY_BASE64"

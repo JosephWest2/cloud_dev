@@ -32,6 +32,9 @@ type Instance struct {
 	Readiness       string   `json:"readiness"`
 	RootDeletion    string   `json:"root_volume_deletion"`
 	Volumes         []Volume `json:"volumes"`
+	ObservationCode string   `json:"observation_code,omitempty"`
+	ProbeCommandID  string   `json:"probe_command_id,omitempty"`
+	HostKey         string   `json:"-"`
 	clientToken     string
 }
 

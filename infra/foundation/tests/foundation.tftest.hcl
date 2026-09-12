@@ -32,6 +32,7 @@ override_resource {
   values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-operator" }
 }
 variables {
+  ssh_public_key         = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   account_id             = "123456789012"
   deployment             = "test"
   owner                  = "test-owner"
@@ -57,7 +58,7 @@ run "safe_foundation_plan" {
     error_message = "Only worker template launches allocate public IPs."
   }
   assert {
-    condition     = aws_launch_template.agent.image_id == var.ami_id && aws_launch_template.agent.user_data == filebase64("${path.module}/bootstrap.sh")
+    condition     = aws_launch_template.agent.image_id == var.ami_id && aws_launch_template.agent.user_data == base64encode(local.bootstrap)
     error_message = "Pin the selected AMI and reviewed bootstrap."
   }
   assert {

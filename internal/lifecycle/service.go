@@ -26,6 +26,7 @@ type EC2 interface {
 
 type Service struct {
 	API              EC2
+	SSM              SSM
 	Scope            config.Config
 	VerifyFoundation func(context.Context, config.Manifest, config.Profile) error
 	PollInterval     time.Duration
@@ -42,7 +43,7 @@ func New(ctx context.Context, c config.Config) (*Service, error) {
 		return nil, err
 	}
 	client := ec2.NewFromConfig(a)
-	return &Service{API: client, Scope: c, VerifyFoundation: func(ctx context.Context, m config.Manifest, p config.Profile) error {
+	return &Service{API: client, SSM: ssm.NewFromConfig(a), Scope: c, VerifyFoundation: func(ctx context.Context, m config.Manifest, p config.Profile) error {
 		for _, check := range foundation.Verify(ctx, foundation.Clients{EC2: client, IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a)}, m, p) {
 			if check.Err != nil {
 				return failure("foundation_drift", foundation.Message(check.Name))
@@ -63,6 +64,7 @@ func apiCode(err error, code string) bool {
 
 var nameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,62}$`)
 var instanceRE = regexp.MustCompile(`^i-([0-9a-f]{8}|[0-9a-f]{17})$`)
+var commandRE = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 var volumeRE = regexp.MustCompile(`^vol-([0-9a-f]{8}|[0-9a-f]{17})$`)
 
 func ValidName(s string) bool   { return nameRE.MatchString(s) && !instanceRE.MatchString(s) }

@@ -126,7 +126,7 @@ func Run(ctx context.Context, path string, overrides config.Overrides, deps Depe
 			if err := manifestErr; err != nil {
 				add("manifest", "fail", "manifest_unavailable", err.Error(), ExitPrerequisite)
 			} else {
-				add("manifest", "pass", "manifest_valid", "version 2 deployment manifest schema, scope and exact resource pins are valid", 0)
+				add("manifest", "pass", "manifest_valid", "version 3 deployment manifest schema, scope and exact resource pins are valid", 0)
 			}
 			if err := deps.Identity(ctx, c); err != nil {
 				code, message, exit := "identity_unavailable", "cannot verify AWS identity; check the selected profile, credentials and connectivity", ExitPrerequisite
@@ -172,6 +172,6 @@ func Run(ctx context.Context, path string, overrides config.Overrides, deps Depe
 		add("platform", "pass", "platform_supported", "local platform is Linux; initial development target is Arch", 0)
 	}
 	probe("session_manager_plugin", "plugin", "install or repair the AWS Session Manager plugin on PATH and verify session-manager-plugin --version; see README prerequisites", "Session Manager plugin is available and executable", deps.Plugin)
-	probe("openssh_client", "ssh", "install or repair the OpenSSH client on PATH (on Arch: sudo pacman -S openssh) and verify ssh -V", "SSH client is executable; SSH over SSM will support editor and file-transfer access in issue #9", deps.SSH)
+	probe("openssh_client", "ssh", "install or repair the OpenSSH client on PATH (on Arch: sudo pacman -S openssh) and verify ssh -V", "SSH client is executable; run ssh-config for scoped editor and file-transfer access", deps.SSH)
 	return r
 }

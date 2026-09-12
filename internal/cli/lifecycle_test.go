@@ -74,7 +74,7 @@ func TestLifecycleJSONAndTimeoutIdentifiers(t *testing.T) {
 					}
 				} else if fail && code != 1 {
 					t.Fatal(code)
-				} else if !fail && code != 0 {
+				} else if command == "ls" && !fail && (code != 1 || len(r.Instances) != 1 || r.Instances[0].Readiness != "unknown") {
 					t.Fatal(code)
 				}
 			})
@@ -91,6 +91,19 @@ func TestLifecycleUsageFailsBeforeAWS(t *testing.T) {
 		}})
 		if code != 2 || !json.Valid(out.Bytes()) || bytes.Contains(out.Bytes(), []byte("SECRET")) {
 			t.Fatalf("invalid usage: %d %s", code, &out)
+		}
+	}
+}
+
+func TestInteractiveJSONRejectedBeforeAWS(t *testing.T) {
+	for _, command := range []string{"ssh", "proxy"} {
+		var out, diag bytes.Buffer
+		code := RunWithLifecycle(context.Background(), []string{command, "i-12345678", "--json"}, &out, &diag, doctor.Dependencies{}, lifecycle.Dependencies{New: func(context.Context, config.Config) (*lifecycle.Service, error) {
+			t.Fatal("interactive JSON reached AWS")
+			return nil, nil
+		}})
+		if code != 2 || !json.Valid(out.Bytes()) || !bytes.Contains(out.Bytes(), []byte("reject --json")) {
+			t.Fatalf("%d %s", code, &out)
 		}
 	}
 }
