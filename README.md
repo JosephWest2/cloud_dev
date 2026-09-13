@@ -1,21 +1,30 @@
 # devbox
 
-A Go CLI for disposable AWS development machines. This checkout implements configuration, deployed-resource checks, the OpenTofu
-foundation, and single-instance On-Demand launch, inventory and teardown.
-Follow the [foundation setup guide](docs/setup.md) to provision durable resources
-and export the CLI manifest. Use the lifecycle commands below after setup. Readiness observation and real SSH
-over SSM (including editor/file transfer configuration) are implemented.
-See [SSH setup and acceptance](docs/acceptance/09-readiness-shell.md); live #9
-acceptance is pending. Existing deployments must apply the public-key/bootstrap
-update and export manifest v3 before new launches/access.
+A Go CLI for disposable AWS development machines: provision a durable foundation,
+launch an Ubuntu devbox, connect with real SSH over SSM, rediscover it after a
+restart, and remove it with root-volume verification. Remote editors and file
+transfer use the generated OpenSSH configuration. No inbound ports are opened.
+
+Start with installation and identity below, then follow the
+[foundation setup guide](docs/setup.md) for state bootstrap/migration, a dedicated
+SSH key, provisioning and manifest-v3 export. The
+[MVP 1 acceptance runbook and results](docs/acceptance/01-lifecycle.md) connect the
+complete workflow, failure checks and cleanup evidence. Existing deployments
+need the public-key/bootstrap update and a real manifest-v3 export before access.
+
+The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
+Ubuntu 24.04 LTS x86-64, one public subnet and public IPv4, outbound TCP 80/443,
+and zero security-group ingress. AMI and launch-template versions are explicitly
+pinned during setup. Acceptance uses On-Demand; the bundled profile's intended
+Spot default is preserved, and Spot launches remain unsupported.
 
 ## Install from a checkout
 
 The initial local target is **Linux, starting with Arch Linux**. Other local
-platforms are not claimed supported. Install Go 1.24 or newer and Git. On Arch:
+platforms are not claimed supported. Install Go 1.24 or newer, Git and Make. On Arch:
 
 ```sh
-sudo pacman -S --needed go git
+sudo pacman -S --needed go git make openssh jq
 git clone https://github.com/JosephWest2/cloud_dev.git
 cd cloud_dev
 go mod download
@@ -23,6 +32,19 @@ make check
 make build
 ./bin/devbox version
 ```
+
+Provisioning also needs AWS CLI v2, OpenTofu **1.12.6** and the committed AWS
+provider **6.64.0** lockfiles. Install the AWS Session Manager plugin
+**>=1.2.764.0** and keep its logging disabled; verify
+`session-manager-plugin --version` and `ssh -V`. The pinned AMI must provide SSM
+Agent **>=3.3.40.0**, which bootstrap checks. Installation links and identity setup
+are below and in [setup](docs/setup.md#tools-and-identities).
+
+Run `make infra-check TOFU=/path/to/tofu` in a separate clean checkout for
+OpenTofu formatting, validation, mock-provider tests and manifest-export checks.
+It uses `init -backend=false`; keep that checkout separate from live S3-backend
+initialization and local deployment inputs. These offline checks do not apply
+infrastructure or establish live acceptance.
 
 Install into a directory on your PATH:
 
@@ -125,13 +147,14 @@ Arch may require a separately packaged or source-built plugin; a package being
 available does not establish AWS vendor support for Arch. `doctor` checks that
 the executable starts; it does not claim a live remote session works.
 
-The first release will use **SSH over SSM**, supporting real SSH, remote editors
-and file transfer while keeping inbound ports closed. Install the OpenSSH client
-(`sudo pacman -S --needed openssh` on Arch) and verify `ssh -V`.
-The foundation configures remote sshd and a `devbox` user. The shell slice must
-add SSH authentication, host-key verification and the SSM proxy before access works. No SSH
-keys are generated or uploaded in this slice, and local probe success does not
-validate remote authentication or editor/file-transfer integration.
+Access uses **SSH over SSM**, supporting real SSH, remote editors and file
+transfer. Follow the [dedicated key instructions](docs/acceptance/09-readiness-shell.md#configure-the-dedicated-key):
+keep an Ed25519 private key locally, load an encrypted key with `ssh-add`, put only
+its public key in foundation inputs, and set the absolute `ssh_identity_file`
+path in devbox TOML. Bootstrap configures sshd and the sudo-capable `devbox` user.
+The pinned SSM probe supplies the public host key; OpenSSH enforces strict trust
+in private per-instance files. Local probe success alone does not validate remote
+authentication or editor/file-transfer integration.
 OpenTofu is a foundation setup tool, not an installed prerequisite for ordinary
 CLI commands; installation and provisioning are covered by the setup guide.
 
@@ -140,8 +163,8 @@ and the plugin. After configuring identity, expect a **missing deployment
 manifest** until the foundation exists. Follow [setup](docs/setup.md) to provision
 and export it; do not invent IDs to make real setup pass. Doctor checks the
 actual resources against that export. It does not launch a machine, exercise
-runtime bootstrap/SSH, or prove effective IAM authorization. Live foundation
-acceptance remains [documented separately](docs/acceptance/07-foundation.md).
+runtime bootstrap/SSH, or prove effective IAM authorization. Historical foundation
+acceptance is [documented separately](docs/acceptance/07-foundation.md).
 
 Checks default to a 20-second deadline (`--timeout` accepts up to 5 minutes).
 Each local executable probe is capped at 5 seconds within that deadline. Refresh expired
@@ -158,8 +181,7 @@ restore it on exit; their lifetime is independent of the setup deadline.
 See [schema and output contracts](docs/contracts.md) for fields, exit statuses,
 Spot behavior and structured-output rules, and
 [foundation validation evidence](docs/acceptance/07-foundation.md) and
-[IAM boundaries](docs/iam.md). Run `make infra-check` with OpenTofu 1.12.6 for
-formatting, provider validation and mock-provider infrastructure tests.
+[IAM boundaries](docs/iam.md).
 
 ## Launch, rediscover and remove a devbox
 
@@ -167,6 +189,7 @@ formatting, provider validation and mock-provider infrastructure tests.
 devbox up agent --on-demand --name smoke --timeout 5m --json
 devbox ls --json
 devbox ssh smoke
+# In the remote shell: uname -a; whoami; exit 0
 devbox down smoke --timeout 5m --json
 devbox down smoke --json
 ```
@@ -178,11 +201,44 @@ foundation before allocating. Allocation success reports exact image, type,
 market and template pins; full readiness additionally requires EC2 running,
 SSM online and bootstrap complete. `up` waits up to 5m by default.
 
+Successful JSON `up` has `ok=true`, `exit_code=0`, and an instance with
+`ec2_state=running`, `ssm=online`, `bootstrap=complete`, `readiness=ready` and
+`market=on-demand`. Progress and recovery instructions go to stderr; stdout is
+one JSON envelope. Record the request/instance/root-volume IDs before teardown.
+See [the acceptance procedure](docs/acceptance/01-lifecycle.md#launch-shell-and-rediscovery)
+for exact evidence commands and expected fields.
+
+`ssh` opens an interactive OpenSSH shell as `devbox`, not a native SSM shell.
+`--timeout` bounds connection setup (default 5m), not the established session.
+Ctrl-C interrupts the remote foreground command; terminal resizing is forwarded;
+`exit` or Ctrl-D returns locally. SSH exit statuses are preserved: an explicit
+`exit 0` succeeds, 1–254 report `remote_exit`, and 255 indicates an SSH failure.
+Exiting immediately after an interrupted command can return 130. Interactive
+`ssh` and `ssm-proxy` reject `--json` before AWS calls.
+
+`devbox ssh-config smoke --json` returns `ssh_config_path` and `ssh_host` for
+`ssh -F CONFIG_PATH SSH_HOST`, scp/sftp and remote editors. It does not edit
+`~/.ssh/config`. Follow [transfer/editor examples](docs/acceptance/09-readiness-shell.md#launch-observe-connect-and-transfer).
+Regenerate configuration after moving the CLI/config. A changed host key requires
+inspection; it is never silently trusted. SSH tunnel contents are not logged by
+[Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-getting-started-enable-ssh-connections.html).
+
 `ls` rediscovers instances from AWS after a restart, without local instance IDs.
 `down` revalidates scope before termination and reports root-volume deletion
 separately. Duplicate friendly names require explicit instance IDs. A repeated
 teardown reports an observed already-terminated instance or `no_managed_match`;
 the latter does not verify any particular termination.
+
+For a successful first teardown, expect `status=terminated`,
+`ec2_state=terminated`, and `root_volume_deletion=deleted`. If deletion is
+`unavailable`, verify the recorded volume ID through EC2 before marking cleanup
+complete. A later repeated teardown can lack volume mappings even when deletion
+was previously verified. Full [manual cleanup](docs/acceptance/01-lifecycle.md#teardown-and-independent-cleanup-verification)
+includes independent EC2/EBS inventory. Workers remain billable after shell exit,
+timeout or connection failure; remove them even when acceptance fails. There is
+no automatic TTL cleanup until MVP 4. Worker teardown retains networking, IAM,
+the launch template, readiness document and the S3 backend; [full durable teardown](docs/setup.md#recovery-and-teardown)
+is a separate explicit operation.
 
 Before launching, devbox durably saves a non-secret request receipt and prints its
 request ID to stderr. If the process exits or the launch outcome is uncertain:
@@ -196,7 +252,15 @@ Receipts live under `${XDG_STATE_HOME:-$HOME/.local/state}/devbox/requests`.
 After dispatch, resume only reconciles AWS; it never sends another launch. An
 outcome can remain unresolved, including a crash immediately before sending.
 Losing the receipt cannot prevent `ls` or cleanup by `down INSTANCE_ID`.
+After an allocated timeout, inspect with `ls --json`, retry the same receipt or
+SSH by instance ID if readiness permits, and remove the worker with
+`down INSTANCE_ID --timeout 5m --json`, using the original config/profile/region.
+Failed bootstrap blocks SSH; fix the foundation and replace the disposable
+worker after cleanup. If credentials expire during cleanup, refresh the selected
+source profile and retry the exact ID; keep cleanup marked incomplete until
+EC2 termination and root deletion are observed.
 Read the [recovery/output contract](docs/contracts.md#instance-lifecycle-and-request-recovery-8)
-and [live acceptance procedure](docs/acceptance/08-lifecycle.md) for guarantees,
-volume verification, and recovery instructions. Live #8 acceptance passed, including
-new-terminal rediscovery, EC2 termination and verified root-volume deletion.
+and [parent acceptance record](docs/acceptance/01-lifecycle.md) for failure
+coverage, volume verification, and the final gate status. Historical
+[#8 lifecycle](docs/acceptance/08-lifecycle.md) and
+[#9 SSH/editor](docs/acceptance/09-readiness-shell.md) acceptance passed.

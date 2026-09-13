@@ -7,8 +7,9 @@ do not paste passwords, access keys or tokens into this repository or a chat.
 
 The implemented starting choices are Ohio (`us-east-2`), Canonical Ubuntu 24.04
 LTS on x86-64, a dedicated public subnet, outbound TCP 80/443, no inbound rules,
-and Linux locally. These are implementation defaults; no AWS deployment was
-performed during development. The exact regional AMI is selected and recorded
+and Linux locally. These choices were exercised in the selected test deployment
+during [#7](acceptance/07-foundation.md) and [#9](acceptance/09-readiness-shell.md).
+The exact regional AMI is selected and recorded
 locally below. Other regions, partitions, architectures and private networking
 need a separate change. Owner and deployment each allow 1–23 letters, digits,
 underscores or hyphens, starting with a letter/digit.
@@ -233,11 +234,11 @@ or a working machine. It does not evaluate SCPs, session policies, caller policy
 attachments, NACLs, service quotas, capacity, actual instance egress, package
 repository availability or remote bootstrap execution. It never starts a machine,
 opens a session, sends a readiness command, invokes OpenTofu or reads state.
-Run the additional [live acceptance checks](acceptance/07-foundation.md) before
-closing issue #7. Actual launch/cleanup acceptance belongs to #8; key provisioning,
-host-key verification, SSH proxy/editor/file transfer belong to #9.
+Follow the [parent acceptance runbook](acceptance/01-lifecycle.md) for the complete
+launch/shell/rediscovery/cleanup gate. Historical foundation and SSH/editor
+results remain in [#7](acceptance/07-foundation.md) and [#9](acceptance/09-readiness-shell.md).
 
-## Bootstrap and readiness contract for #9
+## Bootstrap and readiness contract
 
 The template's minimal script creates the `devbox` development user, enables
 sshd, disables root/password/keyboard-interactive SSH, and permits only `devbox`
@@ -280,8 +281,8 @@ lineage disagreement. Do not use `-force` to silence it. Then plan and reconcile
 resources against AWS; a state restore does not undo infrastructure changes.
 See [OpenTofu state recovery commands](https://opentofu.org/docs/cli/commands/state/).
 
-For full teardown, first inventory and terminate any workers using the later
-lifecycle CLI (#8), or explicitly verify their ownership and clean them up using
+For full teardown, first inventory and terminate any workers using `devbox ls`
+and `devbox down INSTANCE_ID`, or explicitly verify their ownership and clean them up using
 AWS during an authorized test. Do not delete networking/IAM beneath running
 workers. Then run in `infra/foundation` with the setup profile:
 

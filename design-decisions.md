@@ -1,6 +1,24 @@
 # Stack, region, and networking decisions
 
-Status: decisions and discussion notes, September 10, 2026. The user confirmed interactive devboxes first, coding agents second, and selected Go + OpenTofu + TOML with Ubuntu LTS for remote machines. The CLI/configuration foundation is implemented in issue #6. Issue #7 implements Ohio, Ubuntu 24.04 x86_64 and a public subnet with no inbound rules as starting choices; no AWS deployment has been performed.
+Current selections, September 13, 2026 UTC (September 12 US/Central): interactive
+devboxes first; Go/AWS SDK v2 + OpenTofu + TOML; Linux locally; Ohio (`us-east-2`);
+Canonical Ubuntu 24.04 LTS x86-64; public IPv4 with no inbound rules and outbound
+TCP 80/443; real SSH over SSM for shells, editors and file transfer. Use a dedicated
+local Ed25519 identity, public-key-only remote authentication and strict host trust
+seeded by the fixed authenticated SSM probe. One explicitly selected personal
+account/profile/deployment/stable owner forms the scope. Exact account/key/backend
+inputs remain local; the exact AMI/template/document versions are exported.
+
+These choices were deployed and exercised in [#7 foundation](docs/acceptance/07-foundation.md),
+[#8 lifecycle](docs/acceptance/08-lifecycle.md) and [#9 SSH/editor](docs/acceptance/09-readiness-shell.md).
+The [parent acceptance gate](docs/acceptance/01-lifecycle.md) records the independent
+final run. Smoke acceptance explicitly opts into On-Demand; Spot, coding-agent
+automation, TTL and additional networking/platform choices remain later work.
+
+The sections below retain the September 10–12 decision history. Earlier proposals,
+open questions and statements that deployment/access had not yet happened describe
+those earlier stages; the current selections above and the issue #9 confirmation
+supersede them.
 
 ## Confirmed during issue #6
 
