@@ -205,6 +205,98 @@ func TestRunRejectsUntrustedExpiredAndLateRequests(t *testing.T) {
 	}
 }
 
+func TestRunWaitsForServerSubmissionTimeBeforeClaim(t *testing.T) {
+	for _, lead := range []time.Duration{293 * time.Millisecond, 2250 * time.Millisecond} {
+		t.Run(lead.String(), func(t *testing.T) {
+			f := newRunFixture(t, 4)
+			f.store.submitted = f.now
+			f.now = f.store.submitted.Add(-lead)
+			var elapsed time.Duration
+			waits := 0
+			f.deps.Wait = func(ctx context.Context, delay time.Duration) error {
+				if ctx.Err() != nil || delay <= 0 || delay > time.Second || f.calls != 0 || len(f.store.puts) != 0 {
+					t.Fatalf("invalid pre-claim wait: delay=%s calls=%d puts=%v", delay, f.calls, f.store.puts)
+				}
+				if _, ok := ctx.Deadline(); !ok {
+					t.Fatal("clock wait has no preparation deadline")
+				}
+				// Advance the same injected clock consumed by Run and Execute;
+				// no wall-clock sleep or permissive timestamp clamp is involved.
+				f.now = f.now.Add(delay)
+				elapsed += delay
+				waits++
+				return nil
+			}
+			r := Run(context.Background(), f.config, f.input, f.deps)
+			if r.Code != "runner_result_published" || r.ExitCode != 0 || f.calls != 1 || waits == 0 || elapsed != lead {
+				t.Fatalf("clock wait result: %+v calls=%d waits=%d elapsed=%s", r, f.calls, waits, elapsed)
+			}
+			if !reflect.DeepEqual(f.store.puts, []string{"started.json", "outcome.json", "stdout", "stderr", "result.json"}) {
+				t.Fatalf("claim or publication repeated: %v", f.store.puts)
+			}
+			for _, kind := range []string{"started", "outcome", "result"} {
+				record, _, err := execprotocol.ReadRecord(context.Background(), f.store, f.key(kind+".json"))
+				if err != nil || record.SubmittedAt != execprotocol.Timestamp(f.store.submitted) || record.ExpiresAt != execprotocol.Timestamp(f.store.submitted.Add(30*24*time.Hour)) {
+					t.Fatalf("%s changed server retention or failed validation: %+v %v", kind, record, err)
+				}
+				if kind == "started" && record.StartedAt != execprotocol.Timestamp(f.store.submitted) {
+					t.Fatalf("claim timestamp differs from the accepted clock: %+v", record)
+				}
+			}
+		})
+	}
+}
+
+func TestRunClockWaitStopsAtPreparationCancellationOrDeadline(t *testing.T) {
+	for _, cancelWait := range []bool{true, false} {
+		t.Run(map[bool]string{true: "cancellation", false: "deadline"}[cancelWait], func(t *testing.T) {
+			f := newRunFixture(t, 0)
+			f.store.submitted = f.now.Add(time.Hour)
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			wantCode := "runner_preparation_canceled"
+			if cancelWait {
+				f.deps.Wait = func(waitCtx context.Context, delay time.Duration) error {
+					cancel()
+					return waitForClock(waitCtx, delay)
+				}
+			} else {
+				// Exercise the production timer with the actual preparation
+				// deadline; even a distant server timestamp cannot extend it.
+				f.deps.PreparationDeadline = time.Now().Add(20 * time.Millisecond)
+				wantCode = "runner_preparation_timeout"
+			}
+			r := Run(ctx, f.config, f.input, f.deps)
+			if r.Code != wantCode || r.ExitCode != 1 || f.calls != 0 || len(f.store.puts) != 0 {
+				t.Fatalf("clock wait outlived preparation: %+v calls=%d puts=%v", r, f.calls, f.store.puts)
+			}
+		})
+	}
+}
+
+func TestRunClockWaitRechecksExpiryBeforeClaim(t *testing.T) {
+	for _, expiresDuringWait := range []bool{false, true} {
+		t.Run(map[bool]string{false: "already_expired", true: "expires_during_wait"}[expiresDuringWait], func(t *testing.T) {
+			f := newRunFixture(t, 0)
+			if expiresDuringWait {
+				f.store.submitted = f.now.Add(time.Second)
+			} else {
+				f.store.submitted = f.now.Add(-30 * 24 * time.Hour)
+			}
+			waits := 0
+			f.deps.Wait = func(context.Context, time.Duration) error {
+				waits++
+				f.now = f.store.submitted.Add(30 * 24 * time.Hour)
+				return nil
+			}
+			r := Run(context.Background(), f.config, f.input, f.deps)
+			if r.Code != "runner_request_expired" || r.ExitCode != 1 || f.calls != 0 || len(f.store.puts) != 0 || (waits == 1) != expiresDuringWait {
+				t.Fatalf("expired request claimed: %+v calls=%d puts=%v waits=%d", r, f.calls, f.store.puts, waits)
+			}
+		})
+	}
+}
+
 func TestRunCancellationStillPublishesKnownOrUnknownOutcome(t *testing.T) {
 	for _, known := range []bool{false, true} {
 		f := newRunFixture(t, 0)

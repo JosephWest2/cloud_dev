@@ -44,9 +44,29 @@ Three fresh non-implementing reviewers approved the core dispatch, CLI/integrati
 and config/final-observation scopes. Targeted tests, race checks and vet passed.
 Full `make check`, `make build`, execution/CLI/config race tests and pinned
 `make infra-check TOFU=/tmp/devbox-tools/tofu` passed. Infrastructure checks ran
-offline, separate from the existing live backend. No infrastructure source or
-runner behavior changes are part of #18; live checks use #17's existing pinned
-runner and exported foundation.
+offline, separate from the existing live backend. Initial live checks used #17's
+existing pinned runner and exported foundation.
+
+## Live finding and runner correction
+
+The first isolated CLI attempt failed before dispatch because the test PATH
+omitted `sh`, which the SDK's credential-process provider requires. The reviewed
+helper correction retains only `sh` and `aws`, with SSH/plugin and local
+key/profile dependencies still absent. The failed attempt is preserved.
+
+The next attempt submitted once, but the runner began at `22:16:09.707Z` while
+S3 reported the immutable request's submission time as `22:16:10Z`. Its strict
+future-timestamp guard mislabeled this subsecond difference as expiry, so the
+workload did not start. The CLI retained both recovery IDs and eventually
+reported its independent observation deadline. This failed evidence is also
+preserved; no uncertain request is replayed.
+
+Correct the runner to wait for the authoritative submission instant within its
+existing preparation deadline, retaining genuine expiry checks and the single
+start claim. Freshly review the fix, rebuild and inspect the actual artifact/
+launch-template plan, then apply the reviewed update before a new live run.
+The original worker must be removed and its captured root volume verified
+absent before deploying the replacement runner.
 
 ## Remaining live gate
 

@@ -58,8 +58,9 @@ type Dependencies struct {
 	SelfSHA256          func() (string, error)
 	Execute             func(context.Context, context.Context, execprotocol.Payload) Captured
 	Now                 func() time.Time
-	PublicationTimeout  time.Duration // Zero selects the production two-minute bound.
-	PreparationDeadline time.Time     // Production includes configuration/user setup in the 30s budget.
+	Wait                func(context.Context, time.Duration) error // Nil uses a context-bound timer.
+	PublicationTimeout  time.Duration                              // Zero selects the production two-minute bound.
+	PreparationDeadline time.Time                                  // Production includes configuration/user setup in the 30s budget.
 }
 type Result struct {
 	Code     string
@@ -85,6 +86,10 @@ func Run(ctx context.Context, c WorkerConfig, in Input, d Dependencies) Result {
 	now := d.Now
 	if now == nil {
 		now = time.Now
+	}
+	wait := d.Wait
+	if wait == nil {
+		wait = waitForClock
 	}
 	hard, hardCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Duration(p.ExecTimeoutSeconds)*time.Second+180*time.Second)
 	defer hardCancel()
@@ -116,10 +121,39 @@ func Run(ctx context.Context, c WorkerConfig, in Input, d Dependencies) Result {
 	// into every later record rather than accepting a client supplied timestamp.
 	submitted = submitted.UTC().Truncate(time.Second)
 	expires := submitted.Add(time.Duration(request.RetentionDays) * 24 * time.Hour)
-	if !now().Before(expires) || now().Before(submitted) {
-		return fail("runner_request_expired")
+	var observed time.Time
+	for {
+		if errors.Is(prepare.Err(), context.Canceled) {
+			return fail("runner_preparation_canceled")
+		}
+		if prepare.Err() != nil {
+			return fail("runner_preparation_timeout")
+		}
+		observed = now()
+		if !observed.Before(expires) {
+			return fail("runner_request_expired")
+		}
+		if !observed.Before(submitted) {
+			break
+		}
+		// S3's timestamp can briefly lead the worker clock. Wait for it under
+		// the existing preparation budget; never move the retention deadline
+		// or claim execution with a timestamp earlier than submission.
+		delay := submitted.Sub(observed)
+		if delay > time.Second {
+			delay = time.Second
+		}
+		if err := wait(prepare, delay); err != nil {
+			if errors.Is(err, context.Canceled) {
+				return fail("runner_preparation_canceled")
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				return fail("runner_preparation_timeout")
+			}
+			return fail("runner_clock_wait_failed")
+		}
 	}
-	started := execprotocol.Record{SchemaVersion: 1, Kind: "started", Binding: binding, SSMCommandID: in.SSMCommandID, SubmittedAt: execprotocol.Timestamp(submitted), ExpiresAt: execprotocol.Timestamp(expires), StartedAt: execprotocol.Timestamp(now())}
+	started := execprotocol.Record{SchemaVersion: 1, Kind: "started", Binding: binding, SSMCommandID: in.SSMCommandID, SubmittedAt: execprotocol.Timestamp(submitted), ExpiresAt: execprotocol.Timestamp(expires), StartedAt: execprotocol.Timestamp(observed)}
 	b, err := execprotocol.EncodeRecord(started)
 	if err != nil || prepare.Err() != nil {
 		return fail("runner_preparation_timeout")
@@ -201,6 +235,17 @@ func Run(ctx context.Context, c WorkerConfig, in Input, d Dependencies) Result {
 		return Result{Code: "runner_result_incomplete", ExitCode: 1, Record: &record}
 	}
 	return Result{Code: "runner_result_published", Record: &record}
+}
+
+func waitForClock(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func fileStream(path, key string) (execprotocol.Stream, error) {
