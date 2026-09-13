@@ -1,7 +1,7 @@
 output "deployment_manifest" {
   description = "Non-secret CLI contract; export with tofu output -json deployment_manifest."
   value = {
-    schema_version       = 3
+    schema_version       = 4
     account              = var.account_id
     region               = var.region
     deployment           = var.deployment
@@ -20,6 +20,8 @@ output "deployment_manifest" {
       version        = tostring(aws_ssm_document.readiness.latest_version)
       content_sha256 = sha256(local.readiness)
     }
+    execution = local.execution_manifest
+    results   = local.results_manifest
     roles = {
       instance = {
         arn           = aws_iam_role.instance.arn
@@ -47,5 +49,5 @@ output "deployment_manifest" {
       }
     }
   }
-  depends_on = [aws_iam_role_policy.operator, aws_iam_role_policy.instance, aws_route_table_association.devbox]
+  depends_on = [aws_iam_role_policy.operator, aws_iam_role_policy.instance, aws_route_table_association.devbox, aws_s3_object.runner, aws_s3_bucket_lifecycle_configuration.results]
 }

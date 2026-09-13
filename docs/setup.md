@@ -132,9 +132,24 @@ plan/apply, and fresh export. Old exports keep their pinned version; do not use
 First follow the [dedicated SSH key setup](acceptance/09-readiness-shell.md#configure-the-dedicated-key).
 Set `ssh_public_key` in foundation.tfvars to the public key's first two fields
 (type and base64, without comment/newline). Private keys never enter OpenTofu.
-This update exports manifest v3, a new bootstrap/template version and the pinned
-status/host-key probe. Existing workers do not acquire a rotated public key;
+This update exports manifest v4, a new bootstrap/template version, the pinned
+status/host-key probe, and the execution/storage contract. Existing workers do
+not acquire the runner, updated agent requirement, or rotated public key;
 inspect and manually remove them before replacing them with a new launch.
+Build the real Linux/amd64 runner before planning:
+
+```sh
+make runner
+```
+
+The default `runner_path` is `../../bin/devbox-runner-linux-amd64`, relative to
+`infra/foundation`. OpenTofu hashes this exact file and uploads it under
+`artifacts/runner/SHA256/linux-amd64`. Keep it unchanged from plan through apply.
+The worker verifies the downloaded bytes against the exported SHA-256 before
+installation. An artifact update replaces the previously managed artifact;
+finish or remove all bootstrapping workers before updating. Old template versions
+must not launch after that replacement. Already installed workers retain their
+local binary; launch replacements using the new export.
 
 
 ```sh
@@ -155,19 +170,34 @@ tofu output -json deployment_manifest > "${XDG_CONFIG_HOME:-$HOME/.config}/devbo
 ```
 
 Only export the named output. Do not export full state or all provider diagnostics.
-This schema-v3 JSON is non-secret, but contains account/resource identifiers; keep
+This schema-v4 JSON is non-secret, but contains account/resource identifiers; keep
 it local. The manifest is trusted configuration: protect it from unauthorized
 edits. It is not signed and is not an IAM authorization token. Existing schema-v1/v2
-exports must be replaced with a real schema-v3 export.
+exports must be replaced with a real schema-v4 export. Re-export existing v3
+deployments after applying this foundation update.
 
 Durable resources are VPC/subnet/IGW/routing, security group, two IAM roles and
-policies, instance profile, launch template and fixed SSM readiness document.
-Removing a future worker leaves these and the S3 backend in place. The foundation
+policies, instance profile, launch template, fixed SSM readiness/execution
+documents, and a private result/artifact bucket separate from the S3 backend.
+Removing a worker leaves these resources in place. The foundation
 allocates **no EC2 instance, EBS volume, public IPv4 allocation, NAT gateway or paid
 VPC endpoint**. S3 state storage, versions and requests are billable durable
-usage. Worker compute, disk, public IPv4 and applicable transfer charges begin
+usage; result objects, runner artifacts and their requests are also billable.
+Worker compute, disk, public IPv4 and applicable transfer charges begin
 only when a worker is launched; consult your AWS account's pricing before that
 later lifecycle test.
+
+`result_retention_days` defaults to 30 and accepts whole days from 2 through 365.
+The promise starts when S3 creates the immutable command request, before dispatch;
+all lookup/status and stream objects remain available through that deadline.
+Lifecycle applies only to the exact result scope prefix and also aborts unfinished
+multipart uploads after one day. Artifacts have no lifecycle expiration. S3
+expiration is asynchronous, so physical deletion can occur later. Never reduce
+retention while previous promises remain unexpired: keep the old storage
+deployment, or stop submissions and wait for its old results to expire first.
+OpenTofu cannot infer whether those promises have expired. Preserve the trusted
+old manifest for recovery when changing deployments. Versioning cannot be enabled
+and later undone; versioned storage requires an explicit migration.
 
 ## 4. Configure the restricted operator and run doctor
 
@@ -223,7 +253,8 @@ Doctor checks executability; the human setup check must verify the version.
 All checks should pass **using the operator profile**. Doctor reads the actual
 network, pinned image/template, instance-type architectures, instance-profile
 membership, both role trusts and sole inline policies, and the pinned readiness
-document. Extra managed/inline policies fail. It checks the template user-data
+document, execution document/runner artifact, and result bucket protections and
+retention. Extra managed/inline policies fail. It checks the template user-data
 hash, IMDSv2, public-IP/interface settings and encrypted/deleted root settings.
 IAM policy responses are URL-decoded and JSON-canonicalized before comparing
 hashes to the trusted export. A service normalization mismatch must be investigated
@@ -245,8 +276,19 @@ sshd, disables root/password/keyboard-interactive SSH, and permits only `devbox`
 SSH logins. The development user has passwordless sudo within its disposable
 machine. Bootstrap installs only the dedicated Ed25519 **public** key; the private
 key stays local. The selected standard Ubuntu image must include SSM Agent snap
->=3.3.40.0; bootstrap fails if it is absent or too old. Transport uses the regional
+>=3.3.2746.0; bootstrap fails if it is absent or too old. Transport uses the regional
 SSM/ssmmessages endpoints without adding legacy message/IAM permissions.
+
+Bootstrap explicitly installs `aws-cli` using `snap install aws-cli --classic`,
+then uses its signed S3 GetObject with the expected account and region to download
+the runner. Ubuntu 24.04 removed the `awscli` apt package; this snap installation
+follows [Canonical's release notes](https://documentation.ubuntu.com/release-notes/24.04/)
+and [AWS CLI setup instructions](https://documentation.ubuntu.com/aws/aws-how-to/instances/launch-ubuntu-ec2-instance/).
+After SHA-256 verification it installs `/usr/local/libexec/devbox-runner` owned by
+root and writes `/etc/devbox/execution.json` with mode 0600 in a root-only
+directory. Configuration contains only scope, document/runner and storage pins;
+credentials are obtained from the instance role. The readiness marker is not
+written until this provisioning succeeds.
 
 The fixed, parameterless SSM Command document emits JSON output schema 1:
 `bootstrap` is failed when `/var/lib/devbox/bootstrap-failed` exists, complete when
@@ -284,7 +326,14 @@ See [OpenTofu state recovery commands](https://opentofu.org/docs/cli/commands/st
 For full teardown, first inventory and terminate any workers using `devbox ls`
 and `devbox down INSTANCE_ID`, or explicitly verify their ownership and clean them up using
 AWS during an authorized test. Do not delete networking/IAM beneath running
-workers. Then run in `infra/foundation` with the setup profile:
+workers. The result/artifact bucket has `force_destroy=false`; a nonempty bucket
+blocks deletion. Decide before a full destroy whether to keep the foundation for
+result recovery, or deliberately remove its stored results and artifact using
+the setup identity after retaining any required data. Deleting results ends their
+recovery guarantee. Inspect the exact bucket/account and result prefix in the
+saved manifest; this bucket is distinct from the versioned state bucket below.
+Once a reviewed decision has resolved stored results, run in `infra/foundation`
+with the setup profile:
 
 ```sh
 tofu plan -destroy -var-file=foundation.tfvars -out=destroy.tfplan

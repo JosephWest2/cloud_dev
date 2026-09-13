@@ -58,6 +58,8 @@ func fixture(t *testing.T) (*fake, config.Manifest, config.Profile) {
 	}
 	m.BootstrapSHA256 = digest([]byte("bootstrap fixture\n"))
 	m.Readiness.ContentSHA256 = hash
+	m.Execution.ContentSHA256 = hash
+	m.Results.PolicySHA256 = hash
 	f := &fake{responses: map[string]string{}, calls: map[string]int{}, inputs: map[string]any{}}
 	tags := `[{"Key":"ManagedBy","Value":"devbox"},{"Key":"Deployment","Value":"test"},{"Key":"Owner","Value":"test-owner"}]`
 	f.responses["DescribeVpcs"] = `{"Vpcs":[{"VpcId":"vpc-12345678","OwnerId":"123456789012","State":"available","Tags":` + tags + `}]}`
@@ -73,6 +75,15 @@ func fixture(t *testing.T) (*fake, config.Manifest, config.Profile) {
 	f.responses["GetInstanceProfile"] = `{"InstanceProfile":{"Arn":"arn:aws:iam::123456789012:instance-profile/devbox","Roles":[{"Arn":"arn:aws:iam::123456789012:role/devbox-instance"}]}}`
 	quoted, _ := json.Marshal(policy)
 	f.responses["GetDocument"] = `{"Name":"devbox-test-readiness","DocumentVersion":"1","DocumentType":"Command","Status":"Active","Content":` + string(quoted) + `}`
+	f.responses["GetBucketLocation"] = `{"LocationConstraint":"us-east-2"}`
+	f.responses["GetBucketTagging"] = `{"TagSet":` + tags + `}`
+	f.responses["GetBucketPolicy"] = `{"Policy":` + string(quoted) + `}`
+	f.responses["GetPublicAccessBlock"] = `{"PublicAccessBlockConfiguration":{"BlockPublicAcls":true,"BlockPublicPolicy":true,"IgnorePublicAcls":true,"RestrictPublicBuckets":true}}`
+	f.responses["GetBucketEncryption"] = `{"ServerSideEncryptionConfiguration":{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}}`
+	f.responses["GetBucketOwnershipControls"] = `{"OwnershipControls":{"Rules":[{"ObjectOwnership":"BucketOwnerEnforced"}]}}`
+	f.responses["GetBucketVersioning"] = `{}`
+	f.responses["GetBucketLifecycleConfiguration"] = `{"Rules":[{"ID":"command-results-retention","Status":"Enabled","Filter":{"Prefix":"` + m.Results.Prefix + `"},"Expiration":{"Days":30},"AbortIncompleteMultipartUpload":{"DaysAfterInitiation":1}}]}`
+	f.responses["HeadObject"] = `{"ContentLength":1024,"ServerSideEncryption":"AES256","Metadata":{"sha256":"` + m.Execution.RunnerSHA256 + `"}}`
 	f.responses["ListAttachedRolePolicies"] = `{"AttachedPolicies":[]}`
 	// Both roles use the same document fixture, but requests must select their exact role/policy.
 	f.hook = func(name string, input any) (string, bool) {
@@ -81,6 +92,10 @@ func fixture(t *testing.T) (*fake, config.Manifest, config.Profile) {
 		_ = json.Unmarshal(b, &fields)
 		role, _ := fields["RoleName"].(string)
 		switch name {
+		case "GetDocument":
+			if fields["Name"] == m.Execution.Name {
+				return strings.ReplaceAll(f.responses[name], m.Readiness.Name, m.Execution.Name), true
+			}
 		case "GetRole":
 			return `{"Role":{"Arn":"arn:aws:iam::123456789012:role/` + role + `","AssumeRolePolicyDocument":` + string(quoted) + `,"Tags":` + tags + `}}`, true
 		case "ListRolePolicies":
@@ -95,7 +110,7 @@ func fixture(t *testing.T) (*fake, config.Manifest, config.Profile) {
 
 func TestDeployedResourcesAndExactRequests(t *testing.T) {
 	f, m, p := fixture(t)
-	for _, check := range Verify(context.Background(), Clients{f, f, f}, m, p) {
+	for _, check := range Verify(context.Background(), Clients{f, f, f, f}, m, p) {
 		if check.Err != nil {
 			t.Fatalf("%s: %v", check.Name, check.Err)
 		}
@@ -150,7 +165,7 @@ func TestResourceDrift(t *testing.T) {
 			f, m, p := fixture(t)
 			f.responses[tc.api] = strings.ReplaceAll(f.responses[tc.api], tc.old, tc.new)
 			failed := false
-			for _, check := range Verify(context.Background(), Clients{f, f, f}, m, p) {
+			for _, check := range Verify(context.Background(), Clients{f, f, f, f}, m, p) {
 				if check.Err != nil {
 					failed = true
 				}
@@ -178,7 +193,7 @@ func TestAPIFailuresAndNilResponses(t *testing.T) {
 					f.fail = name
 				}
 				failed := false
-				for _, check := range Verify(context.Background(), Clients{f, f, f}, m, p) {
+				for _, check := range Verify(context.Background(), Clients{f, f, f, f}, m, p) {
 					if check.Err != nil {
 						failed = true
 						if strings.Contains(check.Err.Error(), "SECRET") {
@@ -198,7 +213,7 @@ func TestCanceledChecksDoNotCallAWS(t *testing.T) {
 	f, m, p := fixture(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	for _, check := range Verify(ctx, Clients{f, f, f}, m, p) {
+	for _, check := range Verify(ctx, Clients{f, f, f, f}, m, p) {
 		if !errors.Is(check.Err, context.Canceled) {
 			t.Fatal(check)
 		}

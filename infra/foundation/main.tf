@@ -72,7 +72,7 @@ resource "aws_security_group" "devbox" {
 
 resource "aws_launch_template" "agent" {
   name                   = local.name
-  description            = "Ubuntu 24.04 x86_64; dedicated SSH key and bootstrap v2"
+  description            = "Ubuntu 24.04 x86_64; dedicated SSH key and durable command runner"
   image_id               = data.aws_ami.ubuntu.id
   update_default_version = true
   user_data              = base64encode(local.bootstrap)
@@ -102,7 +102,8 @@ resource "aws_launch_template" "agent" {
     instance_metadata_tags      = "disabled"
   }
   # Market/type and all seven creation tags are supplied by the future launch CLI.
-  tags = local.tags
+  tags       = local.tags
+  depends_on = [aws_s3_object.runner, aws_s3_bucket_lifecycle_configuration.results]
   lifecycle {
     precondition {
       condition     = alltrue([for b in data.aws_ami.ubuntu.block_device_mappings : b.ebs.volume_size <= 100 if b.device_name == data.aws_ami.ubuntu.root_device_name])
@@ -112,7 +113,14 @@ resource "aws_launch_template" "agent" {
 }
 
 locals {
-  bootstrap = replace(file("${path.module}/bootstrap.sh"), "@@DEVBOX_PUBLIC_KEY@@", var.ssh_public_key)
+  bootstrap = replace(replace(replace(replace(replace(replace(
+    file("${path.module}/bootstrap.sh"),
+    "@@DEVBOX_PUBLIC_KEY@@", var.ssh_public_key),
+    "@@DEVBOX_RUNNER_BUCKET@@", local.results_bucket),
+    "@@DEVBOX_REGION@@", var.region),
+    "@@DEVBOX_ACCOUNT@@", var.account_id),
+    "@@DEVBOX_RUNNER_SHA256@@", local.runner_sha256),
+  "@@DEVBOX_WORKER_CONFIG@@", local.worker_config)
   readiness = jsonencode({
     schemaVersion = "2.2"
     description   = "Read-only devbox bootstrap status and public host key; output schema 1; no parameters"

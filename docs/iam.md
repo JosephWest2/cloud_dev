@@ -3,7 +3,7 @@
 The setup identity administers durable resources. The operator assumes a separate
 role with one inline policy and cannot edit IAM, network rules, templates, SSM
 documents or existing tags. The instance has its own one-policy SSM transport
-role; neither role has state-bucket access. Doctor detects changed trust/policy
+and result-publisher role; neither role has state-bucket access. Doctor detects changed trust/policy
 JSON, added attachments, permission boundaries and wrong profile membership
 against the trusted manifest. This does not establish the caller's effective
 permissions or constrain an administrator.
@@ -19,8 +19,14 @@ permissions or constrain an administrator.
 | `TerminateInstances` | Account/region and all three managed/deployment/owner resource tags |
 | SSM SSH | Matching instance tags; document-access check; only AWS-StartSSHSession |
 | SSM readiness | Matching instance tags; only this foundation's fixed parameterless Command document |
+| SSM execution | Matching instance tags; only this foundation's fixed runner Command document; no CancelCommand |
 | SSM session data channel and cleanup | Session ARN prefix from exact deployment/owner role-session name, enforced in trust |
 | IAM doctor reads | Exact two roles and instance profile; no IAM writes |
+| Operator S3 writes | Only `request.json` and `acknowledgement.json` below the exact account/region/deployment/owner result prefix |
+| Worker S3 writes | Only `started.json`, `outcome.json`, `stdout`, `stderr`, and `result.json` below that same prefix |
+| Result reads | Both roles can read the seven protocol object names; ListBucket requires the owned result prefix |
+| Runner artifact reads | Both roles can GetObject only the current SHA-256-addressed artifact; bootstrap verifies all bytes, doctor checks the object's hash metadata |
+| Result bucket doctor reads | Operator can read location, policy, public-access blocks, ownership, encryption, versioning, lifecycle and tags on this exact bucket |
 
 The session-document condition uses `BoolIfExists`, following the
 [AWS SSH-only policy example](https://aws.amazon.com/blogs/machine-learning/integrate-hyperpod-clusters-with-active-directory-for-seamless-multi-user-login/).
@@ -53,12 +59,39 @@ These permissions require `Resource="*"` and cannot be isolated by inventory tag
   `DescribeInstanceTypes`.
 - SSM `DescribeInstanceInformation` and `GetCommandInvocation`. The latter may
   read command output beyond the deployment if the caller knows command IDs;
-  no arbitrary command-sending permission is granted.
-- Instance `ssm:UpdateInstanceInformation` and the four ssmmessages channel
-  creation/open actions. They are restricted to the selected region. No S3,
-  Secrets Manager, Parameter Store, other EC2 or account administration actions
-  are granted to instance credentials. Development processes with host privileges
-  can access the instance role; it is not a secret store.
+  only the two pinned readiness/execution documents are authorized for sending.
+- The four instance ssmmessages channel creation/open actions, restricted to the
+  selected region.
+
+The existing instance `ssm:UpdateInstanceInformation` grant also retains
+`Resource="*"` with the selected-region condition for the already exercised agent
+startup/reconnect path. This is a compatibility choice, not an AWS limitation:
+the [authorization table](https://docs.aws.amazon.com/service-authorization/latest/reference/list_ssm.html#ssm-UpdateInstanceInformation)
+supports instance/managed-instance resources, tags and source-instance conditions
+for that action. The retained grant permits broader regional instance reporting;
+it does not grant command execution or result reads beyond the listed policies.
+No Secrets Manager, Parameter Store, other EC2 or account administration actions
+are granted to instance credentials. Development processes with host privileges
+can access the instance role; it is not a secret store.
+
+The result bucket is separate from infrastructure state. It has SSE-S3 encryption,
+all four public-access blocks, bucket-owner-enforced ownership, and no versioning.
+Its policy denies HTTP requests and requires `If-None-Match: *` for every PUT
+under the result prefix, including writes by an administrator. The workload
+runner uses bounded single PUTs, so the policy intentionally grants no multipart
+header exemption. Neither runtime role receives DeleteObject, bucket mutation,
+artifact upload, or object-tagging permissions. The setup identity uploads the
+runner artifact outside the expiring result prefix. See
+[AWS conditional-write enforcement](https://docs.aws.amazon.com/AmazonS3/latest/userguide/conditional-writes-enforce.html).
+
+Object-name IAM wildcards do not validate the public command ID grammar; the
+CLI and runner validate it before access. Scoped ListBucket supports explicit
+prefix listings; it is not unrestricted bucket discovery. The development user
+has passwordless sudo and can obtain instance credentials, so a malicious or
+compromised workload can create misleading records within its allowed owner
+prefix. These records are operational recovery data, not tamper-proof attestations.
+An administrator can change the bucket policy or delete data. Retention guarantees
+depend on preserving the reviewed storage policy and existing promises.
 
 Inventory filters and instance-ID scope validation are implemented in #8,
 because the read APIs expose account-wide regional inventory. STS identity checks

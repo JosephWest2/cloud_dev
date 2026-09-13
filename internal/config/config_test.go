@@ -95,7 +95,7 @@ func TestManifestScopeAndPinnedResources(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, data := range []string{
-		strings.Replace(testutil.Manifest, `"schema_version":3`, `"schema_version":1`, 1),
+		strings.Replace(testutil.Manifest, `"schema_version":4`, `"schema_version":1`, 1),
 		strings.Replace(testutil.Manifest, "123456789012", "000000000000", 1),
 		strings.Replace(testutil.Manifest, "us-east-2", "us-west-2", 1),
 		strings.Replace(testutil.Manifest, `"deployment":"test"`, `"deployment":"different"`, 1),
@@ -113,7 +113,7 @@ func TestManifestScopeAndPinnedResources(t *testing.T) {
 		strings.Replace(testutil.Manifest, "role/devbox-instance", "role/devbox-operator", 1),
 		strings.Replace(testutil.Manifest, `"images":{"agent"`, `"images":{"missing"`, 1),
 		testutil.Manifest + `{ "secret": "SECRET" }`,
-		strings.Replace(testutil.Manifest, `"schema_version":3`, `"secret":"SECRET","schema_version":3`, 1),
+		strings.Replace(testutil.Manifest, `"schema_version":4`, `"secret":"SECRET","schema_version":4`, 1),
 	} {
 		testutil.Write(t, c.Manifest, data)
 		_, err := LoadManifest(c.Manifest, c, p)

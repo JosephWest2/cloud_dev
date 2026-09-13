@@ -15,6 +15,7 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
@@ -27,6 +28,7 @@ type Clients struct {
 	EC2 EC2
 	IAM IAM
 	SSM SSM
+	S3  S3
 }
 
 func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p config.Profile) []Check {
@@ -42,7 +44,7 @@ func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p 
 		}
 		return []Check{{"foundation_identity", err}}
 	}
-	return Verify(ctx, Clients{ec2.NewFromConfig(a), iam.NewFromConfig(a), ssm.NewFromConfig(a)}, m, p)
+	return Verify(ctx, Clients{EC2: ec2.NewFromConfig(a), IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p)
 }
 
 func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Profile) []Check {
@@ -56,6 +58,8 @@ func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Pr
 		{"foundation_template", func() error { return checkTemplate(ctx, clients.EC2, m, p) }},
 		{"foundation_iam", func() error { return checkIAM(ctx, clients.IAM, m) }},
 		{"foundation_readiness", func() error { return checkReadiness(ctx, clients.SSM, m) }},
+		{"foundation_results", func() error { return CheckResults(ctx, clients.S3, m.Results, m.Deployment, m.Owner) }},
+		{"foundation_execution", func() error { return checkExecution(ctx, clients.SSM, clients.S3, m) }},
 	} {
 		err := ctx.Err()
 		if err == nil {
@@ -107,6 +111,10 @@ func Message(name string) string {
 		return "IAM check failed; verify role/profile membership, trust and policy digests and absence of extra policies; review with the setup profile and re-export intended changes"
 	case "foundation_readiness":
 		return "readiness document check failed; verify the exact version and fixed content, then re-export the foundation"
+	case "foundation_results":
+		return "result storage check failed; verify scoped bucket ownership, encryption, public access, immutable policy and retention, then review and re-export the foundation"
+	case "foundation_execution":
+		return "execution check failed; verify the pinned document and runner artifact, then apply, re-export and replace old workers"
 	default:
 		return "cannot verify deployed resources; check selected credentials, foundation read permissions and connectivity, then follow docs/setup.md"
 	}

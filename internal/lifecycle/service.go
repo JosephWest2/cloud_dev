@@ -12,6 +12,7 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/smithy-go"
@@ -44,7 +45,7 @@ func New(ctx context.Context, c config.Config) (*Service, error) {
 	}
 	client := ec2.NewFromConfig(a)
 	return &Service{API: client, SSM: ssm.NewFromConfig(a), Scope: c, VerifyFoundation: func(ctx context.Context, m config.Manifest, p config.Profile) error {
-		for _, check := range foundation.Verify(ctx, foundation.Clients{EC2: client, IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a)}, m, p) {
+		for _, check := range foundation.Verify(ctx, foundation.Clients{EC2: client, IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p) {
 			if check.Err != nil {
 				return failure("foundation_drift", foundation.Message(check.Name))
 			}

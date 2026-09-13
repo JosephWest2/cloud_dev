@@ -7,3 +7,7 @@ ami_id                 = "ami-00000000000000000" # Resolve using docs/setup.md, 
 
 # Replace with your dedicated Ed25519 public key (first two fields, no comment).
 ssh_public_key = "ssh-ed25519 REPLACE_WITH_PUBLIC_KEY_BASE64"
+
+# Build with make runner from the checkout root before planning.
+runner_path           = "../../bin/devbox-runner-linux-amd64"
+result_retention_days = 30 # Whole days, 2-365; never shorten unexpired promises.

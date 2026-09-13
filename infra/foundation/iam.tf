@@ -6,12 +6,21 @@ locals {
     Effect    = "Allow", Principal = { AWS = var.operator_principal_arn }, Action = "sts:AssumeRole"
     Condition = { StringEquals = { "sts:RoleSessionName" = local.name } }
   }] })
-  instance_policy = jsonencode({ Version = "2012-10-17", Statement = [{
-    Sid       = "AgentTransport", Effect = "Allow"
-    Action    = ["ssm:UpdateInstanceInformation", "ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"]
-    Resource  = "*"
-    Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
-  }] })
+  instance_policy = jsonencode({ Version = "2012-10-17", Statement = [
+    {
+      Sid       = "AgentTransport", Effect = "Allow"
+      Action    = ["ssm:UpdateInstanceInformation", "ssmmessages:CreateControlChannel", "ssmmessages:CreateDataChannel", "ssmmessages:OpenControlChannel", "ssmmessages:OpenDataChannel"]
+      Resource  = "*"
+      Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
+    },
+    { Sid = "ReadExecutionRecords", Effect = "Allow", Action = ["s3:GetObject"], Resource = local.result_object_arns },
+    { Sid = "PublishExecutionResults", Effect = "Allow", Action = ["s3:PutObject"], Resource = local.worker_write_arns },
+    { Sid = "ReadPinnedRunner", Effect = "Allow", Action = ["s3:GetObject"], Resource = ["${local.results_arn}/${local.runner_key}"] },
+    {
+      Sid       = "ListOwnedResults", Effect = "Allow", Action = ["s3:ListBucket"], Resource = [local.results_arn]
+      Condition = { StringLike = { "s3:prefix" = "${local.results_prefix}*" } }
+    },
+  ] })
   request_scope  = { for k, v in local.tags : "aws:RequestTag/${k}" => v }
   resource_scope = { for k, v in local.tags : "ec2:ResourceTag/${k}" => v }
   ssm_scope      = { for k, v in local.tags : "ssm:resourceTag/${k}" => v }
@@ -96,7 +105,19 @@ locals {
       Sid      = "OwnSessionChannels", Effect = "Allow", Action = ["ssm:TerminateSession", "ssm:ResumeSession", "ssmmessages:OpenDataChannel"]
       Resource = ["arn:aws:ssm:${var.region}:${var.account_id}:session/${local.name}-*"]
     },
-    { Sid = "ReadinessDocument", Effect = "Allow", Action = ["ssm:SendCommand", "ssm:GetDocument"], Resource = [aws_ssm_document.readiness.arn] }
+    { Sid = "ReadinessDocument", Effect = "Allow", Action = ["ssm:SendCommand", "ssm:GetDocument"], Resource = [aws_ssm_document.readiness.arn] },
+    { Sid = "ExecutionDocument", Effect = "Allow", Action = ["ssm:SendCommand", "ssm:GetDocument"], Resource = [aws_ssm_document.execution.arn] },
+    { Sid = "ReadExecutionResults", Effect = "Allow", Action = ["s3:GetObject"], Resource = local.result_object_arns },
+    { Sid = "PrepareExecutionRequests", Effect = "Allow", Action = ["s3:PutObject"], Resource = local.operator_write_arns },
+    { Sid = "ReadPinnedRunner", Effect = "Allow", Action = ["s3:GetObject"], Resource = ["${local.results_arn}/${local.runner_key}"] },
+    {
+      Sid       = "ListOwnedResults", Effect = "Allow", Action = ["s3:ListBucket"], Resource = [local.results_arn]
+      Condition = { StringLike = { "s3:prefix" = "${local.results_prefix}*" } }
+    },
+    {
+      Sid    = "ReadResultBucketConfiguration", Effect = "Allow", Resource = [local.results_arn]
+      Action = ["s3:GetBucketLocation", "s3:GetBucketPolicy", "s3:GetBucketPublicAccessBlock", "s3:GetBucketOwnershipControls", "s3:GetEncryptionConfiguration", "s3:GetBucketVersioning", "s3:GetLifecycleConfiguration", "s3:GetBucketTagging"]
+    },
   ] })
 }
 resource "aws_iam_role" "instance" {
