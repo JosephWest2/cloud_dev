@@ -1,4 +1,4 @@
-# CLI contracts (config/profile/results v1, deployment v2)
+# CLI contracts (config/profile/results v1, deployment v3)
 
 ## User configuration and workload profile
 
@@ -8,7 +8,8 @@ The expected account is a quoted 12-digit string. Deployment and owner are
 1–63 ASCII letters, digits, underscores or hyphens, beginning with a letter or
 digit. A region must have AWS region syntax; availability and partition-specific
 resource checks belong to the foundation slice. `aws_profile`, `manifest`,
-and `profile_file` are optional; precedence is documented in the README.
+`profile_file`, and `ssh_identity_file` are optional; precedence is documented in
+the README. Access requires the local identity and matching public-key file.
 Unknown TOML fields, invalid types, malformed TOML and missing/unsupported
 schema versions are rejected. This includes credential fields.
 
@@ -32,8 +33,8 @@ option. No market fallback is implemented here.
 
 ## Deployment manifest
 
-The foundation exports a non-secret schema-v2 JSON object using
-`tofu output -json deployment_manifest`. Schema 1 is deliberately rejected:
+The foundation exports a non-secret schema-v3 JSON object using
+`tofu output -json deployment_manifest`. Schemas 1 and 2 are deliberately rejected:
 re-export after applying the foundation. Unknown fields and trailing JSON are
 rejected. User config, workload profiles and result envelopes stay at version 1.
 
