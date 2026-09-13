@@ -61,23 +61,32 @@ workload did not start. The CLI retained both recovery IDs and eventually
 reported its independent observation deadline. This failed evidence is also
 preserved; no uncertain request is replayed.
 
-Correct the runner to wait for the authoritative submission instant within its
-existing preparation deadline, retaining genuine expiry checks and the single
-start claim. Freshly review the fix, rebuild and inspect the actual artifact/
-launch-template plan, then apply the reviewed update before a new live run.
-The original worker must be removed and its captured root volume verified
-absent before deploying the replacement runner.
+The reviewed runner correction waits for the authoritative submission instant
+within its existing preparation deadline, retaining genuine expiry checks and
+the single start claim. Full checks and deterministic clock/cancellation/expiry
+tests passed. After independently verifying removal of the original worker/root,
+the actual reviewed artifact/template plan applied successfully. Both role
+policies rotated only their exact runner-artifact ARN. A real follow-up plan
+returned exit 0 with no changes.
 
-## Remaining live gate
+## Live completion gate
 
-Freeze and build the CLI in a clean checkout, launch one disposable On-Demand
-worker from the current export, and exercise the actual CLI. Include literal
-argv, exit 0/nonzero/missing command/bad cwd, binary stdout/stderr beyond inline
-limits and real empty objects. Kill the observing local process immediately
-after acknowledged submission and during execution, then recover the original
-cloud records and verify full bytes without a local finalizer or redispatch.
+Clean source `21ad872` and the updated export passed all 14 doctor checks. Eleven
+live command cases passed: literal argv, exits 0/1/2/4/255/127, invalid cwd, full
+binary stdout/stderr and true empty streams. Actual SIGKILL immediately after
+acknowledgement and during execution stopped every local process group without
+a local finalizer; both remote jobs finished and published complete results.
 
-Keep exact instance/root-volume IDs and every public/SSM command ID. Terminate
-the worker, independently verify its original volume absent and scoped inventory
-empty, then freshly review the live evidence and any fixes before merging #18.
-#2 and #18 remain open until their respective gates pass.
+A helper GET/list publication race was corrected after independent review. Ten
+already attempted cases were recovered read-only, and an exact-source/scope/ID
+guard submitted only the one unattempted final case in a separate directory.
+No attempted or uncertain command was replayed. Both failed-run evidence and all
+eleven distinct public/SSM IDs are retained privately.
+
+The replacement worker and its captured root volume were independently verified
+removed, with scoped inventory empty. Post-teardown STS/S3-only recovery passed
+318 assertions across all eleven commands, including complete bytes and hashes.
+See the [actual acceptance report](../acceptance/18-exec-dispatch.md). Fresh
+non-implementing review approved the correction, actual plan, helpers and live
+evidence; final documentation review completes the merge gate. Parent #2 remains
+open for #19 observation, #20 retrieval and #21 complete acceptance.

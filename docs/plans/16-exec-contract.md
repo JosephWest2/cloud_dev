@@ -12,7 +12,7 @@ submission on September 13, 2026.
 | --- | --- | --- |
 | #16 | Contract, literal argv codec and observer-independent publisher prototype; fresh review | Complete; checks/reviews below |
 | #17 | Private result storage, scoped permissions, pinned working runner/document, manifest v4; offline checks, reviewed live plan and storage enforcement evidence | Complete; [live checks and fresh review passed](../acceptance/17-result-foundation.md), PR #23 |
-| #18 | Scoped one-attempt dispatch and integrated runner publication; actual SDK lost-response test and live publication | In progress; see [#18 plan](18-exec-dispatch.md) |
+| #18 | Scoped one-attempt dispatch and integrated runner publication; actual SDK lost-response test and live publication | Complete; [eleven live cases and post-teardown recovery passed](../acceptance/18-exec-dispatch.md), PR #24 |
 | #19 | Observation, exact remote status, timeout/interruption semantics; process tests and live timeout/Ctrl-C | Not started |
 | #20 | Complete S3 retrieval/exports with cloud-only recovery; binary/checksum, missing/denied/corrupt data and post-down recovery | Not started |
 | #21 | `docs/acceptance/02-exec-logs.md`, requirement/evidence matrix, reproducible full live exercise and independently verified cleanup | Not started |
