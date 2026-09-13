@@ -30,8 +30,9 @@ func runCLI(args []string) int {
 	}
 	defer quiet.Close()
 	os.Stderr = quiet
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	code := cli.Run(ctx, args, os.Stdout, diagnostics, doctor.DefaultDependencies())
-	stop()
-	return code
+	// This worker handles exactly one command before main calls os.Exit. Keep
+	// signal handling installed through that exit: resetting it after writing
+	// final JSON would let a repeated signal contradict the established result.
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	return cli.Run(ctx, args, os.Stdout, diagnostics, doctor.DefaultDependencies())
 }

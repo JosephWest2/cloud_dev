@@ -123,3 +123,52 @@ func TestExecLocalHelpAndClockDefaults(t *testing.T) {
 		t.Fatal(code)
 	}
 }
+
+func TestExecutionOutputSeparatesWorkloadWrapperAndLocalInterruption(t *testing.T) {
+	const id = "dc1-0123456789abcdef0123456789abcdef"
+	const sid = "01234567-89ab-cdef-0123-456789abcdef"
+	for _, test := range []struct {
+		outcome string
+		exit    int
+		remote  *int
+		wrapper int32
+		state   execution.InvocationState
+	}{
+		{"remote_exit", 2, func() *int { n := 2; return &n }(), 0, execution.InvocationSucceeded},
+		{"interrupted", 4, func() *int { n := 4; return &n }(), -1, execution.InvocationRunning},
+		{"delivery_timeout", 4, nil, -1, execution.InvocationDeliveryTimeout},
+	} {
+		for _, jsonMode := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/json=%t", test.outcome, jsonMode), func(t *testing.T) {
+				r := execution.Result{SchemaVersion: 1, Command: "exec", Outcome: test.outcome, ExitCode: test.exit, CommandID: id, SSMCommandID: sid,
+					SubmissionState: "submitted", RecoveryCommand: "devbox logs " + id,
+					SSM: &execution.SSMObservation{State: test.state, ResponseCode: &test.wrapper}}
+				if test.remote != nil {
+					r.Workload = &execprotocol.Workload{Status: "exited", ExitCode: test.remote}
+				}
+				var out, diag bytes.Buffer
+				if code := emitExecution(r, jsonMode, &out, &diag); code != test.exit {
+					t.Fatalf("local exit replaced by wrapper: %d", code)
+				}
+				if !strings.Contains(diag.String(), "recover with devbox logs "+id) {
+					t.Fatal("post-dispatch recovery instruction was lost")
+				}
+				if jsonMode {
+					var got execution.Result
+					decoder := json.NewDecoder(&out)
+					if decoder.Decode(&got) != nil || decoder.Decode(new(any)) != io.EOF || !reflect.DeepEqual(got, r) {
+						t.Fatalf("JSON state changed or emitted more than once: %+v", got)
+					}
+				} else {
+					text := out.String()
+					if !strings.HasPrefix(text, test.outcome+" ") || !strings.Contains(text, "ssm_command_id="+sid) || !strings.Contains(text, "ssm_state="+string(test.state)) || !strings.Contains(text, fmt.Sprintf("ssm_response_code=%d", test.wrapper)) {
+						t.Fatalf("text lost distinct states: %s", text)
+					}
+					if test.remote == nil && strings.Contains(text, "remote_exit_code=") || test.remote != nil && !strings.Contains(text, fmt.Sprintf("remote_exit_code=%d", *test.remote)) {
+						t.Fatalf("wrapper response became workload exit: %s", text)
+					}
+				}
+			})
+		}
+	}
+}

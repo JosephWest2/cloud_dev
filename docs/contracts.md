@@ -358,9 +358,9 @@ until AWS detects closure/timeout. SSM does not record the contents of SSH tunne
 
 This section specifies MVP 2 for implementation in #17–#20. The #16 payload codec
 and local publisher prototype validate selected invariants. #17 adds the pinned
-runner and result-storage foundation. #18 adds the `exec` dispatch path and a
-baseline wait for validated final metadata. Detailed SSM observation and the
-user-facing `logs` recovery interface remain #19–#20.
+runner and result-storage foundation. #18 adds the `exec` dispatch path; #19 adds
+bounded SSM/durable observation and process-level detachment semantics. The
+user-facing `logs` recovery interface remains #20.
 The user selected detach on Ctrl-C and 30-day retention from submission on
 September 13, 2026. Implementation and live gates are tracked in
 [the ordered plan](plans/16-exec-contract.md).
@@ -586,12 +586,31 @@ any known `ssm_command_id`, and a recovery command preserving config/profile/reg
 Output publication failures do not erase a known workload status, but may make
 the CLI fail even after workload success. Numeric statuses alone are ambiguous.
 
-The #18 baseline exec waiter reads strict final metadata and checks all submitted
-identity pins plus retention. It trusts the independent publisher's completed
-upload record; it does not download workload streams. Explicit logs retrieval
-verifies the requested bytes. Until #19, missing final metadata is polled within
-the local wait deadline and a storage API failure stops observation; intermediate
-SSM status, outcome-only recovery and transient API backoff are not yet provided.
+Exec reads strict started/outcome/final metadata and checks all submitted identity
+pins, retention and agreement between independently observed records. It trusts
+the independent publisher's completed upload record; it does not download workload
+streams. Explicit logs retrieval verifies the requested bytes. Intermediate
+workload evidence remains available if later observation fails. A valid standalone
+final record needs no successful SSM observation; contradictory metadata or an
+invocation with different identity is rejected.
+
+Metadata and SSM reads each have a 10-second call bound within the independent
+local wait deadline. Polling starts at 1 second and doubles to a 5-second maximum.
+Six consecutive transient failures of either backend stop observation with a
+sanitized API failure. Successful observation resets that backend's counter.
+Missing/eventually visible invocations and pending/delayed/cancelling states keep
+waiting; no read failure triggers another dispatch. Credential-source failures
+are distinct from S3/SSM access denial and retryable service/transport failures.
+When a terminal wrapper state or optional SSM failure would end observation, the
+CLI checks durable metadata again to catch publication during the API call.
+
+`durable_state` is `pending`, `started`, `outcome` or `final`, with independently
+validated submission/expiry/start/finish timestamps when known. Optional `ssm`
+contains the last identity-verified wrapper `state`, allowlisted `status` and
+`status_details`, and its raw numeric `response_code`. This observation can be
+older than the final record; no extra SSM call is required after completed durable
+metadata is established. Wrapper output, URLs and raw SDK/provider errors are
+excluded. The raw response, including -1, never becomes a workload exit.
 `submission_state` separately preserves whether submission was prepared,
 acknowledged, rejected or uncertain, including when an interrupt ends local setup.
 
@@ -609,7 +628,8 @@ acknowledged, rejected or uncertain, including when an interrupt ends local setu
 | SSM reports hard step timeout without outcome | `runner_timeout` | 4 | Unknown |
 | Local wait deadline expires | `observation_timeout` | 4 | Last known state; command may continue |
 | Ctrl-C / local SIGTERM | `interrupted` | 4 | Last known state; cancellation not requested |
-| External cancellation pending / reported | `cancellation_pending` / `cancelled` | 4 | Unknown unless independently recorded |
+| External cancellation pending | Continue waiting with `ssm.state=cancellation_pending` | Not terminal; local interrupt/deadline retains its own outcome | Preserve independently recorded evidence |
+| SSM reports external cancellation completed | `cancelled` | 4 | Unknown unless independently recorded |
 | Terminal wrapper without trustworthy workload record | `execution_unknown` | 1 | Unknown; response -1 is never a workload exit |
 | Known workload, capture/upload/result failure | `result_incomplete` | 1 | Original exit/signal/timeout, if known |
 | Mismatched record/invocation or invalid bytes/hash | `result_corrupt` | 1 | Preserve independently trusted outcome only |

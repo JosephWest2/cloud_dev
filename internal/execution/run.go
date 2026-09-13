@@ -50,6 +50,12 @@ type Result struct {
 	Publication     string                 `json:"publication,omitempty"`
 	Streams         *execprotocol.Streams  `json:"streams,omitempty"`
 	Warnings        []string               `json:"warnings,omitempty"`
+	SSM             *SSMObservation        `json:"ssm,omitempty"`
+	DurableState    DurableState           `json:"durable_state,omitempty"`
+	SubmittedAt     string                 `json:"submitted_at,omitempty"`
+	ExpiresAt       string                 `json:"expires_at,omitempty"`
+	StartedAt       string                 `json:"started_at,omitempty"`
+	FinishedAt      string                 `json:"finished_at,omitempty"`
 }
 
 func Run(ctx context.Context, path string, overrides config.Overrides, o RunOptions, deps Dependencies, diagnostics io.Writer) Result {
@@ -142,7 +148,7 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o RunOpti
 	cancelSetup()
 	wait, cancelWait := context.WithTimeout(ctx, o.WaitTimeout)
 	defer cancelWait()
-	completed := WaitFinal(wait, service.Store, sub, 0)
+	completed := Observe(wait, service.Store, service.SSM, sub, ObserveOptions{})
 	completed.SubmissionState = sub.State
 	completed.RecoveryCommand = r.RecoveryCommand
 	if sub.DiagnosticCode != "" {

@@ -308,9 +308,17 @@ within `--exec-timeout`. A lost SendCommand response is `submission_unknown`, wi
 its public ID preserved; never rerun it automatically. Results use the configured
 30-day retention and survive worker teardown.
 
-This slice waits for final S3 metadata. If finalization never occurs, it can reach
-the local wait deadline without explaining the SSM wrapper state. Detailed
-delivery/cancellation/temporary-API observations arrive in #19; the `logs` command
-and printed recovery-command interface arrive in #20. Retain the public ID and
-trusted storage export meanwhile. The full behavior and implementation limits
-are in the [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).
+Exec observes durable started/outcome/final metadata and the exact SSM invocation.
+It tolerates delayed visibility and bounded temporary API failures, and separates
+SSM delivery/runner timeouts from a recorded workload timeout and the local wait
+deadline. JSON `ssm` fields describe the last verified wrapper observation;
+`ssm.response_code` never replaces `workload.exit_code`. Text uses
+`ssm_response_code` and `remote_exit_code` for the same distinction. Completed
+durable results can succeed while optional SSM observation is unavailable.
+
+Ctrl-C/SIGTERM return `interrupted` with exit 4 and the known IDs; they request no
+remote cancellation. An already established completion retains its actual exit,
+even if interruption races with local process exit. The `logs` command and printed
+recovery-command interface arrive in #20. Retain the public ID and trusted storage
+export meanwhile. The [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16)
+describes timing bounds, observation fields and incomplete-result behavior.
