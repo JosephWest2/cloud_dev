@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"syscall"
 
 	"github.com/JosephWest2/cloud_dev/internal/cli"
 	"github.com/JosephWest2/cloud_dev/internal/doctor"
@@ -29,7 +30,7 @@ func runCLI(args []string) int {
 	}
 	defer quiet.Close()
 	os.Stderr = quiet
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	code := cli.Run(ctx, args, os.Stdout, diagnostics, doctor.DefaultDependencies())
 	stop()
 	return code

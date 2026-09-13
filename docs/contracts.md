@@ -39,12 +39,13 @@ rejected. User config, workload profiles and result envelopes stay at version 1.
 
 | Manifest field | Contract |
 | --- | --- |
-| `schema_version` | Integer 2 |
+| `schema_version` | Integer 3 |
 | `account`, `region`, `deployment`, `owner` | Must equal effective config; foundation currently Ohio only, labels at most 23 characters |
 | `vpc_id`, `subnet_ids`, `security_group_id` | Exact EC2 IDs, exactly one subnet |
 | `route_table_id`, `internet_gateway_id` | Exact EC2 IDs for explicit public route/association |
 | `instance_profile_arn` | Exact commercial-AWS IAM profile ARN in expected account |
 | `development_user` | `devbox` |
+| `ssh_public_key` | Canonical dedicated Ed25519 public key (type and base64 only) |
 | `bootstrap_sha256` | Lowercase SHA-256 of the exact decoded template user-data bytes |
 | `readiness` | `name`, positive numeric string `version`, `content_sha256` of canonical JSON |
 | `roles` | Exactly `instance` and `operator`, each with distinct scoped `arn`, `trust_sha256`, `policy_name`, `policy_sha256` |
@@ -120,16 +121,11 @@ that times out is reported as `probe_timeout` (4); probes not started before
 the overall deadline/cancellation are `skip` with `check_canceled` (4), not
 installation failures. Other local execution failures are prerequisites (1).
 
-The agreed first-release access mode is real SSH over SSM, including editor and
-file-transfer support. The foundation provides remote sshd and a `devbox` user; #9 must add SSH
-authentication, host-key verification, and a proxy interface that OpenSSH-based tools can use
-without opening inbound ports. Doctor probes the local `ssh` client and Session Manager plugin and verifies
-foundation settings; runtime/key/editor checks belong to #9.
-
-No interactive session command exists in this slice. Session bytes must have a
-separate stream lifecycle from structured results; #9 must settle and document
-whether interactive commands reject `--json` or provide a distinct control
-channel before implementing them. Never mix terminal bytes with a JSON object.
+The first-release access mode is real SSH over SSM as the `devbox` user.
+`ssh` and `proxy` reject `--json` before local probes or AWS calls. `ssh-config`
+provides a separate noninteractive configuration result; see the access contract
+below. Native Session Manager shells do not satisfy the confirmed editor and
+file-transfer scope, superseding the original proposal in issues #1/#9.
 
 ## Instance lifecycle and request recovery (#8)
 
@@ -159,7 +155,10 @@ filters, then validates reservation account and instance tags. ID lookup validat
 the same scope. Teardown revalidates the ID immediately before mutation; IAM scope
 conditions enforce the resource tags at termination. Inventory, teardown, and
 reconciliation of a dispatched receipt require only valid user scope and identity:
-missing or broken manifest/profile/receipt files never gate `ls` or `down`.
+missing or broken manifest/profile/receipt files never block inventory discovery
+or `down`. `ls` retains inventory but returns partial observation failure when
+readiness metadata is unavailable. A resumed allocation is durably reconciled
+before readiness metadata is loaded; metadata errors never authorize a new launch.
 
 Request receipts live at `$XDG_STATE_HOME/devbox/requests/REQUEST_ID.json`, defaulting
 to `~/.local/state/devbox/requests`. XDG_STATE_HOME must be absolute. A schema-v1
@@ -207,8 +206,9 @@ Lifecycle JSON adds `code`, `message`, `status`, `instances`, and where applicab
 `request_id`/`receipt_path` to the common envelope. Errors retain all known recovery
 IDs. Instance records include actual image/type/market, template pins, original
 creation tags, EC2 state, `ssm`, `bootstrap`, `readiness`, and EBS mappings with root
-and delete-on-termination flags. SSM/bootstrap/readiness are `not_observed`: an
-allocation success does not claim a ready shell. Fields missing in AWS remain
+and delete-on-termination flags. Up waits for separate readiness observations;
+ls attempts observations within its shared deadline. Down reports these fields
+as `not_observed` because cleanup does not probe readiness. Fields missing in AWS remain
 empty/unknown rather than inferred from the current profile/manifest.
 
 Teardown bounds termination and per-volume observation to 30 polls each, with
@@ -235,3 +235,95 @@ fresh account-status check. Other previously recognized rejection codes retain
 `launch_rejected`; unknown/transport failures remain `outcome_unresolved`.
 Observation of an instance clears the historical error. Older receipts without
 this field remain readable; no rejected receipt is reset to prepared.
+
+
+## Readiness and SSH access (#9)
+
+User config v1 adds optional `ssh_identity_file`, resolved beside the TOML file
+when relative. Manifest v3 requires a canonical Ed25519 `ssh_public_key` without
+comment/newline; it contains no private-key path or secret. The rendered bootstrap digest now includes the public
+key. Receipt schema v1 is unchanged: the numeric template and bootstrap digest
+already bind this launch setting. Dispatched old receipts remain reconcilable;
+new launches/access require a current manifest. No current launch profile is
+loaded for ls, dispatched reconciliation, or access.
+
+| Field | Observation contract |
+| --- | --- |
+| `ec2_state` | Actual EC2 state, independent of SSM and bootstrap |
+| `ssm` | `online`, `offline`, `not_registered`, `unknown` |
+| `bootstrap` | `pending`, `complete`, `failed`, `unknown` |
+| `readiness` | `ready` only when running + online + complete; otherwise `pending`, `failed`, `not_ready`, or `unknown` |
+| `probe_command_id` | Most recently dispatched, known fixed probe command ID |
+| `observation_code` | Optional sanitized reason for unavailable observation |
+
+The parameterless, version/hash-pinned SSM document returns output schema 1 with
+bootstrap status and, only on completion, the Ed25519 public host key. A failure
+marker wins if both markers exist. A denied, unsuccessful, malformed or mismatched
+invocation means **unknown bootstrap**, not failed bootstrap. In-flight commands
+are polled by their exact ID; InvocationDoesNotExist is retried under the deadline.
+This command has no arbitrary script parameters or output-storage destinations.
+No general exec/logs workflow is provided.
+
+Default up and access setup timeout is 5m; ls/doctor/down default to 20s.
+`--timeout` accepts any positive duration up to 5m, including milliseconds for
+controlled failure tests. Up includes launch/reconciliation in this same overall
+budget. Ls uses at most four concurrent observations within one deadline and
+retains every discovered record. A valid observation of pending/offline/failed
+states is a successful inventory (exit 0); probe/metadata failures return exit 1,
+and deadline/cancellation returns 4. Up exits 1 immediately for failed bootstrap.
+Progress goes to stderr and --json remains one final result on stdout. Failed
+waits and connections retain workers; **manual cleanup is required until TTL ships**.
+
+`ssh NAME_OR_ID` validates Linux, OpenSSH, Session Manager plugin >=1.2.764.0,
+plugin logging disabled, and a local identity/.pub matching the exported public
+key. Private-key files must be owned regular files with mode 0600; encrypted keys
+must be loaded in ssh-agent before invocation. Public-key authentication uses
+BatchMode/IdentitiesOnly and does not forward the agent. No private key is generated
+by the CLI or OpenTofu. Rotation affects newly launched workers only.
+
+Name/ID resolution verifies account, region and all managed scope tags; ambiguous
+live names fail with IDs. EC2 scope is revalidated before fixed SendCommand and
+AWS-StartSSHSession on port 22. Initial SSH requires complete readiness; failed
+bootstrap does not have an unready-shell bypass. Use probe IDs to investigate,
+then down by ID rather than repeatedly retrying a confirmed failed bootstrap.
+
+Host trust derives from the authenticated, exact SSM invocation. The dedicated
+known_hosts/config directory is private under `$XDG_STATE_HOME/devbox/ssh`, default
+`~/.local/state/devbox/ssh`. A scoped immutable host alias, strict Ed25519 host
+checking, no global known_hosts and disabled automatic host-key updates prevent
+unrelated trust entries from matching. Updates are locked across processes and
+atomic. A changed key fails without overwrite: inspect the instance and freshly
+verified SSM probe, then deliberately remove only that instance's known_hosts
+file and regenerate its config. This trusts AWS/SSM and target root, not a separate
+host identity authority. Reinstall/loss of local trust bootstraps trust from SSM
+again. No insecure host-checking fallback is offered.
+
+`ssh-config NAME_OR_ID` emits an OpenSSH stanza and saves its private config file.
+`--json` returns the common envelope plus `ssh_config`, `ssh_config_path` and
+`ssh_host`. Use the file with ssh/scp/sftp -F or an editor's SSH-config setting.
+It references this devbox executable and exact config/profile/region and instance
+ID; regenerate after moving the executable/config. The proxy refreshes readiness
+and validates existing host trust for every new tunnel. Generated paths support
+spaces, quotes and literal percent signs; control characters and dollar signs in
+SSH file paths are rejected. Using `-F` isolates these settings from user/system
+SSH configuration. Do not override the supplied trust/authentication settings.
+
+The CLI first establishes a noninteractive OpenSSH control master within the
+setup deadline, then opens an interactive client over that authenticated socket.
+The shell's lifetime is independent of --timeout. It inherits terminal streams;
+Ctrl-C interrupts the remote foreground command, resize is forwarded by OpenSSH,
+and exit/Ctrl-D closes the shell. The supervisor restores terminal ownership/mode
+and cleans ordinary subprocess descendants on failure/cancellation. Setup failures
+use existing CLI exits (1/2/4); after handoff OpenSSH's exit status is preserved
+(remote shell status or 255 for transport/authentication failures). No remote
+command arguments are accepted by devbox ssh; external OpenSSH tools use the proxy.
+
+Plugin session-response tokens go through a child-only environment variable,
+never argv or diagnostics. Upstream plugin logging is independent of SDK logging;
+access refuses a seelog configuration that permits logs. Keep it disabled/stable
+for the session. Startup output is bounded and suppressed until SSH identification,
+then the transport is copied as opaque bytes. Plugin stderr is discarded; remote
+interactive stderr remains terminal data. On closure or startup failure, the proxy
+attempts TerminateSession with a separate 5s cleanup budget; failures report a
+session ID and retry command. Hard crashes/disconnection can leave a server session
+until AWS detects closure/timeout. SSM does not record the contents of SSH tunnels.

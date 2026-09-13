@@ -22,6 +22,14 @@ permissions or constrain an administrator.
 | SSM session data channel and cleanup | Session ARN prefix from exact deployment/owner role-session name, enforced in trust |
 | IAM doctor reads | Exact two roles and instance profile; no IAM writes |
 
+The session-document condition uses `BoolIfExists`, following the
+[AWS SSH-only policy example](https://aws.amazon.com/blogs/machine-learning/integrate-hyperpod-clusters-with-active-directory-for-seamless-multi-user-login/).
+Explicit-document requests may omit `ssm:SessionDocumentAccessCheck`; plain `Bool`
+incorrectly denied the scoped SSH instance during live acceptance. The condition
+still enforces authorization for the default document. Live restricted-role
+checks confirmed SSH-document access and denied omitted-document, explicit native
+shell and port-forwarding-document requests. Only `AWS-StartSSHSession` is granted.
+
 Creation tags must be supplied on **both instance and volume** tag specifications
 by the launch command; the template deliberately does not invent dynamic
 request/name/time tags. Spot is the profile's preserved default, but this initial

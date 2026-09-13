@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/JosephWest2/cloud_dev/internal/sshkey"
 	"github.com/JosephWest2/cloud_dev/profiles"
 	"github.com/pelletier/go-toml/v2"
 )
@@ -25,6 +26,7 @@ type Config struct {
 	AWSProfile      string `toml:"aws_profile"`
 	Manifest        string `toml:"manifest"`
 	ProfileFile     string `toml:"profile_file"`
+	SSHIdentityFile string `toml:"ssh_identity_file"`
 }
 
 type Overrides struct{ AWSProfile, Region string }
@@ -53,6 +55,7 @@ type Manifest struct {
 	InternetGatewayID  string           `json:"internet_gateway_id"`
 	DevelopmentUser    string           `json:"development_user"`
 	BootstrapSHA256    string           `json:"bootstrap_sha256"`
+	SSHPublicKey       string           `json:"ssh_public_key"`
 	Readiness          Document         `json:"readiness"`
 	Roles              map[string]Role  `json:"roles"`
 	Images             map[string]Image `json:"images"`
@@ -147,6 +150,15 @@ func Load(path string, overrides Overrides) (Config, error) {
 	if !filepath.IsAbs(c.Manifest) {
 		c.Manifest = filepath.Join(filepath.Dir(path), c.Manifest)
 	}
+	if c.SSHIdentityFile != "" && !filepath.IsAbs(c.SSHIdentityFile) {
+		c.SSHIdentityFile = filepath.Join(filepath.Dir(path), c.SSHIdentityFile)
+	}
+	if c.SSHIdentityFile != "" {
+		c.SSHIdentityFile, err = filepath.Abs(c.SSHIdentityFile)
+		if err != nil {
+			return c, errors.New("cannot resolve ssh_identity_file to an absolute path")
+		}
+	}
 	if c.ProfileFile != "" && !filepath.IsAbs(c.ProfileFile) {
 		c.ProfileFile = filepath.Join(filepath.Dir(path), c.ProfileFile)
 	}
@@ -212,8 +224,11 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	if d.Decode(new(any)) != io.EOF {
 		return m, errors.New("deployment manifest must contain exactly one JSON object")
 	}
-	if m.SchemaVersion != 2 {
-		return m, errors.New("unsupported manifest schema_version; re-export version 2 from the foundation")
+	if m.SchemaVersion != 3 {
+		return m, errors.New("unsupported manifest schema_version; re-export version 3 from the foundation")
+	}
+	if _, err := sshkey.Parse(m.SSHPublicKey); err != nil {
+		return m, errors.New("manifest requires a dedicated Ed25519 ssh_public_key; apply and re-export the foundation")
 	}
 	if m.Account != c.ExpectedAccount || m.Region != c.Region || m.Deployment != c.Deployment || m.Owner != c.Owner {
 		return m, errors.New("deployment manifest scope differs from expected account, region, deployment or owner; select the matching configuration and foundation export")

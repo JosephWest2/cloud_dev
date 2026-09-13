@@ -97,3 +97,14 @@ versioned S3 backend using native lockfiles; foundation uses a separate key.
 Pinned tooling is OpenTofu 1.12.6 with AWS provider 6.64.0. See
 [setup and recovery](docs/setup.md), [IAM limits](docs/iam.md), and
 [live acceptance status](docs/acceptance/07-foundation.md).
+
+
+## Confirmed during issue #9 (September 12, 2026)
+
+The user selected a dedicated local Ed25519 SSH key. Only its public key is
+installed by foundation bootstrap; private material stays with local OpenSSH and
+ssh-agent. Host trust is bootstrapped through the pinned, parameterless SSM probe,
+then enforced with a private per-instance known_hosts file and strict checking.
+The access contract is real SSH over SSM, including external OpenSSH editor and
+file-transfer integration. See the [reviewed implementation plan](docs/plans/09-readiness-shell.md)
+and [acceptance procedure](docs/acceptance/09-readiness-shell.md).

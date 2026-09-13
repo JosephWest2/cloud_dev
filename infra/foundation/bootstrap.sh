@@ -1,5 +1,5 @@
 #!/bin/bash
-# No keys, credentials, arbitrary command parameters, or shell tracing.
+# Only the validated public key is rendered here; no private keys or credentials.
 set -euo pipefail
 umask 022
 install -d -o root -g root -m 0755 /var/lib/devbox
@@ -12,6 +12,9 @@ id devbox >/dev/null 2>&1 || useradd --create-home --shell /bin/bash devbox
 # An unusable password without locking public-key authentication.
 usermod --password '*' devbox
 install -d -o devbox -g devbox -m 0700 /home/devbox/.ssh
+printf '%s\n' '@@DEVBOX_PUBLIC_KEY@@' > /home/devbox/.ssh/authorized_keys
+chown devbox:devbox /home/devbox/.ssh/authorized_keys
+chmod 0600 /home/devbox/.ssh/authorized_keys
 cat > /etc/ssh/sshd_config.d/00-devbox.conf <<'SSH'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
@@ -30,7 +33,8 @@ install -d -o root -g root -m 0755 /run/sshd
 systemctl enable --now ssh
 systemctl restart ssh
 # Canonical's selected standard server image includes the SSM agent snap.
-snap list amazon-ssm-agent >/dev/null
+agent_version=$(snap list amazon-ssm-agent | awk 'NR == 2 {print $2}')
+dpkg --compare-versions "$agent_version" ge 3.3.40.0
 systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service
 systemctl is-active --quiet snap.amazon-ssm-agent.amazon-ssm-agent.service
 systemctl is-active --quiet ssh

@@ -24,8 +24,10 @@ func supervise(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	cmd := exec.CommandContext(ctx, executable, append([]string{"__devbox_worker"}, args...)...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	restore := foreground(cmd)
+	defer restore()
 	cmd.Cancel = func() error {
 		if cmd.Process == nil {
 			return os.ErrProcessDone
@@ -37,7 +39,8 @@ func supervise(args []string) int {
 		}
 		return err
 	}
-	cmd.WaitDelay = 2 * time.Second
+	// Allow the access proxy's independent 5s SSM cleanup before force-kill.
+	cmd.WaitDelay = 7 * time.Second
 	if err = cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start devbox worker")
 		return 1

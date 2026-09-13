@@ -32,6 +32,7 @@ override_resource {
   values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-operator" }
 }
 variables {
+  ssh_public_key         = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
   account_id             = "123456789012"
   deployment             = "test"
   owner                  = "test-owner"
@@ -57,7 +58,7 @@ run "safe_foundation_plan" {
     error_message = "Only worker template launches allocate public IPs."
   }
   assert {
-    condition     = aws_launch_template.agent.image_id == var.ami_id && aws_launch_template.agent.user_data == filebase64("${path.module}/bootstrap.sh")
+    condition     = aws_launch_template.agent.image_id == var.ami_id && aws_launch_template.agent.user_data == base64encode(local.bootstrap)
     error_message = "Pin the selected AMI and reviewed bootstrap."
   }
   assert {
@@ -111,6 +112,20 @@ run "policy_contract" {
       if s.Sid == "OwnSessionChannels" && contains(s.Action, "ssmmessages:OpenDataChannel") && s.Resource == ["arn:aws:ssm:us-east-2:123456789012:session/devbox-test-test-owner-*"]
     ]) == 1
     error_message = "The operator needs signed data-channel access scoped to its own sessions."
+  }
+  assert {
+    condition = length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if s.Sid == "SSHOwnedInstances" && try(s.Condition.BoolIfExists["ssm:SessionDocumentAccessCheck"], "false") == "true" && s.Resource == ["arn:aws:ec2:us-east-2:123456789012:instance/*"] && s.Condition.StringEquals["ssm:resourceTag/Owner"] == var.owner && s.Condition.StringEquals["ssm:resourceTag/Deployment"] == var.deployment && s.Condition.StringEquals["ssm:resourceTag/ManagedBy"] == "devbox" && s.Condition.StringEquals["aws:RequestedRegion"] == var.region
+    ]) == 1
+    error_message = "SSH must retain instance scope and the default-document check while accepting absent context for explicit documents."
+  }
+  assert {
+    condition = length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if contains(s.Action, "ssm:StartSession")
+      ]) == 2 && length([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement : s
+      if s.Sid == "SSHDocument" && s.Action == ["ssm:StartSession"] && s.Resource == ["arn:aws:ssm:us-east-2::document/AWS-StartSSHSession"]
+    ]) == 1
+    error_message = "StartSession must authorize only scoped instances and the exact SSH session document."
   }
   assert {
     condition     = length(local.operator_policy) <= 10240 && length(local.instance_policy) <= 10240

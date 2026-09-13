@@ -40,7 +40,7 @@ func TestFoundationGatedByManifestAndIdentity(t *testing.T) {
 	}{
 		{name: "valid", manifest: testutil.Manifest, wantCalls: 1},
 		{name: "wrong account", manifest: strings.Replace(testutil.Manifest, "123456789012", "000000000000", 1)},
-		{name: "old schema", manifest: strings.Replace(testutil.Manifest, `"schema_version":2`, `"schema_version":1`, 1)},
+		{name: "old schema", manifest: strings.Replace(testutil.Manifest, `"schema_version":3`, `"schema_version":1`, 1)},
 		{name: "unverified identity", manifest: testutil.Manifest, identityErr: errors.New("SECRET")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

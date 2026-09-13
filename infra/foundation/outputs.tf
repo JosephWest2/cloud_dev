@@ -1,7 +1,7 @@
 output "deployment_manifest" {
   description = "Non-secret CLI contract; export with tofu output -json deployment_manifest."
   value = {
-    schema_version       = 2
+    schema_version       = 3
     account              = var.account_id
     region               = var.region
     deployment           = var.deployment
@@ -13,7 +13,8 @@ output "deployment_manifest" {
     internet_gateway_id  = aws_internet_gateway.devbox.id
     instance_profile_arn = aws_iam_instance_profile.devbox.arn
     development_user     = "devbox"
-    bootstrap_sha256     = filesha256("${path.module}/bootstrap.sh")
+    ssh_public_key       = var.ssh_public_key
+    bootstrap_sha256     = sha256(local.bootstrap)
     readiness = {
       name           = aws_ssm_document.readiness.name
       version        = tostring(aws_ssm_document.readiness.latest_version)

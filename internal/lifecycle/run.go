@@ -19,12 +19,13 @@ type Dependencies struct {
 	Store *Store
 }
 type Result struct {
-	SchemaVersion int    `json:"schema_version"`
-	Command       string `json:"command"`
-	OK            bool   `json:"ok"`
-	ExitCode      int    `json:"exit_code"`
-	Code          string `json:"code"`
-	Message       string `json:"message"`
+	RecoveryPrefix string `json:"-"`
+	SchemaVersion  int    `json:"schema_version"`
+	Command        string `json:"command"`
+	OK             bool   `json:"ok"`
+	ExitCode       int    `json:"exit_code"`
+	Code           string `json:"code"`
+	Message        string `json:"message"`
 	Outcome
 }
 
@@ -58,6 +59,7 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 	if err != nil {
 		return fail(failure("config_invalid", err.Error()), 2)
 	}
+	r.RecoveryPrefix = config.CommandPrefix(path, c)
 	var m config.Manifest
 	var p config.Profile
 	var store Store
@@ -109,6 +111,17 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 	case "ls":
 		r.Instances, err = service.List(ctx)
 		r.Status = "inventory"
+		if err == nil && len(r.Instances) > 0 {
+			m, err = config.LoadManifest(c.Manifest, c, config.Profile{Image: "agent"})
+			if err != nil {
+				err = failure("manifest_invalid", "readiness metadata unavailable; apply and re-export the foundation; inventory and down remain available")
+				for n := range r.Instances {
+					observationError(&r.Instances[n], err)
+				}
+			} else {
+				err = service.ObserveAll(ctx, m, r.Instances)
+			}
+		}
 	case "down":
 		r.Outcome, err = service.Down(ctx, o.Target)
 	case "up":
@@ -116,6 +129,19 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 			_, err := fmt.Fprintf(diagnostics, "devbox: saved request %s at %q; resume with: devbox up --resume %s (use the same config and AWS scope)\n", receipt.RequestID, path, receipt.RequestID)
 			return err
 		})
+		if err == nil && r.Status == "allocated" && len(r.Instances) == 1 {
+			if m.SchemaVersion == 0 {
+				m, err = config.LoadManifest(c.Manifest, c, config.Profile{Image: "agent"})
+			}
+			if err != nil {
+				err = failure("manifest_invalid", "allocation recovered, but readiness metadata is unavailable; apply and re-export the foundation; use ls/down with the returned ID")
+			} else {
+				err = service.WaitReady(ctx, m, &r.Instances[0], diagnostics)
+				if err == nil {
+					r.Status = "ready"
+				}
+			}
+		}
 	default:
 		return fail(failure("usage_invalid", "unknown lifecycle command"), 2)
 	}
@@ -124,6 +150,8 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 	}
 	r.Code = r.Status
 	switch r.Status {
+	case "ready":
+		r.Message = "EC2 running, SSM online and bootstrap complete; connect with devbox ssh using the returned ID"
 	case "allocated":
 		r.Message = "allocation observed; EC2 state is reported separately; SSM/bootstrap readiness has not been observed"
 	case "inventory":
