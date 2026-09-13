@@ -1,8 +1,8 @@
 # devbox
 
 A Go CLI for disposable AWS development machines: provision a durable foundation,
-launch an Ubuntu devbox, connect with real SSH over SSM, rediscover it after a
-restart, and remove it with root-volume verification. Remote editors and file
+launch an Ubuntu devbox, run noninteractive commands, connect with real SSH over
+SSM, rediscover it after a restart, and remove it with root-volume verification. Remote editors and file
 transfer use the generated OpenSSH configuration. No inbound ports are opened.
 
 Start with installation and identity below, then follow the
@@ -35,7 +35,7 @@ make build
 ```
 
 Provisioning also needs AWS CLI v2, OpenTofu **1.12.6** and the committed AWS
-provider **6.64.0** lockfiles. Install the AWS Session Manager plugin
+provider **6.64.0** lockfiles. SSH access also needs the AWS Session Manager plugin
 **>=1.2.764.0** and keep its logging disabled; verify
 `session-manager-plugin --version` and `ssh -V`. The pinned AMI must provide SSM
 Agent **>=3.3.2746.0**, which bootstrap checks. Installation links and identity setup
@@ -50,8 +50,9 @@ infrastructure or establish live acceptance.
 `make runner` builds the pinned Linux/amd64 execution-runner artifact used by
 foundation provisioning; `infra-check` builds it automatically. The foundation
 now includes private command-result storage with 30-day retention from submission
-and a separate execution document. The user-facing `exec` and `logs` commands
-remain in the following MVP 2 slices; see the
+and a separate execution document. `exec` now submits commands and observes their
+durable final metadata; detailed SSM observation and the `logs` interface remain
+the following MVP 2 slices. See the
 [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).
 
 Install into a directory on your PATH:
@@ -146,7 +147,8 @@ identity fails, unless the deadline expires or the command is canceled; remainin
 executable probes are then explicitly skipped.
 Invalid configuration/profile schemas prevent even the STS identity call.
 A missing/wrong-scope/unsupported manifest or failed identity check prevents
-deployed-resource calls. `doctor` is read-only; `up` and `down` perform the explicit lifecycle mutations.
+deployed-resource calls. `doctor` is read-only; `up` and `down` perform lifecycle
+mutations, and `exec` submits a remote command and its durable request.
 
 Install the **AWS Session Manager plugin**, then verify
 `session-manager-plugin --version`. Follow AWS's
@@ -274,3 +276,41 @@ and [parent acceptance record](docs/acceptance/01-lifecycle.md) for failure
 coverage, volume verification, and the final gate status. Historical
 [#8 lifecycle](docs/acceptance/08-lifecycle.md) and
 [#9 SSH/editor](docs/acceptance/09-readiness-shell.md) acceptance passed.
+
+## Run a noninteractive command
+
+Use a newly bootstrapped worker and the matching manifest v4:
+
+```sh
+devbox exec smoke -- /usr/bin/printf '%s\n' '' 'two words' '$(id)' '--json'
+devbox exec smoke --cwd project --exec-timeout 10m -- sh -c 'make check'
+devbox --json exec smoke --wait-timeout 2m -- /usr/bin/false
+```
+
+Everything after the first `--` is passed literally, including remote `--help`,
+`--json` and `--timeout`. Use `sh -c` explicitly for shell evaluation. Commands run
+as `devbox`, with stdin EOF, a fixed environment and default cwd `/home/devbox`.
+Relative `--cwd` values resolve from that home directory. Exec uses the AWS SDK;
+it requires no local SSH key, OpenSSH, Session Manager plugin, launch-profile file
+or OpenTofu executable.
+
+The CLI prints a `dc1-...` recovery ID on stderr before submission and announces
+the acknowledged SSM ID immediately. Its stdout contains status metadata, or one
+JSON envelope with `--json`, and no workload bytes. A complete final record
+preserves the workload's exact exit code, including 1, 2, 4 and 255; `outcome`
+distinguishes those codes from local failures. Publication failure retains the
+workload status but prevents success. Exec validates the publisher's metadata;
+full output-byte verification belongs to explicit retrieval.
+
+Setup defaults to 5m, SSM delivery to 5m, remote runtime to 1h, and the independent
+local result wait to 1h. Ctrl-C detaches and leaves the remote command running
+within `--exec-timeout`. A lost SendCommand response is `submission_unknown`, with
+its public ID preserved; never rerun it automatically. Results use the configured
+30-day retention and survive worker teardown.
+
+This slice waits for final S3 metadata. If finalization never occurs, it can reach
+the local wait deadline without explaining the SSM wrapper state. Detailed
+delivery/cancellation/temporary-API observations arrive in #19; the `logs` command
+and printed recovery-command interface arrive in #20. Retain the public ID and
+trusted storage export meanwhile. The full behavior and implementation limits
+are in the [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).

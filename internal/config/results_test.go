@@ -35,6 +35,9 @@ func TestResultRecoveryDescriptorWithoutLaunchOrSSH(t *testing.T) {
 	if _, err := LoadManifest(c.Manifest, c, Profile{Image: "agent"}); err == nil {
 		t.Fatal("storage-only descriptor authorized a new launch")
 	}
+	if _, err := LoadExecutionManifest(c.Manifest, c); err == nil {
+		t.Fatal("storage-only descriptor authorized a new execution")
+	}
 }
 
 func TestExecutionAndStorageManifestBindings(t *testing.T) {

@@ -287,7 +287,8 @@ marker wins if both markers exist. A denied, unsuccessful, malformed or mismatch
 invocation means **unknown bootstrap**, not failed bootstrap. In-flight commands
 are polled by their exact ID; InvocationDoesNotExist is retried under the deadline.
 This command has no arbitrary script parameters or output-storage destinations.
-No general exec/logs workflow is provided.
+Readiness probes contain no user command. General execution uses the separate
+document and protocol below.
 
 Default up and access setup timeout is 5m; ls/doctor/down default to 20s.
 `--timeout` accepts any positive duration up to 5m, including milliseconds for
@@ -357,8 +358,9 @@ until AWS detects closure/timeout. SSM does not record the contents of SSH tunne
 
 This section specifies MVP 2 for implementation in #17–#20. The #16 payload codec
 and local publisher prototype validate selected invariants. #17 adds the pinned
-runner and result-storage foundation; **the installed CLI does not yet provide
-exec/logs**. Their dispatch, observation and recovery interfaces remain #18–#20.
+runner and result-storage foundation. #18 adds the `exec` dispatch path and a
+baseline wait for validated final metadata. Detailed SSM observation and the
+user-facing `logs` recovery interface remain #19–#20.
 The user selected detach on Ctrl-C and 30-day retention from submission on
 September 13, 2026. Implementation and live gates are tracked in
 [the ordered plan](plans/16-exec-contract.md).
@@ -583,6 +585,15 @@ any known `ssm_command_id`, and a recovery command preserving config/profile/reg
 `ok` for exec means a known workload exit 0 plus established complete publication.
 Output publication failures do not erase a known workload status, but may make
 the CLI fail even after workload success. Numeric statuses alone are ambiguous.
+
+The #18 baseline exec waiter reads strict final metadata and checks all submitted
+identity pins plus retention. It trusts the independent publisher's completed
+upload record; it does not download workload streams. Explicit logs retrieval
+verifies the requested bytes. Until #19, missing final metadata is polled within
+the local wait deadline and a storage API failure stops observation; intermediate
+SSM status, outcome-only recovery and transient API backoff are not yet provided.
+`submission_state` separately preserves whether submission was prepared,
+acknowledged, rejected or uncertain, including when an interrupt ends local setup.
 
 | Observation | `outcome` | CLI exit | Workload status retained |
 | --- | --- | --- | --- |
