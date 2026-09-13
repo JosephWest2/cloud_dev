@@ -360,7 +360,7 @@ This section specifies MVP 2 for implementation in #17–#20. The #16 payload co
 and local publisher prototype validate selected invariants. #17 adds the pinned
 runner and result-storage foundation. #18 adds the `exec` dispatch path; #19 adds
 bounded SSM/durable observation and process-level detachment semantics. The
-user-facing `logs` recovery interface remains #20.
+user-facing `logs` recovery and verified export interface is implemented in #20.
 The user selected detach on Ctrl-C and 30-day retention from submission on
 September 13, 2026. Implementation and live gates are tracked in
 [the ordered plan](plans/16-exec-contract.md).
@@ -696,9 +696,43 @@ text, ETags and object existence alone are insufficient. Status-only logs may
 report `publication=complete` from a record but `verification=not_downloaded`;
 byte verification is established only by reading the selected streams. A partial
 stream write can already have emitted bytes when verification fails: return
-failure and diagnose it. Exports use private temporary files, verify then rename
-without replacing an existing destination, and remove unfinished temporary files.
+failure and diagnose it. Exports use private temporary files, verify then publish
+atomically without replacing an existing destination, and remove unfinished temporary files.
 Do not mark a partially downloaded file as a successful export.
+
+The top-level `verification` describes the selected downloads: `not_downloaded`
+for status-only retrieval, `verified` after all selected streams pass, and
+`failed` if any selected retrieval fails. `downloads.stdout/stderr` describes
+only selected streams, with `destination=stdout|file`, `bytes_written`, individual
+`verification`, and `file` only for successfully published exports. The existing
+`streams` fields describe both immutable objects. No selection implicitly verifies
+the unselected stream. Exports are independent: if the first succeeds and the
+second fails, retain the first file and report its verification separately while
+the overall retrieval fails. Incomplete publication returns status without
+claiming a complete stream export.
+
+Logs uses one local deadline (default 20s, maximum 5m). It first reads the exact
+`result.json`; a valid final requires no auxiliary metadata or SSM call. Otherwise
+it reads outcome/start/acknowledgement/request records, reconciles all evidence
+actually read, takes at most one optional exact SSM snapshot, and rereads the
+final once to cover concurrent publication. Each metadata attempt is bounded by
+10s inside the overall deadline, with at most two record-read attempts and 100ms
+backoff for transient failure. SDK retries and the bounded exact-key access check
+may make additional HTTP requests within that deadline. This is a status snapshot,
+not a follow loop. Repeat `logs`
+with the same ID after pending, temporary failure or authentication refresh;
+use new export filenames. A complete result cannot be defeated by unavailable
+SSM history. Observed contradictory metadata remains corrupt, and authoritative
+workload evidence remains present when a later read or output transfer fails.
+
+```sh
+# Status-only metadata: exit 0 can accompany workload.exit_code=255.
+devbox logs dc1-0123456789abcdef0123456789abcdef --json
+# Both full byte streams; paths must not exist. JSON contains no workload bytes.
+devbox logs dc1-0123456789abcdef0123456789abcdef --timeout 2m --stdout-file stdout.bin --stderr-file stderr.bin --json
+# Only stderr bytes on stdout; all status/diagnostics go to stderr.
+devbox logs dc1-0123456789abcdef0123456789abcdef --stream stderr > stderr-copy.bin
+```
 
 | Evidence | Result availability/completeness |
 | --- | --- |
@@ -789,6 +823,6 @@ validates actual storage controls, document and IAM digests; keep general SSH
 prerequisite checks separate. Apply/re-export and replace old workers to install
 the new runner/agent/bootstrap; reject v3 for new exec with actionable guidance.
 Inventory, down and old launch reconciliation remain available under their
-existing scope-only recovery contract. #20 must read only the trusted result
+existing scope-only recovery contract. Logs reads only the trusted result
 descriptor and current identity for completed recovery, regardless of whether
 the original template, document, instance or SSH identity still exists.

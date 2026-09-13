@@ -11,8 +11,10 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/access"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/doctor"
+	"github.com/JosephWest2/cloud_dev/internal/execprotocol"
 	"github.com/JosephWest2/cloud_dev/internal/execution"
 	"github.com/JosephWest2/cloud_dev/internal/lifecycle"
+	"github.com/JosephWest2/cloud_dev/internal/logs"
 	"os"
 )
 
@@ -25,6 +27,7 @@ const help = `Usage: devbox [options] doctor
        devbox [options] ssh-config NAME_OR_INSTANCE_ID
        devbox [options] proxy INSTANCE_ID
        devbox [options] exec NAME_OR_INSTANCE_ID [exec options] -- COMMAND [ARGS...]
+       devbox [options] logs COMMAND_ID [logs options]
        devbox [--json] version
 
 Options may appear before or after the command:
@@ -45,6 +48,13 @@ Exec options (all local options must precede --):
   --delivery-timeout DURATION  SSM delivery (default: 5m; whole seconds, 30s-1h)
   --wait-timeout DURATION   Local result wait (default: 1h; positive, max: 25h)
 
+Logs options:
+  --stream stdout|stderr   Copy exact bytes to stdout; metadata goes to stderr
+  --stdout-file PATH       Export stdout to a new file after checksum verification
+  --stderr-file PATH       Export stderr to a distinct new file after verification
+  Stream mode rejects --json and file exports. Exports may use --json.
+  Default logs prints status; its exit code describes retrieval, not workload exit.
+
 doctor checks local setup and AWS identity without provisioning resources.
 up launches one instance; Spot is unsupported. ls/down use AWS inventory.
 up waits for EC2 + SSM + bootstrap readiness. ssh uses real SSH over SSM.
@@ -52,6 +62,7 @@ ssh-config supports editors/scp/sftp; proxy is its transport helper.
 ssh/proxy reject --json. Failed/finished sessions retain workers: run down.
 exec preserves every argument after -- and prints metadata, never workload bytes.
 Ctrl-C detaches from exec; the remote command keeps running within its timeout.
+logs uses retained cloud records and works after worker removal; no SSH is needed.
 `
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies) int {
@@ -65,9 +76,17 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 type execRunner func(context.Context, string, config.Overrides, execution.RunOptions, io.Writer) execution.Result
+type logsRunner func(context.Context, string, config.Overrides, logs.Options, io.Writer) logs.Result
 
 func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies, runExec execRunner) int {
+	return runWithCommands(ctx, args, stdout, stderr, deps, life, runExec, func(ctx context.Context, path string, overrides config.Overrides, options logs.Options, output io.Writer) logs.Result {
+		return logs.Run(ctx, path, overrides, options, logs.Dependencies{}, output)
+	})
+}
+
+func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies, runExec execRunner, runLogs logsRunner) int {
 	jsonMode := false
+	streamIntent := false
 	// The first separator ends all local interpretation, including the early
 	// error-format scan. Remote arguments never enable JSON or help locally.
 	for _, a := range args {
@@ -77,20 +96,32 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 		if a == "--json" {
 			jsonMode = true
 		}
+		if a == "--stream" || strings.HasPrefix(a, "--stream=") {
+			streamIntent = true
+		}
 	}
 	var command, path string
+	var logOptions logs.Options
 	fail := func(message string) int {
+		failureOutput := stdout
+		if streamIntent && !jsonMode {
+			failureOutput = stderr
+		}
 		if command == "exec" {
-			return emitExecution(execution.Result{SchemaVersion: 1, Command: "exec", Outcome: "config_invalid", Code: "usage_invalid", Message: message, ExitCode: 2}, jsonMode, stdout, stderr)
+			return emitExecution(execution.Result{SchemaVersion: 1, Command: "exec", Outcome: "config_invalid", Code: "usage_invalid", Message: message, ExitCode: 2}, jsonMode, failureOutput, stderr)
+		}
+		if command == "logs" {
+			return emitLogs(logs.Result{Result: execution.Result{SchemaVersion: 1, Command: "logs", Outcome: "config_invalid", Code: "usage_invalid", Message: message, ExitCode: 2}, Encoding: "bytes", Verification: "not_downloaded"}, jsonMode, streamIntent, stdout, stderr)
 		}
 		r := doctor.Result{SchemaVersion: 1, Command: "", OK: false, ExitCode: doctor.ExitConfig, Checks: []doctor.Check{{Name: "usage", Status: "fail", Code: "usage_invalid", Message: message}}}
-		return emit(r, jsonMode, stdout, stderr)
+		return emit(r, jsonMode, failureOutput, stderr)
 	}
 	var positional []string
 	var launch lifecycle.UpOptions
 	var overrides config.Overrides
 	execOptions := execution.RunOptions{ExecTimeout: execution.DefaultExecTimeout, DeliveryTimeout: execution.DefaultDeliveryTimeout, WaitTimeout: execution.DefaultWaitTimeout}
 	execOptionSet, separator := false, false
+	logsOptionSet := false
 	timeout := 20 * time.Second
 	helpMode := false
 	timeoutSet := false
@@ -117,7 +148,7 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 		key, val, hasVal := strings.Cut(a, "=")
 		switch key {
-		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--resume", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout":
+		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--resume", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout", "--stream", "--stdout-file", "--stderr-file":
 			if !hasVal {
 				i++
 				if i >= len(args) || strings.HasPrefix(args[i], "--") {
@@ -129,6 +160,16 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 				return fail("option values must not be empty; run devbox --help")
 			}
 			switch key {
+			case "--stream", "--stdout-file", "--stderr-file":
+				logsOptionSet = true
+				switch key {
+				case "--stream":
+					logOptions.Stream = val
+				case "--stdout-file":
+					logOptions.StdoutFile = val
+				case "--stderr-file":
+					logOptions.StderrFile = val
+				}
 			case "--cwd":
 				execOptionSet = true
 				execOptions.Cwd = val
@@ -187,6 +228,9 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 	if command != "exec" && (execOptionSet || separator) {
 		return fail("exec options and the remote-argument separator require exec; run devbox --help")
 	}
+	if command != "logs" && logsOptionSet {
+		return fail("output selection and export options require logs; run devbox --help")
+	}
 	if helpMode || len(args) == 0 {
 		if jsonMode {
 			if err := json.NewEncoder(stdout).Encode(struct {
@@ -209,8 +253,16 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 		return fail("launch options require up; run devbox --help")
 	}
 	isAccess := command == "ssh" || command == "ssh-config" || command == "proxy"
-	if command != "up" && command != "down" && command != "exec" && !isAccess && len(positional) > 0 {
+	if command != "up" && command != "down" && command != "exec" && command != "logs" && !isAccess && len(positional) > 0 {
 		return fail("extra argument; run devbox --help")
+	}
+	if command == "logs" {
+		if len(positional) != 1 || !execprotocol.ValidCommandID(positional[0]) {
+			return fail("logs requires one public command ID: dc1- followed by 32 lowercase hexadecimal digits")
+		}
+		if logOptions.Stream != "" && (logOptions.Stream != "stdout" && logOptions.Stream != "stderr" || jsonMode || logOptions.StdoutFile != "" || logOptions.StderrFile != "") {
+			return fail("--stream must select stdout or stderr and cannot combine with --json or file exports")
+		}
 	}
 	if command == "exec" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0]) || !separator || len(execOptions.Argv) == 0 || execOptions.Argv[0] == "") {
 		return fail("use exec with one managed name or instance ID, then -- COMMAND [ARGS...]")
@@ -251,8 +303,8 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 		return 0
 	}
-	if command != "doctor" && command != "up" && command != "ls" && command != "down" && command != "exec" && !isAccess {
-		return fail("unknown or missing command; available commands: doctor, up, ls, down, ssh, ssh-config, proxy, exec, version; run devbox --help")
+	if command != "doctor" && command != "up" && command != "ls" && command != "down" && command != "exec" && command != "logs" && !isAccess {
+		return fail("unknown or missing command; available commands: doctor, up, ls, down, ssh, ssh-config, proxy, exec, logs, version; run devbox --help")
 	}
 	if path == "" {
 		var err error
@@ -268,6 +320,10 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 	if command == "exec" {
 		execOptions.Target, execOptions.SetupTimeout = positional[0], timeout
 		return emitExecution(runExec(ctx, path, overrides, execOptions, stderr), jsonMode, stdout, stderr)
+	}
+	if command == "logs" {
+		logOptions.CommandID, logOptions.Timeout = positional[0], timeout
+		return emitLogs(runLogs(ctx, path, overrides, logOptions, stdout), jsonMode, logOptions.Stream != "", stdout, stderr)
 	}
 	if isAccess {
 		r := access.Run(ctx, access.Options{Command: command, Target: positional[0], ConfigPath: path, Overrides: overrides, Timeout: timeout}, os.Stdin, stdout, stderr, access.Dependencies{New: life.New})

@@ -199,6 +199,34 @@ OpenTofu cannot infer whether those promises have expired. Preserve the trusted
 old manifest for recovery when changing deployments. Versioning cannot be enabled
 and later undone; versioned storage requires an explicit migration.
 
+### Retaining result access
+
+`devbox down` removes a worker and its root disk, leaving command results in the
+result bucket. Completed `devbox logs COMMAND_ID` reads the original trusted
+storage descriptor and verifies current AWS identity, without requiring the old
+instance, document, template, SSH identity, launch profile or SSM history.
+Keep the original TOML's account/region/deployment/owner and a manifest containing
+`schema_version=4`, `account`, `region`, `deployment`, `owner`, and the complete
+`results` object. You may retain the full original manifest instead. Do not replace
+its bucket or prefix with a new deployment's values and expect old IDs to resolve.
+
+To check a retained result with empty local state:
+
+```sh
+XDG_STATE_HOME=$(mktemp -d) devbox --config /path/to/retained/config.toml --aws-profile devbox-operator logs dc1-0123456789abcdef0123456789abcdef --json
+```
+
+Full foundation teardown differs from worker removal. The bucket has
+`force_destroy=false`; do not empty it while retained commands are still needed.
+Preserve the bucket and its scoped read/list permissions for an authenticated
+reader, as well as the trusted descriptor, through the promised retention period.
+If teardown removes the operator role, arrange a replacement reader before
+removing that role. Keeping a local manifest alone cannot preserve access after
+the bucket or reader permissions are removed. Backend state/version storage and
+runner artifacts are separate retained resources with their own cleanup choices.
+`expired` requires a validated passed retention deadline; absent data with no
+such evidence is `missing_or_expired`, and denied access never proves absence.
+
 ## 4. Configure the restricted operator and run doctor
 
 Add a profile to your normal AWS config (`~/.aws/config`), replacing all values:
