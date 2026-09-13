@@ -50,9 +50,9 @@ infrastructure or establish live acceptance.
 `make runner` builds the pinned Linux/amd64 execution-runner artifact used by
 foundation provisioning; `infra-check` builds it automatically. The foundation
 now includes private command-result storage with 30-day retention from submission
-and a separate execution document. `exec` now submits commands and observes their
-durable final metadata; detailed SSM observation and the `logs` interface remain
-the following MVP 2 slices. See the
+and a separate execution document. `exec` submits commands and observes durable
+results and the exact SSM invocation, with distinct timeout and detach outcomes.
+The `logs` interface follows in #20. See the
 [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).
 
 Install into a directory on your PATH:

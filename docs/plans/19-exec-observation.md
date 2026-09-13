@@ -59,17 +59,23 @@ JSON envelope with recovery IDs. Existing actual-CLI credential/descendant clean
 tests remain passing. Full `make check`, `make build`, execution/CLI/supervisor
 race tests and pinned `make infra-check TOFU=/tmp/devbox-tools/tofu` passed.
 
-## Remaining live gate
+## Completed live gate
 
-Freshly review the prepared nine-case helper, freeze/build the CLI in a clean
-checkout and launch one temporary On-Demand worker. Use #18's accepted template 4
-and runner pin; no infrastructure apply is required for the observation client.
-Exercise exits 0/1/2/4/255, an actual short workload timeout, local wait expiry,
-terminal Ctrl-C and supervisor SIGTERM. Recover each detached command through
-scoped STS/S3 reads and verify its original IDs, status, full bytes and completion
-after local detachment. Preserve attempts and never replay an uncertain command.
+The clean `0045fd0` build and independently reviewed nine-case helper passed
+361 live assertions on one disposable On-Demand worker using #18's accepted
+template 4 and runner. All ordinary exits 0/1/2/4/255 were preserved. A real
+2-second execution timeout retained its distinct outcome and complete captured bytes;
+local wait expiry, terminal Ctrl-C and supervisor SIGTERM left their jobs running
+to successful independent publication. All nine public/SSM IDs were distinct.
+No command was replayed and no emergency local cleanup was required.
 
-Record exact worker/root IDs, terminate the worker, independently verify its root
-absent and scoped inventory empty, then recover again without the worker. Review
-actual evidence, final documentation and any corrections before merging. Parent
-#2 stays open for #20 retrieval and #21 complete acceptance.
+Exact worker termination, original root-volume deletion and empty scoped
+instance/volume inventory were independently verified. All nine commands then
+passed 318 STS/S3-only recovery assertions after teardown, with complete byte
+verification and no skips. No infrastructure apply was needed. See the
+[actual acceptance report](../acceptance/19-exec-observation.md) for source/helper
+pins, timing evidence and controlled-test limits.
+
+Fresh non-implementing review approved the final source, helper, live command
+evidence, cleanup, post-teardown recovery and final documentation before PR #25
+merged. Parent #2 stays open for #20 retrieval and #21 complete acceptance.
