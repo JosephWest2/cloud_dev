@@ -96,3 +96,33 @@ live evidence remains pending.
 The reviewer also checked policy size with maximum permitted 23-character scope
 labels: approximately 8,998 operator-policy characters, below the 10,240-character
 limit. These are controlled/static checks, not live policy enforcement evidence.
+
+## Reviewed live plan; apply decision pending
+
+From a separate clean checkout at `7e672fd`, initialized the existing S3 backend
+under `devbox-setup` and saved a real foundation plan. Its exit was 2 (changes),
+with **9 additions, 3 updates, 0 deletions**: result bucket plus six controls,
+runner artifact and execution document; the existing two inline policies and
+launch template update. Networking, state backend and EC2 worker allocation are
+unchanged. Scoped operator inventory found zero nonterminated managed workers.
+The clean checkout's rebuilt artifact matches the frozen hash above.
+
+A third fresh subagent reviewed this actual saved plan and frozen inputs and
+approved presenting it for the user's apply decision, with no blockers. New
+document ARN/version values are necessarily resolved during apply; the policy
+and bootstrap expressions that consume them were reviewed. Refresh records an
+existing SSH Bool-to-BoolIfExists policy representation change; the planned
+policy preserves the current BoolIfExists behavior.
+
+Local recovery location: `/tmp/devbox-issue17-live-7e672fd`. The binary plan is
+`infra/foundation/issue17.tfplan`; private JSON, logs and a human summary are under
+the ignored `infra/foundation/acceptance-output/issue17/` directory. No state or
+credentials were committed. Preserve the frozen runner binary and bootstrap
+inputs; recheck hashes before applying, and regenerate/review the plan if its
+inputs or remote state change.
+
+[Draft PR #23](https://github.com/JosephWest2/cloud_dev/pull/23) remains unmerged.
+No apply has run. The next user decision is whether to apply this reviewed
+durable infrastructure change. After that, perform live role enforcement and
+worker execution checks with verified worker/root-volume cleanup before merging
+#17 or beginning #18.
