@@ -60,44 +60,32 @@ Record setup/operator account matching without storing credentials or raw state.
 Any disposable worker used for enforcement checks needs observed termination,
 exact root-volume deletion and scoped inventory afterward.
 
-## Current evidence
+## Offline evidence and independent review
 
-- Go config/foundation/doctor/lifecycle targeted tests pass. An independent
-  reviewer (not an implementer of #17) approved that subset; integrated
-  runner/infrastructure review remains pending.
-- Live authentication was unavailable for both configured profiles. The user
-  was asked to refresh `aws login --profile devbox-setup`; no live apply has run.
-- The user refreshed the setup login; both setup/operator STS checks subsequently
-  authenticated and matched the configured account. No live apply has run.
-- Final `make check`, `make build`, `make infra-check TOFU=/tmp/devbox-tools/tofu`,
-  targeted runner/protocol race tests, vet and whitespace checks passed after
-  source freeze. Tooling: Go `go1.27.0-X:nodwarf5 linux/amd64`, OpenTofu 1.12.6,
-  locked AWS provider 6.64.0 and S3 SDK v1.113.1.
-- Fresh infrastructure and runner subagents reviewed the complete implementation
-  in their respective scopes; neither implemented #17. The final runner review
-  approved cancellation/preparation, claim/publication failures, authenticated
-  exact-prefix absence checks and distinct unsupported-schema handling.
-- The runner artifact from the final offline build has SHA-256
-  `eede5e37b4bc9e552027a2ff90fc70eb73455688f6ea37b59dde5f9aef646940`.
-- Live plan/apply/enforcement and actual root-to-devbox execution remain pending.
-  #17 and parent #2 stay open until those gates pass.
+Final `make check`, `make build`, `make infra-check TOFU=/tmp/devbox-tools/tofu`,
+runner/protocol race tests, vet and whitespace checks passed after the source
+freeze. Tooling was Go `go1.27.0-X:nodwarf5 linux/amd64`, OpenTofu 1.12.6, locked
+AWS provider 6.64.0 and S3 SDK v1.113.1. Offline infrastructure checks passed one
+state-backend mock, nine foundation mocks and the Go/OpenTofu export/hash bridge
+in a worktree separate from the initialized live backend.
 
-The first complete `make infra-check TOFU=/tmp/devbox-tools/tofu` passed one
-state-backend mock, nine foundation mocks and the Go/OpenTofu export/hash bridge.
-It ran in this offline worktree, separate from the prior initialized live
-checkout. A fresh infrastructure reviewer approved the dependency graph, IAM,
-storage, document and bootstrap after two findings were addressed: disambiguate
-an S3 denied read using an exact-prefix listing when possible, and document that
-the retained region-wide UpdateInstanceInformation grant is a compatibility
-choice rather than an unsupported AWS resource-scoping limitation. The listing
-fallback subsequently passed integrated tests and the final runner review; its
-live evidence remains pending.
+Fresh infrastructure and runner subagents reviewed the complete implementation
+in their respective scopes; neither implemented #17. Findings were addressed:
+use an authenticated exact-prefix listing to distinguish a missing S3 object
+from a denied read when possible, and document the region-wide
+UpdateInstanceInformation grant as a compatibility choice. It is not an AWS
+resource-scoping limitation. The final runner review approved preparation and
+cancellation boundaries, uncertain claims/publication and distinct unsupported
+schema handling. Race and targeted checks passed after the fixes.
 
-The reviewer also checked policy size with maximum permitted 23-character scope
-labels: approximately 8,998 operator-policy characters, below the 10,240-character
-limit. These are controlled/static checks, not live policy enforcement evidence.
+The infrastructure reviewer checked operator policy size with maximum permitted
+23-character scope labels: approximately 8,998 characters, below the 10,240 limit.
+The frozen runner SHA-256 is
+`eede5e37b4bc9e552027a2ff90fc70eb73455688f6ea37b59dde5f9aef646940`.
+Live evidence and its limits are recorded separately in
+[the #17 acceptance report](../acceptance/17-result-foundation.md).
 
-## Reviewed live plan; apply decision pending
+## Reviewed and authorized live apply
 
 From a separate clean checkout at `7e672fd`, initialized the existing S3 backend
 under `devbox-setup` and saved a real foundation plan. Its exit was 2 (changes),
@@ -121,8 +109,31 @@ credentials were committed. Preserve the frozen runner binary and bootstrap
 inputs; recheck hashes before applying, and regenerate/review the plan if its
 inputs or remote state change.
 
-[Draft PR #23](https://github.com/JosephWest2/cloud_dev/pull/23) remains unmerged.
-No apply has run. The next user decision is whether to apply this reviewed
-durable infrastructure change. After that, perform live role enforcement and
-worker execution checks with verified worker/root-volume cleanup before merging
-#17 or beginning #18.
+After reviewing the incremental durable costs, the user authorized the saved
+plan and scoped temporary-worker checks. Rechecked both AWS profiles against the
+configured account and the frozen runner hash, then applied the exact saved plan:
+exit 0. A subsequent real foundation plan returned exit 0 (no changes).
+
+Exported a fresh manifest v4 to the protected acceptance configuration under
+`/tmp/devbox-issue17-live-checks`. All 14 doctor checks passed under the explicitly
+selected restricted operator profile. One On-Demand worker launched from the new
+numeric template version and reached EC2 running, SSM online, bootstrap complete
+and readiness ready. Direct operator EC2 inspection captured its exact instance
+and root-volume IDs, required IMDSv2, encrypted 100 GiB gp3 root with deletion on
+termination, and zero ingress rules on every attached security group.
+
+The local harness initially requested an unsupported seven-minute launch timeout;
+the CLI rejected it before creating a receipt or calling EC2. Preserved that
+usage-error evidence, confirmed no allocated worker, and used the supported
+five-minute timeout for the single successful launch.
+
+[PR #23](https://github.com/JosephWest2/cloud_dev/pull/23) completes this slice.
+Live role enforcement and worker execution passed 105 assertions. Cleanup
+independently verified exact instance termination, exact root-volume deletion
+and empty scoped inventory. Post-down Python recovery passed 28 assertions, and
+a separate production Go storage-only probe passed 38 assertions without EC2,
+SSM, SSH or writes. Full evidence and distinctions between controlled/live cases
+are in the acceptance report. A fresh non-implementing subagent reviewed the
+actual evidence, both acceptance helpers, final docs and PR description and
+approved the merge gate with no blockers. #17 is complete; proceed to #18 only
+after merging this reviewed slice.
