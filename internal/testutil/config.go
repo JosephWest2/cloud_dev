@@ -17,13 +17,15 @@ manifest = "deployment.json"
 `
 
 const Manifest = `{
-"schema_version":3,"account":"123456789012","region":"us-east-2",
+"schema_version":4,"account":"123456789012","region":"us-east-2",
 "deployment":"test","owner":"test-owner","vpc_id":"vpc-12345678",
 "subnet_ids":["subnet-12345678"],"security_group_id":"sg-12345678",
 "instance_profile_arn":"arn:aws:iam::123456789012:instance-profile/devbox",
 "route_table_id":"rtb-12345678","internet_gateway_id":"igw-12345678",
 "development_user":"devbox","ssh_public_key":"ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA","bootstrap_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 "readiness":{"name":"devbox-test-readiness","version":"1","content_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+"execution":{"name":"devbox-test-execution","version":"1","content_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","step":"execute","runner_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","minimum_agent_version":"3.3.2746.0"},
+"results":{"schema_version":1,"bucket":"devbox-results-test","expected_bucket_owner":"123456789012","region":"us-east-2","prefix":"results/v1/123456789012/us-east-2/test/test-owner/","retention_days":30,"policy_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 "roles":{
 "instance":{"arn":"arn:aws:iam::123456789012:role/devbox-instance","policy_name":"devbox-instance","trust_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","policy_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
 "operator":{"arn":"arn:aws:iam::123456789012:role/devbox-operator","policy_name":"devbox-operator","trust_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","policy_sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}},

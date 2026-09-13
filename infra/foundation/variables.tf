@@ -52,3 +52,23 @@ variable "ssh_public_key" {
     error_message = "Supply one Ed25519 public key without its comment or newline (the first two fields of the .pub file)."
   }
 }
+
+variable "runner_path" {
+  type        = string
+  default     = "../../bin/devbox-runner-linux-amd64"
+  description = "Linux/amd64 runner built with make runner; relative paths are resolved from infra/foundation. Build before planning and keep the file unchanged through apply."
+  validation {
+    condition     = fileexists(var.runner_path)
+    error_message = "Build the real Linux/amd64 runner with make runner before planning, or set runner_path to that binary."
+  }
+}
+
+variable "result_retention_days" {
+  type        = number
+  default     = 30
+  description = "Result retention from request creation, 2-365 whole days. Never shorten while previous retention promises remain unexpired."
+  validation {
+    condition     = var.result_retention_days >= 2 && var.result_retention_days <= 365 && floor(var.result_retention_days) == var.result_retention_days
+    error_message = "Set result_retention_days to an integer from 2 through 365."
+  }
+}

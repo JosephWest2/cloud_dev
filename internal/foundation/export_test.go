@@ -96,6 +96,8 @@ func TestOpenTofuExport(t *testing.T) {
 			"aws_iam_role_policy.instance": {"policy": m.Roles["instance"].PolicySHA256},
 			"aws_iam_role_policy.operator": {"policy": m.Roles["operator"].PolicySHA256},
 			"aws_ssm_document.readiness":   {"content": m.Readiness.ContentSHA256},
+			"aws_ssm_document.execution":   {"content": m.Execution.ContentSHA256},
+			"aws_s3_bucket_policy.results": {"policy": m.Results.PolicySHA256},
 			"aws_launch_template.agent":    {"user_data": m.BootstrapSHA256},
 		}
 		for _, r := range event.State.Values.Root.Resources {

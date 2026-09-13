@@ -1,7 +1,10 @@
-.PHONY: build install check
+.PHONY: build install check runner
 
 build:
 	go build -trimpath -buildvcs=false -o bin/devbox ./cmd/devbox
+
+runner:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o bin/devbox-runner-linux-amd64 ./cmd/devbox-runner
 
 install:
 	go install -trimpath -buildvcs=false ./cmd/devbox
@@ -15,7 +18,7 @@ check:
 
 TOFU ?= tofu
 .PHONY: infra-check
-infra-check:
+infra-check: runner
 	$(TOFU) fmt -check -recursive infra
 	$(TOFU) -chdir=infra/state-bootstrap init -backend=false -input=false -lockfile=readonly
 	$(TOFU) -chdir=infra/state-bootstrap validate

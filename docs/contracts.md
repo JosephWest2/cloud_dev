@@ -1,4 +1,4 @@
-# CLI contracts (config/profile/results v1, deployment v3)
+# CLI contracts (config/profile/results v1, deployment v4)
 
 ## User configuration and workload profile
 
@@ -33,14 +33,15 @@ option. No market fallback is implemented here.
 
 ## Deployment manifest
 
-The foundation exports a non-secret schema-v3 JSON object using
-`tofu output -json deployment_manifest`. Schemas 1 and 2 are deliberately rejected:
-re-export after applying the foundation. Unknown fields and trailing JSON are
+The foundation exports a non-secret schema-v4 JSON object using
+`tofu output -json deployment_manifest`. Schemas 1–3 are deliberately rejected:
+apply the runner/storage foundation, re-export and replace old workers for new
+execution support. Unknown fields and trailing JSON are
 rejected. User config, workload profiles and result envelopes stay at version 1.
 
 | Manifest field | Contract |
 | --- | --- |
-| `schema_version` | Integer 3 |
+| `schema_version` | Integer 4 |
 | `account`, `region`, `deployment`, `owner` | Must equal effective config; foundation currently Ohio only, labels at most 23 characters |
 | `vpc_id`, `subnet_ids`, `security_group_id` | Exact EC2 IDs, exactly one subnet |
 | `route_table_id`, `internet_gateway_id` | Exact EC2 IDs for explicit public route/association |
@@ -49,6 +50,8 @@ rejected. User config, workload profiles and result envelopes stay at version 1.
 | `ssh_public_key` | Canonical dedicated Ed25519 public key (type and base64 only) |
 | `bootstrap_sha256` | Lowercase SHA-256 of the exact decoded template user-data bytes |
 | `readiness` | `name`, positive numeric string `version`, `content_sha256` of canonical JSON |
+| `execution` | Separate `name`, positive numeric `version`, `content_sha256`, `step="execute"`, `runner_sha256`, `minimum_agent_version="3.3.2746.0"` |
+| `results` | `schema_version=1`, exact `bucket`, `expected_bucket_owner`, `region`, scope-derived `prefix`, `retention_days` (2–365), and canonical bucket `policy_sha256` |
 | `roles` | Exactly `instance` and `operator`, each with distinct scoped `arn`, `trust_sha256`, `policy_name`, `policy_sha256` |
 | `images` | Exactly `agent`, with the image fields below |
 
@@ -79,9 +82,25 @@ STS and local prerequisite checks can still run. STS identity must succeed befor
 resource validation. Timeout/cancellation retains exit 4; resource failures use
 exit 1 and allowlisted diagnostics, never raw SDK errors. Foundation check names
 are `foundation_network`, `foundation_image`, `foundation_template`,
-`foundation_iam`, `foundation_readiness` (and `foundation_identity` when the
+`foundation_iam`, `foundation_readiness`, `foundation_results`,
+`foundation_execution` (and `foundation_identity` when the
 resource client's identity cannot be verified). Pass code is `foundation_verified`,
 failure code `foundation_drift`, timeout code `foundation_timeout`.
+
+Result checks bind every bucket request to its expected owner and verify region,
+scope tags, policy digest, public-access blocks, bucket-owner-enforced ownership,
+SSE-S3 encryption, never-enabled versioning and retention/abort rules. Execution
+checks verify the exact document and nonempty content-addressed artifact with
+matching checksum metadata. Bootstrap verifies the actual downloaded bytes;
+object metadata alone is not a byte attestation. These read-only checks do not
+prove effective object-write/read authorization or live execution.
+
+`LoadResultManifest` validates only a v4 descriptor's scope and `results`. A saved
+manifest (or subset containing `schema_version`, `account`, `region`, `deployment`,
+`owner`, `results`) remains usable for completed recovery after launch/SSH resources
+are removed. It never opens profile/key files. The storage-only subset cannot
+authorize a new launch. Retain its original bucket/prefix/retention policy for
+the promised result lifetime when upgrading or tearing down a foundation.
 
 Inventory/mutations scope by expected account, region, deployment and
 stable owner. STS identity verification must precede mutations. Required creation
@@ -246,7 +265,7 @@ this field remain readable; no rejected receipt is reset to prepared.
 ## Readiness and SSH access (#9)
 
 User config v1 adds optional `ssh_identity_file`, resolved beside the TOML file
-when relative. Manifest v3 requires a canonical Ed25519 `ssh_public_key` without
+when relative. Manifest v4 requires a canonical Ed25519 `ssh_public_key` without
 comment/newline; it contains no private-key path or secret. The rendered bootstrap digest now includes the public
 key. Receipt schema v1 is unchanged: the numeric template and bootstrap digest
 already bind this launch setting. Dispatched old receipts remain reconcilable;
@@ -337,9 +356,9 @@ until AWS detects closure/timeout. SSM does not record the contents of SSH tunne
 ## Selected exec and durable result protocol (#16)
 
 This section specifies MVP 2 for implementation in #17–#20. The #16 payload codec
-and local publisher prototype validate selected invariants; **the installed CLI
-does not yet provide exec/logs or provision result storage**. The existing v3
-manifest/runtime sections above continue to describe the implemented release.
+and local publisher prototype validate selected invariants. #17 adds the pinned
+runner and result-storage foundation; **the installed CLI does not yet provide
+exec/logs**. Their dispatch, observation and recovery interfaces remain #18–#20.
 The user selected detach on Ctrl-C and 30-day retention from submission on
 September 13, 2026. Implementation and live gates are tracked in
 [the ordered plan](plans/16-exec-contract.md).

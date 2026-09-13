@@ -57,6 +57,8 @@ type Manifest struct {
 	BootstrapSHA256    string           `json:"bootstrap_sha256"`
 	SSHPublicKey       string           `json:"ssh_public_key"`
 	Readiness          Document         `json:"readiness"`
+	Execution          Execution        `json:"execution"`
+	Results            Results          `json:"results"`
 	Roles              map[string]Role  `json:"roles"`
 	Images             map[string]Image `json:"images"`
 }
@@ -65,6 +67,28 @@ type Document struct {
 	Name          string `json:"name"`
 	Version       string `json:"version"`
 	ContentSHA256 string `json:"content_sha256"`
+}
+
+// Execution pins the separate noninteractive runner document and installed binary.
+type Execution struct {
+	Name                string `json:"name"`
+	Version             string `json:"version"`
+	ContentSHA256       string `json:"content_sha256"`
+	Step                string `json:"step"`
+	RunnerSHA256        string `json:"runner_sha256"`
+	MinimumAgentVersion string `json:"minimum_agent_version"`
+}
+
+// Results is sufficient trusted storage configuration for completed recovery.
+// Retrieving results must not require the associated instance or launch profile.
+type Results struct {
+	SchemaVersion       int    `json:"schema_version"`
+	Bucket              string `json:"bucket"`
+	ExpectedBucketOwner string `json:"expected_bucket_owner"`
+	Region              string `json:"region"`
+	Prefix              string `json:"prefix"`
+	RetentionDays       int    `json:"retention_days"`
+	PolicySHA256        string `json:"policy_sha256"`
 }
 
 type Role struct {
@@ -207,7 +231,7 @@ func resourceID(value, prefix string) bool {
 	return regexp.MustCompile(`^` + prefix + `-([0-9a-f]{8}|[0-9a-f]{17})$`).MatchString(value)
 }
 
-func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
+func readManifest(path string, c Config) (Manifest, error) {
 	var m Manifest
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -224,11 +248,8 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	if d.Decode(new(any)) != io.EOF {
 		return m, errors.New("deployment manifest must contain exactly one JSON object")
 	}
-	if m.SchemaVersion != 3 {
-		return m, errors.New("unsupported manifest schema_version; re-export version 3 from the foundation")
-	}
-	if _, err := sshkey.Parse(m.SSHPublicKey); err != nil {
-		return m, errors.New("manifest requires a dedicated Ed25519 ssh_public_key; apply and re-export the foundation")
+	if m.SchemaVersion != 4 {
+		return m, errors.New("unsupported manifest schema_version; apply and re-export version 4 from the foundation; replace old workers for execution support")
 	}
 	if m.Account != c.ExpectedAccount || m.Region != c.Region || m.Deployment != c.Deployment || m.Owner != c.Owner {
 		return m, errors.New("deployment manifest scope differs from expected account, region, deployment or owner; select the matching configuration and foundation export")
@@ -239,6 +260,30 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	if len(m.Deployment) > 23 || len(m.Owner) > 23 {
 		return m, errors.New("foundation deployment and owner must each fit 23 characters")
 	}
+	return m, nil
+}
+
+// LoadResultManifest validates only trusted storage scope. Completed recovery
+// remains available after launch resources, profiles and SSH identities are gone.
+func LoadResultManifest(path string, c Config) (Results, error) {
+	m, err := readManifest(path, c)
+	if err != nil {
+		return Results{}, err
+	}
+	if err = ValidateResults(m.Results, c); err != nil {
+		return Results{}, err
+	}
+	return m.Results, nil
+}
+
+func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
+	m, err := readManifest(path, c)
+	if err != nil {
+		return m, err
+	}
+	if _, err := sshkey.Parse(m.SSHPublicKey); err != nil {
+		return m, errors.New("manifest requires a dedicated Ed25519 ssh_public_key; apply and re-export the foundation")
+	}
 	if len(m.SubnetIDs) != 1 || len(m.Images) != 1 || p.Image != "agent" {
 		return m, errors.New("foundation requires one subnet and the agent image")
 	}
@@ -247,6 +292,15 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	}
 	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`).MatchString(m.Readiness.Name) || !numericVersion(m.Readiness.Version) || !digestRE.MatchString(m.Readiness.ContentSHA256) {
 		return m, errors.New("manifest readiness requires a name, positive numeric version and content digest")
+	}
+	if err := ValidateExecution(m.Execution); err != nil {
+		return m, err
+	}
+	if m.Execution.Name == m.Readiness.Name {
+		return m, errors.New("execution and readiness must use separate documents")
+	}
+	if err := ValidateResults(m.Results, c); err != nil {
+		return m, err
 	}
 	roleRE := regexp.MustCompile(`^arn:aws:iam::` + c.ExpectedAccount + `:role/[A-Za-z0-9+=,.@_/-]+$`)
 	if len(m.Roles) != 2 {
@@ -289,6 +343,28 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 
 var digestRE = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var ubuntuNameRE = regexp.MustCompile(`^ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-[0-9.]+$`)
+
+func ValidateExecution(e Execution) error {
+	if !regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,127}$`).MatchString(e.Name) || !numericVersion(e.Version) || !digestRE.MatchString(e.ContentSHA256) || e.Step != "execute" || !digestRE.MatchString(e.RunnerSHA256) || e.MinimumAgentVersion != "3.3.2746.0" {
+		return errors.New("execution requires pinned document version/content, execute step, runner digest and supported agent minimum; apply and re-export the foundation")
+	}
+	return nil
+}
+
+func ResultsPrefix(c Config) string {
+	return "results/v1/" + c.ExpectedAccount + "/" + c.Region + "/" + c.Deployment + "/" + c.Owner + "/"
+}
+
+func ValidateResults(r Results, c Config) error {
+	if r.SchemaVersion != 1 || r.ExpectedBucketOwner != c.ExpectedAccount || r.Region != c.Region || r.Region != "us-east-2" || r.Prefix != ResultsPrefix(c) {
+		return errors.New("result storage schema or scope differs from the selected account, region, deployment or owner")
+	}
+	// Foundation bucket names contain only DNS-safe letters, digits and hyphens.
+	if !regexp.MustCompile(`^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$`).MatchString(r.Bucket) || r.RetentionDays < 2 || r.RetentionDays > 365 || !digestRE.MatchString(r.PolicySHA256) {
+		return errors.New("result storage requires a valid private bucket, 2–365 day retention and a policy digest; re-export the foundation")
+	}
+	return nil
+}
 
 func numericVersion(s string) bool {
 	n, err := strconv.ParseInt(s, 10, 64)

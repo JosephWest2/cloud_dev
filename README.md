@@ -7,10 +7,11 @@ transfer use the generated OpenSSH configuration. No inbound ports are opened.
 
 Start with installation and identity below, then follow the
 [foundation setup guide](docs/setup.md) for state bootstrap/migration, a dedicated
-SSH key, provisioning and manifest-v3 export. The
+SSH key, provisioning and manifest-v4 export. The
 [MVP 1 acceptance runbook and results](docs/acceptance/01-lifecycle.md) connect the
 complete workflow, failure checks and cleanup evidence. Existing deployments
-need the public-key/bootstrap update and a real manifest-v3 export before access.
+need the runner/bootstrap update and a real manifest-v4 export before new launches
+or access. Scoped inventory and teardown remain available for older workers.
 
 The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
 Ubuntu 24.04 LTS x86-64, one public subnet and public IPv4, outbound TCP 80/443,
@@ -37,7 +38,7 @@ Provisioning also needs AWS CLI v2, OpenTofu **1.12.6** and the committed AWS
 provider **6.64.0** lockfiles. Install the AWS Session Manager plugin
 **>=1.2.764.0** and keep its logging disabled; verify
 `session-manager-plugin --version` and `ssh -V`. The pinned AMI must provide SSM
-Agent **>=3.3.40.0**, which bootstrap checks. Installation links and identity setup
+Agent **>=3.3.2746.0**, which bootstrap checks. Installation links and identity setup
 are below and in [setup](docs/setup.md#tools-and-identities).
 
 Run `make infra-check TOFU=/path/to/tofu` in a separate clean checkout for
@@ -45,6 +46,13 @@ OpenTofu formatting, validation, mock-provider tests and manifest-export checks.
 It uses `init -backend=false`; keep that checkout separate from live S3-backend
 initialization and local deployment inputs. These offline checks do not apply
 infrastructure or establish live acceptance.
+
+`make runner` builds the pinned Linux/amd64 execution-runner artifact used by
+foundation provisioning; `infra-check` builds it automatically. The foundation
+now includes private command-result storage with 30-day retention from submission
+and a separate execution document. The user-facing `exec` and `logs` commands
+remain in the following MVP 2 slices; see the
+[execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).
 
 Install into a directory on your PATH:
 
