@@ -204,9 +204,11 @@ Additional references:
 
 The proxy uses the reviewed bounded startup-adapter alternative: it suppresses
 preamble/errors until the SSH identification, then copies opaque binary bytes.
-The OpenSSH master runs outside the foreground group; the interactive client
-shares the supervised foreground worker group. PTY tests cover this foreground
-handoff/restoration, Ctrl-C and resize. Plugin setup now kills the entire ordinary
+After authentication, the interactive client joins the OpenSSH master's process
+group and gives that shared group foreground terminal ownership. The worker
+restores its original foreground group and terminal modes after cleanup. Real
+OpenSSH PTY tests cover keyboard input, this handoff/restoration, Ctrl-C, resize,
+remote exit status and cancellation. Plugin setup now kills the entire ordinary
 child process group before waiting for EOF, preventing a helper from extending
 the timeout by holding the pipe open. Shared launch receipt schema stays v1;
 manifest v3 binds the public key through rendered bootstrap/template pins.

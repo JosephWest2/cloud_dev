@@ -1,9 +1,12 @@
 # Issue #9 readiness and SSH acceptance
 
 Implementation and controlled verification: September 12, 2026.
-**Live foundation, operator doctor, worker readiness and SSH command checks are complete.**
-Live terminal input/interrupt/resize/exit and SCP/SFTP checks pass, and the user
-confirmed keyboard input, Ctrl-C and exit. Editor and cleanup acceptance remain pending.
+**Issue #9 acceptance is complete.** Live checks cover foundation/doctor,
+readiness, SSH terminal input/interrupt/resize/exit, SCP/SFTP, user-confirmed
+VS Code save/reconnect, timeout recovery and teardown. The smoke instance is
+terminated and its root volume deletion was observed. Controlled tests cover
+unavailable SSM, failed bootstrap and out-of-scope refusal. Final results below
+were recorded through September 13, 2026 UTC (September 12 US/Central).
 
 ## Controlled evidence
 
@@ -211,11 +214,9 @@ reported no blocking actionable findings in the reviewed working tree. A later
 race check found shared diagnostic-buffer writes, now serialized for non-file
 writers and covered by the race suite.
 
-Remaining live evidence is listed below. Record actual test date, selected scope locally (no secrets), readiness
-signals in text/JSON, uname/user, Ctrl-C/resize/exit, transfer comparison, editor
-save/reconnect, failure diagnostics, termination/root deletion and repeated down.
-Do not close #9 or mark parent MVP acceptance complete before the required live
-evidence is recorded.
+The chronological live results below complete this slice's acceptance. The final
+review found no remaining implementation blocker. Parent MVP acceptance remains
+tracked separately from this issue.
 
 
 ## Live foundation update (September 12, 2026)
@@ -236,8 +237,7 @@ evidence is recorded.
   during this foundation update. Local plan summary and doctor/inventory evidence
   are retained in the ignored foundation acceptance-output directory.
 
-Live shell, transfer/editor, failure/recovery and teardown checks are still the
-remaining acceptance gate; the issue and PR remain open/draft.
+At this stage, worker acceptance was still pending; subsequent results follow.
 
 
 ## Live readiness and SSH IAM correction (September 12, 2026)
@@ -268,9 +268,8 @@ remaining acceptance gate; the issue and PR remain open/draft.
   cover denial/redaction/no plugin launch, and the access race suite passes.
 
 Local sanitized results are in the ignored foundation acceptance-output directory.
-The existing worker remains allocated for the human terminal/editor checks; do
-not launch another worker. Interactive Ctrl-C/resize/exit, transfer/editor and
-termination/root-deletion evidence remain required before closing #9.
+The worker was retained at this stage for terminal/editor checks; subsequent
+results and final teardown are recorded below.
 
 
 ## Interactive keyboard correction (September 12, 2026)
@@ -298,8 +297,8 @@ previous ignored disposition. Piped input keeps the existing path.
   `stty size` returned `37 101` after a local resize, and `exit` returned code 0.
 - `make check` and `go test -race ./internal/access ./cmd/devbox` passed.
 
-User terminal confirmation, transfer/editor and teardown remain pending. The
-worker is retained; no additional machine was launched for this correction.
+The worker was retained for user confirmation and remaining checks. No additional
+machine was launched for this correction.
 
 
 ## User terminal confirmation and transfers (September 12, 2026)
@@ -318,5 +317,37 @@ worker is retained; no additional machine was launched for this correction.
   the same fixture and passed byte comparison. Temporary local and remote files
   were removed. Sanitized results are in the ignored acceptance-output directory.
 
-Remote editor save/reconnect and final termination/root-volume deletion remain
-pending. The existing worker remains allocated for editor acceptance.
+The worker was retained at this stage for editor acceptance and final teardown,
+completed below.
+
+
+## VS Code acceptance and final cleanup (September 12–13, 2026 UTC)
+
+- Local VS Code 1.137.0 with Remote-SSH 0.128.0 was already installed. Configured
+  `remote.SSH.configFile` to use the generated strict SSH config, preserving other
+  settings/comments and a private local backup. Operator doctor passed again.
+- The user confirmed connecting to `/home/devbox`, creating and saving
+  `smoke-test.txt` containing `hello devbox`, and receiving `devbox` from `whoami`
+  in the integrated terminal. After closing the window and reconnecting, the file
+  reopened successfully. This is actual user-reported editor acceptance.
+- Resuming the original observed request with a three-second budget recovered
+  the same ready instance; inventory independently found it. A one-second resume
+  then returned exit 4 / `operation_timeout` during readiness observation, retained
+  the instance/request/root-volume IDs, and reported readiness unknown. No new
+  request or replacement worker was allocated.
+- Recovered using the exact returned instance ID. `down` returned exit 0 /
+  `terminated` for `i-07c06dd5f0e11a1c6` and independently observed root volume
+  `vol-0c0bcc73d4132ff4c` deleted. A second `down` returned exit 0 /
+  `already_terminated`. Its root-deletion observation was unavailable after EC2
+  dropped the volume mapping; the first deletion evidence remains recorded.
+- Final scoped inventory contained only the terminated smoke record and no
+  active worker. Durable foundation resources remain intact. Sanitized timeout,
+  teardown, repeated-down and inventory results are retained locally in the
+  ignored acceptance-output directory.
+- Final independent PR audit found no remaining implementation/review blocker.
+  The stale plan description of terminal ownership was corrected. Controlled
+  tests cover unavailable SSM/plugin, failed bootstrap and out-of-scope refusal;
+  these are not claimed as additional destructive live fault-injection tests.
+
+No user test or decision remains for issue #9. The PR is ready for review; merging
+and parent MVP completion remain separate actions.
