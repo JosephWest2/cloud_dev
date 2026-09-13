@@ -186,15 +186,17 @@ Spot behavior and structured-output rules, and
 ## Launch, rediscover and remove a devbox
 
 ```sh
-devbox up agent --on-demand --name smoke --timeout 5m --json
-devbox ls --json
-devbox ssh smoke
+devbox up agent --on-demand --name smoke --aws-profile devbox-operator --timeout 5m --json
+devbox ls --aws-profile devbox-operator --json
+devbox ssh smoke --aws-profile devbox-operator
 # In the remote shell: uname -a; whoami; exit 0
-devbox down smoke --timeout 5m --json
-devbox down smoke --json
+devbox down smoke --aws-profile devbox-operator --timeout 5m --json
+devbox down smoke --aws-profile devbox-operator --json
 ```
 
-Use your configured operator profile, or pass `--aws-profile devbox-operator`.
+These examples explicitly select the restricted operator profile, preventing a
+setup `AWS_PROFILE` environment variable from overriding TOML. Substitute your
+operator profile's name if it differs from `devbox-operator`.
 The initial launch path requires explicit On-Demand and selects the first profile
 instance type; Spot and automatic fallback are unsupported. `up` verifies the
 foundation before allocating. Allocation success reports exact image, type,
@@ -216,7 +218,7 @@ Ctrl-C interrupts the remote foreground command; terminal resizing is forwarded;
 Exiting immediately after an interrupted command can return 130. Interactive
 `ssh` and `ssm-proxy` reject `--json` before AWS calls.
 
-`devbox ssh-config smoke --json` returns `ssh_config_path` and `ssh_host` for
+`devbox ssh-config smoke --aws-profile devbox-operator --json` returns `ssh_config_path` and `ssh_host` for
 `ssh -F CONFIG_PATH SSH_HOST`, scp/sftp and remote editors. It does not edit
 `~/.ssh/config`. Follow [transfer/editor examples](docs/acceptance/09-readiness-shell.md#launch-observe-connect-and-transfer).
 Regenerate configuration after moving the CLI/config. A changed host key requires
@@ -244,7 +246,7 @@ Before launching, devbox durably saves a non-secret request receipt and prints i
 request ID to stderr. If the process exits or the launch outcome is uncertain:
 
 ```sh
-devbox up --resume REQUEST_ID --timeout 5m --json
+devbox up --resume REQUEST_ID --aws-profile devbox-operator --timeout 5m --json
 ```
 
 Use the original config/scope. Do not retry an uncertain launch with a fresh `up`.

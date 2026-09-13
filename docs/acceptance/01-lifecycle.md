@@ -2,9 +2,9 @@
 
 Issue #10 is the completion gate for parent #1. The procedure below is for a
 selected test account; the dated results at the end distinguish this final run,
-controlled tests and earlier live evidence. **Live and controlled gate: passed September 13, 2026 UTC.** Final PR review
-and merge are pending. An unrun required check or incomplete worker cleanup keeps
-the gate open.
+controlled tests and earlier live evidence. **Gate: passed September 13, 2026 UTC
+(September 12 US/Central).** Live acceptance, controlled failures, final offline
+checks and independent PR review are complete. No user test or decision remains.
 
 ## Selected decisions and prerequisites
 
@@ -437,10 +437,26 @@ Public non-secret identities/pins and results are recorded below.
   controlled cases in the matrix. These are **controlled** results; credentials
   were not deliberately expired and unsafe AWS workers were not created.
 - Documentation checks verified local link targets, named test references, Bash
-  syntax of command blocks and `git diff --check`. Final PR checks/review are
-  recorded below when complete.
+  syntax of command blocks and `git diff --check`. Final PR checks and review are
+  recorded below.
 
 ### PR completion
 
-Pending independent PR review and final checks. The live worker is already removed;
-no user test, authentication refresh or deployment decision is currently needed.
+At 03:01–03:03 UTC, final `make check`, `make build` and
+`make infra-check TOFU=/tmp/devbox-tools/tofu` all returned exit 0 in another clean
+clone at `5772a31fe41920c35500d7d8c42fdb05344da80e`. Its tracked worktree remained
+clean after the checks. The repository has no GitHub status checks configured;
+these are recorded local checks, not an invented CI run.
+
+A fresh agent, separate from the Astra high plan reviewer, reviewed the actual
+[PR #15](https://github.com/JosephWest2/cloud_dev/pull/15) diff against issues #10/#1,
+implementation, named tests and private live/offline evidence. It found no
+actionable findings or missing user test/decision. Final documentation edits
+record these results and make the README lifecycle examples explicitly select
+the operator profile so a setup `AWS_PROFILE` cannot override TOML. Runtime,
+infrastructure, tests and dependency pins remain identical to the checked source.
+
+The parent MVP 1 acceptance requirements are substantiated by the matrix and
+dated results above. The acceptance worker and root volume are removed, and the
+retained durable resources and manual teardown are documented. There are no
+remaining acceptance blockers.
