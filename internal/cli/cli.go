@@ -11,6 +11,7 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/access"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/doctor"
+	"github.com/JosephWest2/cloud_dev/internal/execution"
 	"github.com/JosephWest2/cloud_dev/internal/lifecycle"
 	"os"
 )
@@ -23,6 +24,7 @@ const help = `Usage: devbox [options] doctor
        devbox [options] ssh NAME_OR_INSTANCE_ID
        devbox [options] ssh-config NAME_OR_INSTANCE_ID
        devbox [options] proxy INSTANCE_ID
+       devbox [options] exec NAME_OR_INSTANCE_ID [exec options] -- COMMAND [ARGS...]
        devbox [--json] version
 
 Options may appear before or after the command:
@@ -30,18 +32,26 @@ Options may appear before or after the command:
                         or ~/.config/devbox/config.toml)
   --aws-profile NAME    AWS profile (overrides AWS_PROFILE and user TOML)
   --region REGION       Explicit region (overrides user TOML)
-  --timeout DURATION    Setup deadline (up/access: 5m; others: 20s; max: 5m)
+  --timeout DURATION    Setup deadline (up/access/exec: 5m; others: 20s; max: 5m)
   --name NAME           Friendly name for a new launch
   --on-demand           Explicitly select supported On-Demand purchasing
   --resume REQUEST_ID   Reconcile or resume a durable launch request
   --json                One versioned JSON result on stdout
   --help, -h            Show this help
 
+Exec options (all local options must precede --):
+  --cwd PATH               Remote directory (default: /home/devbox)
+  --exec-timeout DURATION   Remote runtime (default: 1h; whole seconds, 1s-24h)
+  --delivery-timeout DURATION  SSM delivery (default: 5m; whole seconds, 30s-1h)
+  --wait-timeout DURATION   Local result wait (default: 1h; positive, max: 25h)
+
 doctor checks local setup and AWS identity without provisioning resources.
 up launches one instance; Spot is unsupported. ls/down use AWS inventory.
 up waits for EC2 + SSM + bootstrap readiness. ssh uses real SSH over SSM.
 ssh-config supports editors/scp/sftp; proxy is its transport helper.
 ssh/proxy reject --json. Failed/finished sessions retain workers: run down.
+exec preserves every argument after -- and prints metadata, never workload bytes.
+Ctrl-C detaches from exec; the remote command keeps running within its timeout.
 `
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies) int {
@@ -49,26 +59,48 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer, deps doct
 }
 
 func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies) int {
+	return runWithExecution(ctx, args, stdout, stderr, deps, life, func(ctx context.Context, path string, overrides config.Overrides, options execution.RunOptions, diagnostics io.Writer) execution.Result {
+		return execution.Run(ctx, path, overrides, options, execution.Dependencies{}, diagnostics)
+	})
+}
+
+type execRunner func(context.Context, string, config.Overrides, execution.RunOptions, io.Writer) execution.Result
+
+func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies, runExec execRunner) int {
 	jsonMode := false
-	// Recognize JSON even on invalid invocations; never echo untrusted arguments.
+	// The first separator ends all local interpretation, including the early
+	// error-format scan. Remote arguments never enable JSON or help locally.
 	for _, a := range args {
+		if a == "--" {
+			break
+		}
 		if a == "--json" {
 			jsonMode = true
 		}
 	}
+	var command, path string
 	fail := func(message string) int {
+		if command == "exec" {
+			return emitExecution(execution.Result{SchemaVersion: 1, Command: "exec", Outcome: "config_invalid", Code: "usage_invalid", Message: message, ExitCode: 2}, jsonMode, stdout, stderr)
+		}
 		r := doctor.Result{SchemaVersion: 1, Command: "", OK: false, ExitCode: doctor.ExitConfig, Checks: []doctor.Check{{Name: "usage", Status: "fail", Code: "usage_invalid", Message: message}}}
 		return emit(r, jsonMode, stdout, stderr)
 	}
-	var command, path string
 	var positional []string
 	var launch lifecycle.UpOptions
 	var overrides config.Overrides
+	execOptions := execution.RunOptions{ExecTimeout: execution.DefaultExecTimeout, DeliveryTimeout: execution.DefaultDeliveryTimeout, WaitTimeout: execution.DefaultWaitTimeout}
+	execOptionSet, separator := false, false
 	timeout := 20 * time.Second
 	helpMode := false
 	timeoutSet := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if a == "--" {
+			separator = true
+			execOptions.Argv = append([]string(nil), args[i+1:]...)
+			break
+		}
 		if a == "--on-demand" {
 			launch.OnDemand = true
 			continue
@@ -85,7 +117,7 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 		key, val, hasVal := strings.Cut(a, "=")
 		switch key {
-		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--resume":
+		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--resume", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout":
 			if !hasVal {
 				i++
 				if i >= len(args) || strings.HasPrefix(args[i], "--") {
@@ -97,6 +129,32 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 				return fail("option values must not be empty; run devbox --help")
 			}
 			switch key {
+			case "--cwd":
+				execOptionSet = true
+				execOptions.Cwd = val
+			case "--exec-timeout", "--delivery-timeout", "--wait-timeout":
+				execOptionSet = true
+				duration, err := time.ParseDuration(val)
+				if err != nil || duration <= 0 {
+					return fail("exec timeouts must be positive durations; run devbox --help for bounds")
+				}
+				switch key {
+				case "--exec-timeout":
+					if duration > 24*time.Hour || duration%time.Second != 0 {
+						return fail("--exec-timeout must be whole seconds from 1s through 24h")
+					}
+					execOptions.ExecTimeout = duration
+				case "--delivery-timeout":
+					if duration < 30*time.Second || duration > time.Hour || duration%time.Second != 0 {
+						return fail("--delivery-timeout must be whole seconds from 30s through 1h")
+					}
+					execOptions.DeliveryTimeout = duration
+				case "--wait-timeout":
+					if duration > 25*time.Hour {
+						return fail("--wait-timeout must be a positive duration through 25h")
+					}
+					execOptions.WaitTimeout = duration
+				}
 			case "--name":
 				launch.Name = val
 			case "--resume":
@@ -126,6 +184,9 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 			}
 		}
 	}
+	if command != "exec" && (execOptionSet || separator) {
+		return fail("exec options and the remote-argument separator require exec; run devbox --help")
+	}
 	if helpMode || len(args) == 0 {
 		if jsonMode {
 			if err := json.NewEncoder(stdout).Encode(struct {
@@ -148,8 +209,11 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		return fail("launch options require up; run devbox --help")
 	}
 	isAccess := command == "ssh" || command == "ssh-config" || command == "proxy"
-	if command != "up" && command != "down" && !isAccess && len(positional) > 0 {
+	if command != "up" && command != "down" && command != "exec" && !isAccess && len(positional) > 0 {
 		return fail("extra argument; run devbox --help")
+	}
+	if command == "exec" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0]) || !separator || len(execOptions.Argv) == 0 || execOptions.Argv[0] == "") {
+		return fail("use exec with one managed name or instance ID, then -- COMMAND [ARGS...]")
 	}
 	if command == "up" {
 		if launch.Resume != "" {
@@ -187,8 +251,8 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 		return 0
 	}
-	if command != "doctor" && command != "up" && command != "ls" && command != "down" && !isAccess {
-		return fail("unknown or missing command; available commands: doctor, up, ls, down, ssh, ssh-config, proxy, version; run devbox --help")
+	if command != "doctor" && command != "up" && command != "ls" && command != "down" && command != "exec" && !isAccess {
+		return fail("unknown or missing command; available commands: doctor, up, ls, down, ssh, ssh-config, proxy, exec, version; run devbox --help")
 	}
 	if path == "" {
 		var err error
@@ -198,8 +262,12 @@ func RunWithLifecycle(ctx context.Context, args []string, stdout, stderr io.Writ
 		}
 	}
 
-	if !timeoutSet && (command == "up" || isAccess) {
+	if !timeoutSet && (command == "up" || command == "exec" || isAccess) {
 		timeout = 5 * time.Minute
+	}
+	if command == "exec" {
+		execOptions.Target, execOptions.SetupTimeout = positional[0], timeout
+		return emitExecution(runExec(ctx, path, overrides, execOptions, stderr), jsonMode, stdout, stderr)
 	}
 	if isAccess {
 		r := access.Run(ctx, access.Options{Command: command, Target: positional[0], ConfigPath: path, Overrides: overrides, Timeout: timeout}, os.Stdin, stdout, stderr, access.Dependencies{New: life.New})

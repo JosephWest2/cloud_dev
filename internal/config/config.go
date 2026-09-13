@@ -276,6 +276,14 @@ func LoadResultManifest(path string, c Config) (Results, error) {
 	return m.Results, nil
 }
 
+// LoadExecutionManifest requires the complete trusted foundation export for a
+// new command, including the exact agent image and launch template pins used to
+// verify its target. It needs no local launch profile or SSH identity: the
+// canonical image and public key are supplied by the manifest itself.
+func LoadExecutionManifest(path string, c Config) (Manifest, error) {
+	return LoadManifest(path, c, Profile{Image: "agent"})
+}
+
 func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	m, err := readManifest(path, c)
 	if err != nil {
