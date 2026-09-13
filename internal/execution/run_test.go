@@ -19,6 +19,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
+	"github.com/aws/smithy-go"
 )
 
 func TestRunRejectsInputsBeforeAWS(t *testing.T) {
@@ -87,6 +88,9 @@ func TestRunDispatchAndIndependentFinalWait(t *testing.T) {
 				t.Fatal(err)
 			}
 			store.values[execprotocol.ObjectKey(request.Scope, id, "result.json")] = data
+			started, outcome := intermediateRecords(final)
+			store.values[execprotocol.ObjectKey(request.Scope, id, "started.json")] = encodedFinal(t, started)
+			store.values[execprotocol.ObjectKey(request.Scope, id, "outcome.json")] = encodedFinal(t, outcome)
 			return &ssm.SendCommandOutput{Command: &ssmtypes.Command{CommandId: aws.String(acknowledgedID)}}, nil
 		}
 		var setupContext context.Context
@@ -142,5 +146,93 @@ func TestRunSetupDeadlineDoesNotBecomeRemoteTimeout(t *testing.T) {
 	r := Run(context.Background(), testutil.Setup(t), config.Overrides{}, RunOptions{Target: "smoke", Argv: []string{"true"}, SetupTimeout: time.Millisecond}, Dependencies{New: func(context.Context, config.Config, config.Manifest) (*Service, error) { return service, nil }}, io.Discard)
 	if r.Outcome != "setup_timeout" || r.ExitCode != 4 || r.Workload != nil || len(api.sent) != 0 || store.puts != 0 {
 		t.Fatalf("local deadline confused with remote execution: %+v", r)
+	}
+}
+
+type observingDispatchSSM struct {
+	*dispatchSSM
+	observe invocationFunc
+}
+
+func (s observingDispatchSSM) GetCommandInvocation(ctx context.Context, input *ssm.GetCommandInvocationInput, options ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error) {
+	return s.observe(ctx, input, options...)
+}
+
+type observingDispatchStore struct{ *dispatchStore }
+
+func (s observingDispatchStore) Get(ctx context.Context, key string) (execprotocol.Object, error) {
+	if _, exists := s.values[key]; !exists {
+		return execprotocol.Object{}, execprotocol.ErrNotFound
+	}
+	return s.dispatchStore.Get(ctx, key)
+}
+
+func TestRunPostDispatchObservationFailuresRetainRecoveryAndStatus(t *testing.T) {
+	for _, scenario := range []struct {
+		name, outcome, code string
+		exit                int
+	}{
+		{"interrupt", "interrupted", "interrupted", 4},
+		{"wait deadline", "observation_timeout", "observation_timeout", 4},
+		{"permission denied", "api_failed", "ssm_access_denied", 1},
+		{"credentials expired", "api_failed", "credentials_expired", 1},
+		{"runner timeout with known exit", "result_incomplete", "result_incomplete", 1},
+	} {
+		t.Run(scenario.name, func(t *testing.T) {
+			service, api, store, _, _ := dispatchSetup(t)
+			service.Store = observingDispatchStore{store}
+			store.ackErr = execprotocol.ErrDenied
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			var submitted Submission
+			api.sendActual = func(_ context.Context, input *ssm.SendCommandInput, _ ...func(*ssm.Options)) (*ssm.SendCommandOutput, error) {
+				id := input.Parameters["requestId"][0]
+				scope := execprotocol.Scope{Account: service.Scope.ExpectedAccount, Region: service.Scope.Region, Deployment: service.Scope.Deployment, Owner: service.Scope.Owner}
+				request, err := execprotocol.DecodeRecord(store.values[execprotocol.ObjectKey(scope, id, "request.json")])
+				if err != nil {
+					t.Fatal(err)
+				}
+				submitted = Submission{Binding: request.Binding, SSMCommandID: acknowledgedID}
+				final, _ := finalRecord()
+				final.Binding, final.SSMCommandID = request.Binding, acknowledgedID
+				final.Workload.ExitCode = aws.Int(4)
+				final.Streams.Stdout.Key = execprotocol.ObjectKey(scope, id, "stdout")
+				final.Streams.Stderr.Key = execprotocol.ObjectKey(scope, id, "stderr")
+				started, outcome := intermediateRecords(final)
+				store.values[execprotocol.ObjectKey(scope, id, "started.json")] = encodedFinal(t, started)
+				store.values[execprotocol.ObjectKey(scope, id, "outcome.json")] = encodedFinal(t, outcome)
+				return &ssm.SendCommandOutput{Command: &ssmtypes.Command{CommandId: aws.String(acknowledgedID)}}, nil
+			}
+			observations := 0
+			service.SSM = observingDispatchSSM{dispatchSSM: api, observe: func(context.Context, *ssm.GetCommandInvocationInput, ...func(*ssm.Options)) (*ssm.GetCommandInvocationOutput, error) {
+				observations++
+				switch scenario.name {
+				case "interrupt":
+					cancel()
+				case "permission denied":
+					return nil, &smithy.GenericAPIError{Code: "AccessDeniedException", Message: "SECRET raw SDK error"}
+				case "credentials expired":
+					return nil, &smithy.GenericAPIError{Code: "ExpiredTokenException", Message: "SECRET raw SDK error"}
+				case "runner timeout with known exit":
+					return invocation(submitted, "TimedOut", "Execution Timed Out", 137), nil
+				}
+				return invocation(submitted, "InProgress", "In Progress", -1), nil
+			}}
+			path := testutil.Setup(t)
+			var diagnostics bytes.Buffer
+			got := Run(ctx, path, config.Overrides{AWSProfile: "selected-profile"}, RunOptions{Target: "smoke", Argv: []string{"true"}, WaitTimeout: 10 * time.Millisecond}, Dependencies{New: func(context.Context, config.Config, config.Manifest) (*Service, error) { return service, nil }}, &diagnostics)
+			assertFinalIdentity(t, got, submitted)
+			if got.Outcome != scenario.outcome || got.Code != scenario.code || got.ExitCode != scenario.exit || got.SubmissionState != "submitted" || got.Workload == nil || *got.Workload.ExitCode != 4 || got.DurableState != DurableOutcome || len(api.sent) != 1 || observations != 1 || !strings.Contains(got.RecoveryCommand, "selected-profile") || !strings.Contains(got.RecoveryCommand, path) || !strings.HasSuffix(got.RecoveryCommand, " logs "+got.CommandID) {
+				t.Fatalf("post-dispatch observation lost identity or trusted workload: %+v sends=%d observations=%d", got, len(api.sent), observations)
+			}
+			foundWarning := false
+			for _, code := range got.Warnings {
+				foundWarning = foundWarning || code == "acknowledgement_publication_failed"
+			}
+			if !foundWarning || !strings.Contains(diagnostics.String(), "submitted command_id="+got.CommandID+" ssm_command_id="+got.SSMCommandID) {
+				t.Fatalf("acknowledged IDs or acknowledgement warning lost: %+v", got)
+			}
+			assertNoUntrustedContent(t, got)
+		})
 	}
 }

@@ -51,29 +51,7 @@ func WaitFinal(ctx context.Context, store execprotocol.Store, sub Submission, po
 			if record.Kind != "result" || record.Binding != sub.Binding || record.SSMCommandID != sub.SSMCommandID {
 				return finish("result_corrupt", 1, "durable result does not match the submitted command identity")
 			}
-			// Only identity-bound, strictly validated metadata may be returned as
-			// workload evidence, including when retention or publication failed.
-			r.Workload, r.Capture, r.Publication, r.Streams = record.Workload, record.Capture, record.Publication, record.Streams
-			expires, _ := execprotocol.ParseTimestamp(record.ExpiresAt)
-			if !time.Now().Before(expires) {
-				return finish("expired", 1, "the command result retention deadline has passed")
-			}
-			if record.Workload.Status == "execution_timeout" {
-				return finish("execution_timeout", 4, "the remote workload exceeded its execution deadline")
-			}
-			if record.Capture != "complete" || record.Publication != "complete" || record.Streams.Stdout.Upload != "complete" || record.Streams.Stderr.Upload != "complete" {
-				return finish("result_incomplete", 1, "the remote result was finalized with incomplete capture or publication")
-			}
-			switch record.Workload.Status {
-			case "exited":
-				return finish("remote_exit", *record.Workload.ExitCode, "remote workload exit and completed publication recorded")
-			case "signaled":
-				return finish("remote_signal", 128+*record.Workload.Signal, "remote workload signal and completed publication recorded")
-			case "runner_setup_failed":
-				return finish("setup_failed", 1, "the remote runner could not prepare the workload")
-			default:
-				return finish("result_incomplete", 1, "the remote runner could not establish a complete workload result")
-			}
+			return completedRecord(r, record)
 		}
 		if ctx.Err() != nil {
 			return stopped(ctx.Err())
@@ -102,5 +80,38 @@ func WaitFinal(ctx context.Context, store execprotocol.Store, sub Submission, po
 		} else {
 			pollInterval *= 2
 		}
+	}
+}
+
+// completedRecord requires a strictly decoded, identity-bound record. Once it
+// establishes completion, a concurrent local interrupt cannot replace it.
+func completedRecord(r Result, record execprotocol.Record) Result {
+	r.Workload, r.Capture, r.Publication, r.Streams = record.Workload, record.Capture, record.Publication, record.Streams
+	r.DurableState = DurableFinal
+	r.SubmittedAt, r.ExpiresAt, r.FinishedAt = record.SubmittedAt, record.ExpiresAt, record.FinishedAt
+	finish := func(outcome string, exit int, message string) Result {
+		r.Outcome, r.Code, r.ExitCode, r.Message = outcome, outcome, exit, message
+		r.OK = outcome == "remote_exit" && exit == 0
+		return r
+	}
+	expires, _ := execprotocol.ParseTimestamp(record.ExpiresAt)
+	if !time.Now().Before(expires) {
+		return finish("expired", 1, "the command result retention deadline has passed")
+	}
+	if record.Workload.Status == "execution_timeout" {
+		return finish("execution_timeout", 4, "the remote workload exceeded its execution deadline")
+	}
+	if record.Capture != "complete" || record.Publication != "complete" || record.Streams.Stdout.Upload != "complete" || record.Streams.Stderr.Upload != "complete" {
+		return finish("result_incomplete", 1, "the remote result was finalized with incomplete capture or publication")
+	}
+	switch record.Workload.Status {
+	case "exited":
+		return finish("remote_exit", *record.Workload.ExitCode, "remote workload exit and completed publication recorded")
+	case "signaled":
+		return finish("remote_signal", 128+*record.Workload.Signal, "remote workload signal and completed publication recorded")
+	case "runner_setup_failed":
+		return finish("setup_failed", 1, "the remote runner could not prepare the workload")
+	default:
+		return finish("result_incomplete", 1, "the remote runner could not establish a complete workload result")
 	}
 }

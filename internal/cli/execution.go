@@ -23,7 +23,21 @@ func emitExecution(r execution.Result, jsonMode bool, stdout, stderr io.Writer) 
 				return 1
 			}
 		}
+		for _, field := range []struct{ name, value string }{
+			{"ssm_command_id", r.SSMCommandID},
+			{"submission_state", r.SubmissionState},
+			{"durable_state", string(r.DurableState)},
+		} {
+			if field.value != "" {
+				if _, err := fmt.Fprintf(stdout, " %s=%s", field.name, field.value); err != nil {
+					return 1
+				}
+			}
+		}
 		if r.Workload != nil {
+			if _, err := fmt.Fprintf(stdout, " workload_status=%s", r.Workload.Status); err != nil {
+				return 1
+			}
 			if r.Workload.ExitCode != nil {
 				if _, err := fmt.Fprintf(stdout, " remote_exit_code=%d", *r.Workload.ExitCode); err != nil {
 					return 1
@@ -38,6 +52,16 @@ func emitExecution(r execution.Result, jsonMode bool, stdout, stderr io.Writer) 
 		if r.Publication != "" {
 			if _, err := fmt.Fprintf(stdout, " publication=%s", r.Publication); err != nil {
 				return 1
+			}
+		}
+		if r.SSM != nil {
+			if _, err := fmt.Fprintf(stdout, " ssm_state=%s", r.SSM.State); err != nil {
+				return 1
+			}
+			if r.SSM.ResponseCode != nil {
+				if _, err := fmt.Fprintf(stdout, " ssm_response_code=%d", *r.SSM.ResponseCode); err != nil {
+					return 1
+				}
 			}
 		}
 		if _, err := fmt.Fprintln(stdout); err != nil {

@@ -21,8 +21,9 @@ func supervise(args []string) int {
 		fmt.Fprintln(os.Stderr, "cannot locate devbox executable")
 		return 1
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	// main exits after this one supervised command. Keep handling signals until
+	// process exit so a repeated interrupt cannot replace an established status.
+	ctx, _ := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	cmd := exec.CommandContext(ctx, executable, append([]string{"__devbox_worker"}, args...)...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGTERM}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -49,12 +50,11 @@ func supervise(args []string) int {
 	// the entire group on every completion path, including normal failure.
 	defer syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	err = cmd.Wait()
-	if err == nil {
-		return 0
-	}
-	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() >= 0 {
-		return exit.ExitCode()
+	if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
+		// CommandContext can return context.Canceled even after the worker
+		// established completion and exited 0. Preserve the worker's actual
+		// status so a racing local signal cannot contradict its final JSON.
+		return cmd.ProcessState.ExitCode()
 	}
 	if ctx.Err() != nil {
 		return 4
