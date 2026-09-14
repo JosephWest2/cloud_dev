@@ -76,6 +76,7 @@ func (r BatchReceipt) Validate() error {
 		return invalid
 	}
 	fulfilled := map[string]bool{}
+	fleets := map[string]bool{}
 	parent := ""
 	for n, attempt := range r.Attempts {
 		want, err := AttemptID(r.RequestID, parent)
@@ -88,6 +89,12 @@ func (r BatchReceipt) Validate() error {
 		}
 		if (attempt.State == "prepared" || attempt.State == "rejected") && (len(attempt.InstanceIDs) > 0 || attempt.FleetID != "") {
 			return invalid
+		}
+		if attempt.FleetID != "" {
+			if !fleetIDRE.MatchString(attempt.FleetID) || (fleets[attempt.FleetID] && attempt.State != "unknown") {
+				return invalid
+			}
+			fleets[attempt.FleetID] = true
 		}
 		// Contradictory responses may expose more identities than requested.
 		// Retain all of them as unknown evidence; they cannot have a successor.

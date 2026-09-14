@@ -71,7 +71,7 @@ func batchCacheCanAdvance(old, next BatchReceipt) bool {
 	}
 	for n, a := range old.Attempts {
 		b := next.Attempts[n]
-		if a.AttemptID != b.AttemptID || a.CreatedAt != b.CreatedAt || (a.FleetID != "" && a.FleetID != b.FleetID) || (a.State != "prepared" && b.State == "prepared") {
+		if a.AttemptID != b.AttemptID || (a.State != "prepared" && a.CreatedAt != b.CreatedAt) || (a.FleetID != "" && a.FleetID != b.FleetID) || (a.State != "prepared" && b.State == "prepared") {
 			return false
 		}
 		if (a.State == "complete" || a.State == "rejected") && !reflect.DeepEqual(a, b) {
@@ -91,4 +91,46 @@ func batchCacheCanAdvance(old, next BatchReceipt) bool {
 		}
 	}
 	return true
+}
+
+// RestoreBatch installs intact shared evidence after a lost/corrupt local cache.
+// It requires the request lock. Valid conflicting/legacy receipts remain in place;
+// unreadable data is preserved in a private adjacent backup before replacement.
+func (s Store) RestoreBatch(r BatchReceipt) error {
+	if r.Validate() != nil {
+		return failure("receipt_invalid", "recovered launch evidence cannot form a valid local batch cache")
+	}
+	b, readErr := os.ReadFile(s.Path(r.RequestID))
+	if os.IsNotExist(readErr) {
+		return s.SaveBatch(r)
+	}
+	if readErr != nil {
+		return failure("receipt_unavailable", "cannot read the local receipt for shared-record recovery")
+	}
+	if _, err := decodeBatchReceipt(b); err == nil {
+		return s.SaveBatch(r)
+	}
+	var version struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if json.Unmarshal(b, &version) == nil && version.SchemaVersion == 1 {
+		return failure("receipt_conflict", "a legacy receipt occupies this identity; preserve it and use its legacy recovery path")
+	}
+	backup, err := os.CreateTemp(s.Dir, r.RequestID+".corrupt-")
+	if err != nil {
+		return failure("receipt_unavailable", "cannot preserve the corrupt local receipt before recovery")
+	}
+	name := backup.Name()
+	_ = backup.Close()
+	if err = os.Rename(s.Path(r.RequestID), name); err != nil {
+		_ = os.Remove(name)
+		return failure("receipt_unavailable", "cannot preserve the corrupt local receipt before recovery")
+	}
+	if err = os.Chmod(name, 0600); err != nil {
+		return failure("receipt_unavailable", "cannot protect the preserved corrupt receipt; shared launch records remain authoritative")
+	}
+	if err = syncDir(s.Dir); err != nil {
+		return failure("receipt_unavailable", "cannot durably preserve the corrupt receipt; shared launch records remain authoritative")
+	}
+	return s.SaveBatch(r)
 }

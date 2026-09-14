@@ -227,6 +227,30 @@ func TestUnknownAndCorruptReceiptsCannotProveMissingCapacity(t *testing.T) {
 	}
 }
 
+func TestBatchReceiptRejectsInvalidAndReusedTerminalFleetIDs(t *testing.T) {
+	r := receiptFixture(t)
+	r.Attempts[0].FleetID = "invalid-fleet"
+	if r.Validate() == nil {
+		t.Fatal("invalid Fleet identity accepted")
+	}
+	r = receiptFixture(t)
+	parent := r.Attempts[0].AttemptID
+	id, _ := AttemptID(r.RequestID, parent)
+	r.Attempts = append(r.Attempts, AttemptReceipt{AttemptID: id, ParentID: parent,
+		ClientToken: attemptToken(r.PlanSHA256, id, 1), RequestedCount: 1, CreatedAt: r.Plan.CreatedAt,
+		State: "complete", FleetID: r.Attempts[0].FleetID, InstanceIDs: []string{"i-87654321"}})
+	if r.Validate() == nil {
+		t.Fatal("two terminal attempts reused one Fleet identity")
+	}
+	r.Attempts[1].State = "unknown"
+	if r.Validate() != nil {
+		t.Fatal("contradictory Fleet evidence could not be retained as unknown")
+	}
+	if _, err := r.MissingCapacity(id); err == nil {
+		t.Fatal("contradictory Fleet evidence authorized a successor")
+	}
+}
+
 func TestCompleteReceiptRequiresExplicitFulfillmentArray(t *testing.T) {
 	r := receiptFixture(t)
 	data, _ := json.Marshal(r)
