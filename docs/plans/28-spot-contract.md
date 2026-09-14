@@ -12,7 +12,7 @@ acceptance/cleanup gates pass.
 | #28 | Validated profiles, CLI selections, plan/naming/retry/output contracts; Go checks and fresh review | Complete; reviewed checks below |
 | #29 | Multi-AZ foundation/manifest/IAM; offline checks and reviewed concrete live migration plan | Complete; [verification and fresh reviews](../acceptance/29-spot-foundation.md) |
 | #30 | One immutable pinned instant-Fleet attempt; controlled serialized SDK and failure tests | Complete; [verification and fresh reviews](../acceptance/30-fleet-attempt.md) |
-| #31 | Shared dispatch claims, unknown/partial recovery and explicit proven-missing retry; crash/concurrency tests | Pending |
+| #31 | Shared dispatch claims, unknown/partial recovery and explicit proven-missing retry; crash/concurrency tests | Complete; [verification and fresh review](../acceptance/31-shared-recovery.md) |
 | #32 | Integrated group launch/inventory/readiness and independent access; CLI checks | Pending |
 | #33 | Exclusive scoped plural teardown, frozen confirmation set and root-volume evidence | Pending |
 | #34 | Fresh two-worker Spot/exec/log/restart/cleanup, explicit On-Demand/decline, full checks and acceptance matrix | Pending |
