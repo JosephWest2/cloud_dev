@@ -249,8 +249,15 @@ func observeFleetInstance(observation *fleetWorkerObservation, plan LaunchPlan, 
 	if metadata != nil && metadata.State != types.InstanceMetadataOptionsStateApplied {
 		observation.pending = true
 	}
-	valid = valid && aws.ToString(instance.RootDeviceName) == plan.Image.RootDeviceName && instance.RootDeviceType == types.DeviceTypeEbs
-	if terminal && len(instance.BlockDeviceMappings) == 0 {
+	// EC2 can publish a pending instance before its root attachment appears.
+	// Missing root fields in that same incomplete observation are not proof of
+	// contradictory settings. Present wrong values still fail closed, and no
+	// root can be verified until its exact mapping and volume are observable.
+	rootPending := actual.State == "pending" && len(instance.BlockDeviceMappings) == 0
+	rootName := aws.ToString(instance.RootDeviceName)
+	valid = valid && (rootName == plan.Image.RootDeviceName || rootPending && rootName == "")
+	valid = valid && (instance.RootDeviceType == types.DeviceTypeEbs || rootPending && instance.RootDeviceType == "")
+	if (terminal || rootPending) && len(instance.BlockDeviceMappings) == 0 {
 		observation.pending = true
 	} else {
 		valid = valid && len(instance.BlockDeviceMappings) == 1

@@ -156,6 +156,28 @@ func TestBatchStartupWaitsForExactPinsBeforeReadiness(t *testing.T) {
 	}
 }
 
+func TestBatchStartupOnDemandWaitsForRootMappingBeforeProbe(t *testing.T) {
+	path, deps, api, selection := startupFixture(t)
+	selection.OnDemand, selection.Count = true, 1
+	api.instance = func(i *types.Instance, reads int) {
+		if reads <= 3 {
+			i.State.Name = types.InstanceStateNamePending
+			i.BlockDeviceMappings = nil
+			i.RootDeviceName, i.RootDeviceType = nil, ""
+		}
+	}
+	api.beforeProbe = func(id string) {
+		volume := aws.ToString(api.instances[id].BlockDeviceMappings[0].Ebs.VolumeId)
+		if api.reads[id] < 4 || api.volumeReads[volume] == 0 {
+			t.Errorf("probe preceded observed mapping and exact root verification: %s", id)
+		}
+	}
+	r := Run(context.Background(), path, config.Overrides{}, Options{Command: "up", Selection: &selection}, deps, io.Discard).Batch
+	if r.ExitCode != 0 || r.ReadyCount != 1 || r.MissingCount == nil || *r.MissingCount != 0 || r.Plan.Market != "on-demand" || len(r.Workers) != 1 || len(r.Workers[0].Volumes) != 1 || len(api.probes) != 1 || !reflect.DeepEqual(api.counts, []int{1}) {
+		t.Fatalf("delayed root mapping prevented bounded direct On-Demand readiness: %+v calls=%v", r, api.counts)
+	}
+}
+
 func TestBatchStartupTimeoutKeepsReadyPeerAndRoots(t *testing.T) {
 	path, deps, api, selection := startupFixture(t)
 	pending := "i-00000000000000064"
