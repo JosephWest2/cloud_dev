@@ -87,6 +87,14 @@ func (f *fake) DescribeInstanceTypes(_ context.Context, input *ec2.DescribeInsta
 	err := f.respond("DescribeInstanceTypes", input, out)
 	return out, err
 }
+func (f *fake) DescribeInstanceTypeOfferings(_ context.Context, input *ec2.DescribeInstanceTypeOfferingsInput, _ ...func(*ec2.Options)) (*ec2.DescribeInstanceTypeOfferingsOutput, error) {
+	if f.nilResponse == "DescribeInstanceTypeOfferings" {
+		return nil, nil
+	}
+	out := &ec2.DescribeInstanceTypeOfferingsOutput{}
+	err := f.respond("DescribeInstanceTypeOfferings", input, out)
+	return out, err
+}
 func (f *fake) GetInstanceProfile(_ context.Context, input *iam.GetInstanceProfileInput, _ ...func(*iam.Options)) (*iam.GetInstanceProfileOutput, error) {
 	if f.nilResponse == "GetInstanceProfile" {
 		return nil, nil

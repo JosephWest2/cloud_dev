@@ -2,7 +2,9 @@ package foundation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -101,6 +103,51 @@ func validResultLifecycle(rules []s3types.LifecycleRule, r config.Results) bool 
 		}
 	}
 	return expirations == 1 && aborts == 1
+}
+
+func checkLaunchLedger(ctx context.Context, api S3, m config.Manifest) error {
+	fail := errors.New("launch ledger scope, immutable policy or permanent retention is missing, inaccessible or drifted")
+	l := m.LaunchLedger
+	c := config.Config{ExpectedAccount: m.Account, Region: m.Region, Deployment: m.Deployment, Owner: m.Owner}
+	if api == nil || l == nil || l.SchemaVersion != 1 || l.Bucket != m.Results.Bucket || l.ExpectedBucketOwner != m.Account || l.ExpectedBucketOwner != m.Results.ExpectedBucketOwner || l.Region != m.Region || l.Region != m.Results.Region || l.Prefix != config.LaunchLedgerPrefix(c) || l.PolicySHA256 != m.Results.PolicySHA256 || strings.HasPrefix(l.Prefix, m.Results.Prefix) || strings.HasPrefix(m.Results.Prefix, l.Prefix) {
+		return fail
+	}
+	policy, err := api.GetBucketPolicy(ctx, &s3.GetBucketPolicyInput{Bucket: aws.String(l.Bucket), ExpectedBucketOwner: aws.String(l.ExpectedBucketOwner)})
+	if err != nil || policy == nil {
+		return fail
+	}
+	hash, err := jsonDigest(aws.ToString(policy.Policy))
+	if err != nil || hash != l.PolicySHA256 || !immutableLaunchPolicy(aws.ToString(policy.Policy), *l) {
+		return fail
+	}
+	lifecycle, err := api.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: aws.String(l.Bucket), ExpectedBucketOwner: aws.String(l.ExpectedBucketOwner)})
+	// Only command results may expire. Even an additional long-lived ledger
+	// expiration would invalidate the permanent dispatch claim guarantee.
+	if err != nil || lifecycle == nil || !validResultLifecycle(lifecycle.Rules, m.Results) {
+		return fail
+	}
+	return nil
+}
+
+func immutableLaunchPolicy(document string, ledger config.LaunchLedger) bool {
+	var policy struct{ Statement []map[string]any }
+	if json.Unmarshal([]byte(document), &policy) != nil {
+		return false
+	}
+	want := map[string]any{
+		"Effect": "Deny", "Principal": "*", "Action": "s3:PutObject",
+		"Resource":  "arn:aws:s3:::" + ledger.Bucket + "/" + ledger.Prefix + "*",
+		"Condition": map[string]any{"StringNotEquals": map[string]any{"s3:if-none-match": "*"}},
+	}
+	expected, _ := json.Marshal(want)
+	for _, statement := range policy.Statement {
+		delete(statement, "Sid")
+		got, err := json.Marshal(statement)
+		if err == nil && string(got) == string(expected) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkExecution(ctx context.Context, api SSM, store S3, m config.Manifest) error {

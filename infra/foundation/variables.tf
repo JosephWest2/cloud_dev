@@ -72,3 +72,33 @@ variable "result_retention_days" {
     error_message = "Set result_retention_days to an integer from 2 through 365."
   }
 }
+
+variable "availability_zones" {
+  type        = list(string)
+  default     = ["us-east-2a", "us-east-2b", "us-east-2c"]
+  description = "One subnet per selected Ohio AZ. Original us-east-2a subnet remains in state even when omitted; removing an additional AZ requires reviewing its subnet/worker impact."
+  validation {
+    condition     = length(var.availability_zones) >= 1 && length(var.availability_zones) <= 3 && length(distinct(var.availability_zones)) == length(var.availability_zones) && alltrue([for zone in var.availability_zones : contains(["us-east-2a", "us-east-2b", "us-east-2c"], zone)])
+    error_message = "Select 1–3 distinct standard Ohio AZs: us-east-2a, us-east-2b, us-east-2c."
+  }
+}
+
+variable "instance_types" {
+  type        = list(string)
+  default     = ["c7i.2xlarge", "c7a.2xlarge", "c6i.2xlarge", "c6a.2xlarge"]
+  description = "Explicit compatible instance-type pool. Actual capabilities and AZ offerings are read at plan time and verified again by doctor."
+  validation {
+    condition     = length(var.instance_types) >= 1 && length(distinct(var.instance_types)) == length(var.instance_types) && alltrue([for typ in var.instance_types : can(regex("^[a-z0-9-]+\\.[a-z0-9-]+$", typ))])
+    error_message = "Provide a nonempty list of distinct EC2 instance-type names."
+  }
+}
+
+variable "root_disk_gb" {
+  type        = number
+  default     = 100
+  description = "Pinned template gp3 root size in GiB; must fit the selected AMI. Profile overrides still require encrypted disposable gp3 and the AMI minimum."
+  validation {
+    condition     = var.root_disk_gb >= 8 && var.root_disk_gb <= 16384 && floor(var.root_disk_gb) == var.root_disk_gb
+    error_message = "Template root_disk_gb must be an integer from 8 through 16384."
+  }
+}

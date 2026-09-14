@@ -20,6 +20,30 @@ func scoped(tags []types.Tag, m config.Manifest) bool {
 
 func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 	fail := errors.New("network resources are missing, inaccessible or drifted; check foundation scope, DNS, route association, attached gateway and HTTP/HTTPS-only egress with no ingress; review a foundation plan")
+	if api == nil || len(m.SubnetIDs) == 0 || (m.SchemaVersion == 4 && len(m.SubnetIDs) != 1) {
+		return fail
+	}
+	expectedSubnets := map[string]string{}
+	for _, id := range m.SubnetIDs {
+		if _, exists := expectedSubnets[id]; exists || id == "" {
+			return fail
+		}
+		expectedSubnets[id] = ""
+	}
+	if m.SchemaVersion == 5 {
+		if len(m.Subnets) != len(expectedSubnets) {
+			return fail
+		}
+		zones := map[string]bool{}
+		for _, subnet := range m.Subnets {
+			zone, exists := expectedSubnets[subnet.ID]
+			if !exists || zone != "" || subnet.AvailabilityZone == "" || zones[subnet.AvailabilityZone] {
+				return fail
+			}
+			expectedSubnets[subnet.ID] = subnet.AvailabilityZone
+			zones[subnet.AvailabilityZone] = true
+		}
+	}
 	v, err := api.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: []string{m.VPCID}})
 	if err != nil || v == nil || len(v.Vpcs) != 1 {
 		return fail
@@ -41,12 +65,31 @@ func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 			return fail
 		}
 	}
-	s, err := api.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: m.SubnetIDs})
-	if err != nil || s == nil || len(s.Subnets) != 1 {
-		return fail
+	seenSubnets, tokens := map[string]bool{}, map[string]bool{}
+	var token *string
+	for {
+		s, err := api.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{SubnetIds: m.SubnetIDs, NextToken: token})
+		if err != nil || s == nil {
+			return fail
+		}
+		for _, sub := range s.Subnets {
+			id := aws.ToString(sub.SubnetId)
+			zone, exists := expectedSubnets[id]
+			if !exists || seenSubnets[id] || (m.SchemaVersion == 5 && aws.ToString(sub.AvailabilityZone) != zone) || aws.ToString(sub.VpcId) != m.VPCID || aws.ToString(sub.OwnerId) != m.Account || sub.State != types.SubnetStateAvailable || !scoped(sub.Tags, m) || aws.ToBool(sub.MapPublicIpOnLaunch) {
+				return fail
+			}
+			seenSubnets[id] = true
+		}
+		next := aws.ToString(s.NextToken)
+		if next == "" {
+			break
+		}
+		if tokens[next] {
+			return fail
+		}
+		tokens[next], token = true, s.NextToken
 	}
-	sub := s.Subnets[0]
-	if aws.ToString(sub.SubnetId) != m.SubnetIDs[0] || aws.ToString(sub.VpcId) != m.VPCID || aws.ToString(sub.OwnerId) != m.Account || sub.State != types.SubnetStateAvailable || !scoped(sub.Tags, m) || aws.ToBool(sub.MapPublicIpOnLaunch) {
+	if len(seenSubnets) != len(expectedSubnets) {
 		return fail
 	}
 	g, err := api.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{m.SecurityGroupID}})
@@ -65,10 +108,18 @@ func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 	if aws.ToString(rt.RouteTableId) != m.RouteTableID || aws.ToString(rt.VpcId) != m.VPCID || aws.ToString(rt.OwnerId) != m.Account || !scoped(rt.Tags, m) {
 		return fail
 	}
-	associated, internet := false, false
+	associated, internet := map[string]bool{}, false
 	for _, a := range rt.Associations {
-		if aws.ToString(a.SubnetId) == m.SubnetIDs[0] && aws.ToString(a.RouteTableId) == m.RouteTableID && a.AssociationState != nil && a.AssociationState.State == types.RouteTableAssociationStateCodeAssociated {
-			associated = true
+		id := aws.ToString(a.SubnetId)
+		_, expected := expectedSubnets[id]
+		valid := expected && !associated[id] && aws.ToString(a.RouteTableId) == m.RouteTableID && a.AssociationState != nil && a.AssociationState.State == types.RouteTableAssociationStateCodeAssociated
+		// A preserved legacy subnet may remain associated while excluded from
+		// the launch allowlist. Verify every selected association exactly.
+		if m.SchemaVersion == 5 && expected && (!valid || aws.ToBool(a.Main) || aws.ToString(a.GatewayId) != "") {
+			return fail
+		}
+		if valid {
+			associated[id] = true
 		}
 	}
 	for _, route := range rt.Routes {
@@ -80,7 +131,7 @@ func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 			return fail
 		}
 	}
-	if !associated || !internet {
+	if len(associated) != len(expectedSubnets) || !internet {
 		return fail
 	}
 	ig, err := api.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{InternetGatewayIds: []string{m.InternetGatewayID}})

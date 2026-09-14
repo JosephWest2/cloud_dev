@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
@@ -126,7 +127,7 @@ func Run(ctx context.Context, path string, overrides config.Overrides, deps Depe
 			if err := manifestErr; err != nil {
 				add("manifest", "fail", "manifest_unavailable", err.Error(), ExitPrerequisite)
 			} else {
-				add("manifest", "pass", "manifest_valid", "version 4 deployment manifest schema, scope and exact resource pins are valid", 0)
+				add("manifest", "pass", "manifest_valid", "version "+strconv.Itoa(m.SchemaVersion)+" deployment manifest schema, scope and exact resource pins are valid", 0)
 			}
 			if err := deps.Identity(ctx, c); err != nil {
 				code, message, exit := "identity_unavailable", "cannot verify AWS identity; check the selected profile, credentials and connectivity", ExitPrerequisite

@@ -32,6 +32,16 @@ resource "aws_subnet" "devbox" {
   map_public_ip_on_launch = false # Only the template requests a worker public IP.
   tags                    = local.tags
 }
+# Preserve the original us-east-2a resource address and CIDR across upgrades.
+# Additional CIDRs depend on the AZ letter, never the input list's order.
+resource "aws_subnet" "additional" {
+  for_each                = toset([for zone in var.availability_zones : zone if zone != "us-east-2a"])
+  vpc_id                  = aws_vpc.devbox.id
+  cidr_block              = cidrsubnet(aws_vpc.devbox.cidr_block, 8, { "us-east-2b" = 2, "us-east-2c" = 3 }[each.key])
+  availability_zone       = each.key
+  map_public_ip_on_launch = false
+  tags                    = local.tags
+}
 resource "aws_internet_gateway" "devbox" {
   vpc_id = aws_vpc.devbox.id
   tags   = local.tags
@@ -46,6 +56,11 @@ resource "aws_route_table" "devbox" {
 }
 resource "aws_route_table_association" "devbox" {
   subnet_id      = aws_subnet.devbox.id
+  route_table_id = aws_route_table.devbox.id
+}
+resource "aws_route_table_association" "additional" {
+  for_each       = aws_subnet.additional
+  subnet_id      = each.value.id
   route_table_id = aws_route_table.devbox.id
 }
 resource "aws_security_group" "devbox" {
@@ -80,8 +95,9 @@ resource "aws_launch_template" "agent" {
     arn = aws_iam_instance_profile.devbox.arn
   }
   network_interfaces {
-    device_index                = 0
-    subnet_id                   = aws_subnet.devbox.id
+    device_index = 0
+    # Fleet selects an approved subnet in its override; SG/public-IP controls
+    # remain pinned here because Fleet has no network-interface override.
     security_groups             = [aws_security_group.devbox.id]
     associate_public_ip_address = true
     delete_on_termination       = true
@@ -90,7 +106,7 @@ resource "aws_launch_template" "agent" {
     device_name = data.aws_ami.ubuntu.root_device_name
     ebs {
       volume_type           = "gp3"
-      volume_size           = 100
+      volume_size           = var.root_disk_gb
       encrypted             = true
       delete_on_termination = true
     }
@@ -101,13 +117,21 @@ resource "aws_launch_template" "agent" {
     http_put_response_hop_limit = 1
     instance_metadata_tags      = "disabled"
   }
-  # Market/type and all seven creation tags are supplied by the future launch CLI.
+  # Market/type/subnet and creation tags are supplied by the batch launch CLI.
   tags       = local.tags
   depends_on = [aws_s3_object.runner, aws_s3_bucket_lifecycle_configuration.results]
   lifecycle {
     precondition {
-      condition     = alltrue([for b in data.aws_ami.ubuntu.block_device_mappings : b.ebs.volume_size <= 100 if b.device_name == data.aws_ami.ubuntu.root_device_name])
-      error_message = "AMI root snapshot exceeds the template's 100 GiB root disk."
+      condition     = length([for b in data.aws_ami.ubuntu.block_device_mappings : b if b.device_name == data.aws_ami.ubuntu.root_device_name]) == 1 && alltrue([for b in data.aws_ami.ubuntu.block_device_mappings : b.ebs.volume_size > 0 && b.ebs.volume_size <= var.root_disk_gb if b.device_name == data.aws_ami.ubuntu.root_device_name])
+      error_message = "AMI must have one exact root snapshot fitting the template root disk."
+    }
+    precondition {
+      condition     = alltrue([for zone in var.availability_zones : contains(data.aws_availability_zones.selected.names, zone)])
+      error_message = "Every selected Ohio AZ must be available to this account."
+    }
+    precondition {
+      condition     = alltrue([for typ in var.instance_types : anytrue([for zone in var.availability_zones : contains(data.aws_ec2_instance_type_offerings.selected[zone].instance_types, typ)])])
+      error_message = "Every selected instance type needs at least one offering in the selected AZs; offerings do not guarantee Spot capacity."
     }
   }
 }
