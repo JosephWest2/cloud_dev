@@ -44,17 +44,25 @@ repetitions; an injected failure verified helper cleanup with no remaining
 fixture processes. Full `make check` then passed. `make build`, relevant package
 race/vet checks and isolated pinned `make infra-check` also passed.
 
-## Remaining gates
+## Completed live gate
 
-Finish fresh review of the terminal-test correction and final documentation,
-then freeze a clean CLI build. Use the independently reviewed three-case live
-helper with one scoped disposable On-Demand worker with
-the accepted #18 runner/template. Exercise large binary stdout/stderr with remote
-exit 255, known-empty streams, and observer restart during a delayed command.
-Use new empty local state and a storage-only descriptor for logs, verify both
-CLI exports and selected raw stream bytes against independent S3 reads, then
-terminate the exact worker, verify root deletion/empty inventory, and export the
-same results again after teardown. No uncertain command may be replayed.
+The independently reviewed clean `fffc393` build and three-case helper passed
+370 live checks across 20 fresh logs processes on one scoped disposable On-Demand
+worker using the accepted #18 runner/template. Large output retained exact
+1,048,576-byte stdout and 786,432-byte stderr with workload exit 255 and retrieval
+exit 0. True empty objects/files verified successfully. A delayed command finished
+22.204 seconds after local wait expiry; seven new logs snapshots observed it
+pending during its actual execution before recovering complete output.
 
-Record actual evidence and fresh final review before merging. Parent #2 remains
-open for #21's public fixture, complete requirement matrix and final acceptance.
+Every logs process used empty local state and a storage-only descriptor with no
+runtime/SSH prerequisites. Exact worker termination, captured root deletion and
+empty scoped instance/volume inventory were independently verified. Twelve more
+fresh logs processes then passed 243 post-down checks across all three IDs,
+including both file exports and both raw streams, with unchanged full bytes and
+status. No command was replayed; no infrastructure apply or emergency cleanup
+was needed. See the [acceptance report](../acceptance/20-durable-logs.md).
+
+Fresh non-implementing reviewers approved source, terminal-test correction,
+documentation, helpers, actual live evidence, exact cleanup and post-down exports.
+The final report and PR #26 were reviewed before merge. Parent #2 remains open
+for #21's public fixture, complete requirement matrix and final acceptance.
