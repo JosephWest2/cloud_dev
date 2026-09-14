@@ -144,6 +144,101 @@ func TestMultiDownIndependentTargetsDeduplicationAndAmbiguity(t *testing.T) {
 	}
 }
 
+func TestMultiDownNamedThenGroupCleanupKeepsHistoricalEvidenceSeparate(t *testing.T) {
+	const firstID, secondID = "i-0123456789abcdef0", "i-0123456789abcdef1"
+	const firstRoot, secondRoot = "vol-0123456789abcdef0", "vol-0123456789abcdef1"
+	c := newDownCloud(firstID, secondID)
+	for id, rootID := range map[string]string{firstID: firstRoot, secondID: secondRoot} {
+		i := inventoryBatchWorker(id, "workers", "acceptance", strings.Repeat("a", 32), "")
+		i.BlockDeviceMappings[0].Ebs.VolumeId = aws.String(rootID)
+		c.workers[id] = i
+	}
+	volumeReads := map[string]int{}
+	c.volumeHook = func(_ context.Context, in *ec2.DescribeVolumesInput) (*ec2.DescribeVolumesOutput, error) {
+		if len(in.VolumeIds) != 1 || in.VolumeIds[0] != firstRoot && in.VolumeIds[0] != secondRoot {
+			t.Errorf("unexpected root observation: %+v", in)
+			return nil, errors.New("unexpected volume")
+		}
+		c.mu.Lock()
+		volumeReads[in.VolumeIds[0]]++
+		c.mu.Unlock()
+		return nil, &smithy.GenericAPIError{Code: "InvalidVolume.NotFound"}
+	}
+	s := downService(c)
+	name, err := WorkerName("workers", firstID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstPlan, err := s.SelectDown(context.Background(), DownSelection{Targets: []string{name}})
+	if err != nil || len(firstPlan.Candidates()) != 1 || firstPlan.Candidates()[0].ID != firstID {
+		t.Fatalf("named selection: %+v %v", firstPlan.Outcome(), err)
+	}
+	firstResult, err := s.ExecuteDown(context.Background(), firstPlan)
+	if err != nil || firstResult.Status != "teardown_complete" || firstResult.SelectedCount != 1 || firstResult.TerminatedCount != 1 || firstResult.CleanedCount != 1 || len(firstResult.Errors) != 0 {
+		t.Fatalf("named cleanup: %+v %v", firstResult, err)
+	}
+	firstProof := downResultWorker(t, firstResult, firstID)
+	if firstProof.Status != "termination_observed" || firstProof.RootDeletion != "deleted" || len(firstProof.Volumes) != 1 || firstProof.Volumes[0].ID != firstRoot || firstProof.Volumes[0].Deletion != "deleted" {
+		t.Fatalf("first cleanup omitted exact root proof: %+v", firstProof)
+	}
+	if c.workers[firstID].State.Name != types.InstanceStateNameTerminated || len(c.workers[firstID].BlockDeviceMappings) != 0 || c.workers[secondID].State.Name != types.InstanceStateNameRunning {
+		t.Fatal("fixture must retain the first terminated worker without mappings beside the live peer")
+	}
+
+	// A later invocation starts with a fresh selection. EC2 still lists the
+	// terminated peer, but cannot recover its now-missing root mapping from the
+	// prior command's output. That uncertainty must not suppress the live peer.
+	groupPlan, err := s.SelectDown(context.Background(), DownSelection{Group: "acceptance"})
+	if err != nil || len(groupPlan.Candidates()) != 2 || groupPlan.Outcome().SelectedCount != 2 {
+		t.Fatalf("group selection must retain both cloud identities: %+v %v", groupPlan.Outcome(), err)
+	}
+	groupResult, err := s.ExecuteDown(context.Background(), groupPlan)
+	if err != nil || groupResult.Status != "teardown_partial" || groupResult.SelectedCount != 2 || groupResult.TerminatedCount != 2 || groupResult.CleanedCount != 1 || len(groupResult.Errors) != 1 {
+		t.Fatalf("group cleanup hid uncertainty or suppressed peer cleanup: %+v %v", groupResult, err)
+	}
+	historical := downResultWorker(t, groupResult, firstID)
+	if historical.Status != "already_terminated" || historical.RootDeletion != "unavailable" || len(historical.Volumes) != 0 || len(historical.Errors) != 1 || historical.Errors[0].Code != "root_volume_unverified" || historical.Errors[0].ResourceID != firstID {
+		t.Fatalf("historical worker fabricated root cleanup: %+v", historical)
+	}
+	secondProof := downResultWorker(t, groupResult, secondID)
+	if secondProof.Status != "termination_observed" || secondProof.RootDeletion != "deleted" || len(secondProof.Volumes) != 1 || secondProof.Volumes[0].ID != secondRoot || secondProof.Volumes[0].Deletion != "deleted" || len(secondProof.Errors) != 0 {
+		t.Fatalf("remaining worker cleanup failed: %+v", secondProof)
+	}
+	if len(c.terminated) != 2 || c.terminated[0] != firstID || c.terminated[1] != secondID || volumeReads[firstRoot] != 1 || volumeReads[secondRoot] != 1 {
+		t.Fatalf("cleanup repeated or invented an operation: terminations=%v volume_reads=%v", c.terminated, volumeReads)
+	}
+
+	// An all-scope pass may see both historical instances after both mappings
+	// have disappeared. It cannot fabricate new volume proof or reterminate them.
+	allPlan, err := s.SelectDown(context.Background(), DownSelection{All: true, Yes: true})
+	if err != nil || len(allPlan.Candidates()) != 2 {
+		t.Fatalf("historical all-scope selection: %+v %v", allPlan.Outcome(), err)
+	}
+	allResult, err := s.ExecuteDown(context.Background(), allPlan)
+	if err != nil || allResult.Status != "teardown_failed" || allResult.SelectedCount != 2 || allResult.TerminatedCount != 2 || allResult.CleanedCount != 0 || len(allResult.Errors) != 2 {
+		t.Fatalf("historical all-scope pass fabricated cleanup: %+v %v", allResult, err)
+	}
+	for _, id := range []string{firstID, secondID} {
+		w := downResultWorker(t, allResult, id)
+		if w.Status != "already_terminated" || w.RootDeletion != "unavailable" || len(w.Volumes) != 0 || len(w.Errors) != 1 || w.Errors[0].Code != "root_volume_unverified" {
+			t.Fatalf("historical root uncertainty lost: %+v", w)
+		}
+	}
+	if len(c.terminated) != 2 || volumeReads[firstRoot] != 1 || volumeReads[secondRoot] != 1 {
+		t.Fatalf("historical pass performed duplicate operations: terminations=%v volume_reads=%v", c.terminated, volumeReads)
+	}
+	for _, saved := range []struct {
+		result TeardownOutcome
+		id     string
+		rootID string
+	}{{firstResult, firstID, firstRoot}, {groupResult, secondID, secondRoot}} {
+		proof := downResultWorker(t, saved.result, saved.id)
+		if proof.RootDeletion != "deleted" || len(proof.Volumes) != 1 || proof.Volumes[0].ID != saved.rootID || proof.Volumes[0].Deletion != "deleted" {
+			t.Fatalf("later inspection erased independently captured root proof: %+v", proof)
+		}
+	}
+}
+
 func TestMultiDownIncompleteScopeSelectionAuthorizesNothing(t *testing.T) {
 	for _, mode := range []string{"failure", "cycle", "page_bound"} {
 		t.Run(mode, func(t *testing.T) {
