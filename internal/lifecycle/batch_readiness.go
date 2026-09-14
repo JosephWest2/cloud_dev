@@ -16,6 +16,12 @@ import (
 // readiness outcome; a failed worker never cancels another worker's observation.
 // No launch or replacement operation is reachable from this method.
 func (s *Service) WaitBatchReady(ctx context.Context, manifest config.Manifest, workers []WorkerOutcome, progress io.Writer) error {
+	return s.waitBatchReady(ctx, manifest, workers, progress, nil)
+}
+
+// prepare is supplied only by public launch orchestration with validated launch
+// evidence. It must verify pending workers fully before they reach an SSM probe.
+func (s *Service) waitBatchReady(ctx context.Context, manifest config.Manifest, workers []WorkerOutcome, progress io.Writer, prepare func(context.Context, *WorkerOutcome) error) error {
 	if len(workers) == 0 {
 		return nil
 	}
@@ -27,6 +33,7 @@ func (s *Service) WaitBatchReady(ctx context.Context, manifest config.Manifest, 
 		counts[worker.ID]++
 	}
 	queue := make(chan int, len(workers))
+	pending := []int{}
 	for n := range workers {
 		w := &workers[n]
 		switch {
@@ -36,7 +43,7 @@ func (s *Service) WaitBatchReady(ctx context.Context, manifest config.Manifest, 
 		case counts[w.ID] != 1:
 			errs[n] = failure("target_duplicate", "batch readiness received a repeated instance identity; inspect the request before probing")
 			observationError(&w.Instance, errs[n])
-		case w.Status != "allocated" && w.Status != "historical":
+		case w.Status != "allocated" && w.Status != "historical" && !(w.Status == "not_observed" && prepare != nil):
 			errs[n] = failure("worker_not_verified", "worker allocation identity has not been verified; resume request inspection before readiness")
 			originalCode := w.ObservationCode
 			observationError(&w.Instance, errs[n])
@@ -45,9 +52,16 @@ func (s *Service) WaitBatchReady(ctx context.Context, manifest config.Manifest, 
 			}
 		case w.Status == "historical" || batchCannotRun(w.State):
 			errs[n] = batchNotRunning(&w.Instance)
+		case w.Status == "not_observed":
+			pending = append(pending, n)
 		default:
 			queue <- n
 		}
+	}
+	// A set of slow startup observations must not occupy every slot before
+	// workers whose launch identities are already verified can make progress.
+	for _, n := range pending {
+		queue <- n
 	}
 	close(queue)
 	if len(queue) > 0 {
@@ -71,6 +85,13 @@ func (s *Service) WaitBatchReady(ctx context.Context, manifest config.Manifest, 
 				go func() {
 					defer wg.Done()
 					for n := range queue {
+						if workers[n].Status == "not_observed" && prepare != nil {
+							output.write(workers[n].ID, "allocation=not_observed; waiting for exact launch and root-volume verification")
+							if errs[n] = prepare(ctx, &workers[n]); errs[n] != nil {
+								observationError(&workers[n].Instance, errs[n])
+								continue
+							}
+						}
 						errs[n] = s.waitBatchWorker(ctx, manifest, &workers[n], output)
 					}
 				}()
