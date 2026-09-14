@@ -52,7 +52,7 @@ foundation provisioning; `infra-check` builds it automatically. The foundation
 now includes private command-result storage with 30-day retention from submission
 and a separate execution document. `exec` submits commands and observes durable
 results and the exact SSM invocation, with distinct timeout and detach outcomes.
-The `logs` interface follows in #20. See the
+`logs` retrieves recorded status and verifies complete output exports by ID. See the
 [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).
 
 Install into a directory on your PATH:
@@ -318,7 +318,45 @@ durable results can succeed while optional SSM observation is unavailable.
 
 Ctrl-C/SIGTERM return `interrupted` with exit 4 and the known IDs; they request no
 remote cancellation. An already established completion retains its actual exit,
-even if interruption races with local process exit. The `logs` command and printed
-recovery-command interface arrive in #20. Retain the public ID and trusted storage
-export meanwhile. The [execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16)
+even if interruption races with local process exit. Use the printed `logs` recovery
+command after detachment. Retain the public ID and trusted storage export. The
+[execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16)
 describes timing bounds, observation fields and incomplete-result behavior.
+
+## Retrieve command results
+
+Use the command ID and the original deployment configuration:
+
+```sh
+devbox --config ~/.config/devbox/config.toml logs dc1-0123456789abcdef0123456789abcdef --json
+devbox logs dc1-0123456789abcdef0123456789abcdef --stdout-file ./stdout.bin --stderr-file ./stderr.bin --json
+sha256sum stdout.bin stderr.bin
+devbox logs dc1-0123456789abcdef0123456789abcdef --stream stderr > stderr-copy.bin
+```
+
+Default `logs` prints status and stream lengths/checksums. It reports the
+publisher's completeness with `verification=not_downloaded`. File exports and
+`--stream stdout|stderr` download exact bytes and verify length, SHA-256 and EOF;
+they preserve binary data and genuine empty streams. Stream mode writes bytes
+to stdout and metadata to stderr, and cannot combine with JSON or exports.
+File exports may use JSON, require distinct new paths, and never replace an
+existing file. A failed export removes its temporary file; if the first of two
+exports succeeded before the second failed, JSON identifies the first verified
+file separately.
+
+Retrieval exits **0 even if the original workload failed or timed out**. Check
+`workload.exit_code` or `workload.status` for the remote result. Invalid input
+exits 2; local timeout/interruption exits 4; missing, pending, denied, incomplete,
+corrupt or failed output retrieval exits 1. Known workload status survives an
+output error. A failed raw stream may already have emitted unverified bytes;
+discard them or retry into a new file. Explicit workload output is user data and
+may contain sensitive information; it is not redacted.
+
+The default `--timeout 20s` covers one retrieval, including downloads. Use up to
+`--timeout 5m` for larger output or a slower connection. Logs takes a status
+snapshot; repeat the same command ID to check a running command later. It never
+resubmits or cancels the workload. Completed recovery needs only AWS identity and
+the retained storage descriptor, with no SSH tools, local receipts, live worker,
+current runtime resources or SSM history. It works after `down` within the
+configured retention period. Keep the old deployment's trusted storage config
+across upgrades; see [retention and full teardown](docs/setup.md#retaining-result-access).
