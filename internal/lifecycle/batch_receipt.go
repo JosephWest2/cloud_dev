@@ -89,7 +89,9 @@ func (r BatchReceipt) Validate() error {
 		if (attempt.State == "prepared" || attempt.State == "rejected") && (len(attempt.InstanceIDs) > 0 || attempt.FleetID != "") {
 			return invalid
 		}
-		if len(attempt.InstanceIDs) > attempt.RequestedCount || (attempt.State == "complete" && (attempt.FleetID == "" || attempt.InstanceIDs == nil)) {
+		// Contradictory responses may expose more identities than requested.
+		// Retain all of them as unknown evidence; they cannot have a successor.
+		if (len(attempt.InstanceIDs) > attempt.RequestedCount && attempt.State != "unknown") || (attempt.State == "complete" && (attempt.FleetID == "" || attempt.InstanceIDs == nil)) {
 			return invalid
 		}
 		for _, id := range attempt.InstanceIDs {
