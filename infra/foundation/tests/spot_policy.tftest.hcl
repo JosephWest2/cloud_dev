@@ -64,12 +64,12 @@ variables {
 run "spot_policy_boundary" {
   command = apply
   assert {
-    condition = (toset([for s in jsondecode(local.operator_policy).Statement : s.Sid if contains(s.Action, "ec2:CreateFleet")]) == toset(["LaunchDependencies", "TaggedFleet", "FleetInstances", "EncryptedVolumes"])
+    condition = (toset([for s in jsondecode(local.operator_policy).Statement : s.Sid if contains(s.Action, "ec2:CreateFleet")]) == toset(["LaunchDependencies", "TaggedFleet", "FleetResources"])
     )
-    error_message = "Fleet authorization must keep existing dependencies, fleet, instance and volume paths separate."
+    error_message = "Fleet authorization must separate existing dependencies, the tagged fleet, and preliminary instance/volume checks."
   }
   assert {
-    condition = (alltrue([for sid in ["TaggedFleet", "FleetInstances", "TaggedInstances", "EncryptedVolumes"] :
+    condition = (alltrue([for sid in ["TaggedFleet", "TaggedInstances", "EncryptedVolumes"] :
       length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == sid && s.Condition.StringEquals["aws:RequestedRegion"] == "us-east-2" && s.Condition.StringEquals["aws:RequestTag/ManagedBy"] == "devbox"]) == 1
     ]))
     error_message = "Every created fleet, instance and volume must have ManagedBy, forcing dependent CreateTags authorization; untagged requests cannot bypass it."
@@ -85,25 +85,27 @@ run "spot_policy_boundary" {
     error_message = "Dependent Fleet tag authorization must enforce all scope and batch identity tags while allowing optional Group."
   }
   assert {
-    condition = (alltrue([for action in ["ec2:CreateFleet", "ec2:RunInstances"] :
-      length([for s in jsondecode(local.operator_policy).Statement : s if contains(s.Action, action) &&
-        s.Resource == ["arn:aws:ec2:us-east-2:123456789012:volume/*"] && s.Condition.Bool["ec2:Encrypted"] == "true" &&
-        s.Condition.StringEquals["ec2:VolumeType"] == "gp3" && !can(s.Condition.StringEquals["ec2:InstanceProfile"]) && !can(s.Condition.StringEquals["ec2:MetadataHttpTokens"])
+    condition = (length([for s in jsondecode(local.operator_policy).Statement : s if s.Action == ["ec2:RunInstances"] &&
+      s.Resource == ["arn:aws:ec2:us-east-2:123456789012:volume/*"] && s.Condition.Bool["ec2:Encrypted"] == "true" &&
+      s.Condition.StringEquals["ec2:VolumeType"] == "gp3" && !can(s.Condition.StringEquals["ec2:InstanceProfile"]) && !can(s.Condition.StringEquals["ec2:MetadataHttpTokens"])
       ]) == 1
-      ])
     )
-    error_message = "Both volume authorization paths need encryption and gp3, without unsupported instance-only conditions."
+    error_message = "The dependent RunInstances volume check must require encryption and gp3 without instance-only conditions."
   }
   assert {
-    condition = (alltrue([for sid in ["FleetInstances", "TaggedInstances"] :
-      length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == sid &&
-        s.Resource == ["arn:aws:ec2:us-east-2:123456789012:instance/*"] && s.Condition.StringEquals["ec2:InstanceProfile"] == aws_iam_instance_profile.devbox.arn
-      ]) == 1
-      ]) && length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TaggedInstances" &&
+    condition = (length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TaggedInstances" && s.Action == ["ec2:RunInstances"] &&
+      s.Resource == ["arn:aws:ec2:us-east-2:123456789012:instance/*"] && s.Condition.StringEquals["ec2:InstanceProfile"] == aws_iam_instance_profile.devbox.arn &&
       toset(s.Condition.StringEquals["ec2:InstanceMarketType"]) == toset(["spot", "on-demand"]) && s.Condition.StringEquals["ec2:MetadataHttpTokens"] == "required" && s.Condition.ArnEquals["ec2:LaunchTemplate"] == aws_launch_template.agent.arn
       ]) == 1
     )
-    error_message = "Both markets need the approved profile; RunInstances must retain IMDSv2 and the exact template ARN."
+    error_message = "RunInstances must retain the approved profile, IMDSv2 and exact template for both markets."
+  }
+  assert {
+    condition = (length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "FleetResources" &&
+      s.Action == ["ec2:CreateFleet"] && toset(s.Resource) == toset(["arn:aws:ec2:us-east-2:123456789012:instance/*", "arn:aws:ec2:us-east-2:123456789012:volume/*"]) &&
+      s.Condition == { StringEquals = { "aws:RequestedRegion" = "us-east-2" } }
+    ]) == 1)
+    error_message = "Preliminary Fleet instance/volume authorization has no launch-property context and must never grant RunInstances."
   }
   assert {
     condition = (length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "LaunchDependencies" &&

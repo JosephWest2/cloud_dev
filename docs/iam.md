@@ -13,8 +13,9 @@ permissions or constrain an administrator.
 | `CreateFleet`: existing resources | Exact regional Canonical AMI, template and selected subnet ARNs; template dependencies also require `RunInstances` permission |
 | `RunInstances`: existing resources | Exact AMI, template, selected subnets and security group; required template ARN |
 | New fleet | Account/region; required managed/deployment/owner/profile and batch identity creation tags |
-| New instance | Same scope and required creation tags; exact instance profile; `RunInstances` additionally requires IMDSv2, approved template and Spot or On-Demand market |
-| New root volume | Separate `CreateFleet` and `RunInstances` paths; same required creation tags; encrypted gp3; `RunInstances` requires approved template |
+| `CreateFleet`: preliminary instance/volume checks | Account/region only; EC2 authorizes placeholder resources before supplying launch tags or properties; template resources also require the constrained `RunInstances` grants |
+| New instance through `RunInstances` | Required scope and creation tags; exact instance profile; IMDSv2, approved template and Spot or On-Demand market |
+| New root volume through `RunInstances` | Required scope and creation tags; encrypted gp3; complete launch authorization requires the approved template |
 | New network interface | Account/region, approved template, exact selected subnet ARNs and public IPv4; exact security group authorized separately |
 | `CreateTags` | Instances/volumes only during `RunInstances` or `CreateFleet`, fleets only during `CreateFleet`; fixed scope and twelve allowed keys; no existing-resource retagging |
 | `PassRole` | Exact worker role, passed only to EC2 |
@@ -48,8 +49,9 @@ be nonempty. The template does not invent these values. Legacy `RunInstances` re
 tags (`ManagedBy`, `Deployment`, `Owner`, `Profile`, `Name`, `RequestId`,
 `CreatedAt`) and accepts the expanded key allowlist.
 
-Each fleet/instance/volume creation grant requires `ManagedBy=devbox`; this
-prevents an untagged request from skipping EC2's dependent `CreateTags` check.
+The fleet creation grant and the dependent `RunInstances` instance/volume
+grants require `ManagedBy=devbox`; this prevents an untagged request from
+skipping EC2's dependent `CreateTags` check.
 The separate tag grants then enforce the full scope and required metadata for
 each API, with `ec2:CreateAction` preventing retagging existing resources. This
 avoids repeating the whole tag contract in every creation statement while
@@ -60,8 +62,13 @@ The operator may use Spot and On-Demand. The CLI owns explicit `--on-demand`
 consent and instant-only allocation. AWS exposes no `ec2:FleetType` condition;
 adding it would deny valid launches. Fleet instance authorization also lacks
 `ec2:MetadataHttpTokens`, `ec2:InstanceMarketType` and `ec2:LaunchTemplate`.
-The instance checks remain in the separate `RunInstances` path.
-Shared dependency and volume grants use `ArnEqualsIfExists` for the template
+The instance checks remain in the separate `RunInstances` path. Live instant
+Fleet authorization also checked a placeholder `volume/*` without tags,
+encryption, volume type or template context. The preliminary Fleet instance and
+volume grant therefore checks account and region only. This grant does not
+authorize `RunInstances`; the dependent checks retain required tags, the worker
+profile, IMDSv2, and encrypted gp3 volumes.
+Shared dependency grants use `ArnEqualsIfExists` for the template
 key absent from Fleet authorization. Mandatory RunInstances instance and NIC
 grants still require the approved template without `IfExists`, so omitting a
 template cannot bypass the complete request's authorization. Fleet override
