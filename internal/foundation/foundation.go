@@ -48,8 +48,13 @@ func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p 
 }
 
 func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Profile) []Check {
+	if m.SchemaVersion == 5 && ctx.Err() == nil {
+		if _, err := config.ValidateProfileManifest(p, m); err != nil {
+			return []Check{{"foundation_configuration", err}}
+		}
+	}
 	var checks []Check
-	for _, probe := range []struct {
+	probes := []struct {
 		name string
 		run  func() error
 	}{
@@ -60,7 +65,14 @@ func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Pr
 		{"foundation_readiness", func() error { return checkReadiness(ctx, clients.SSM, m) }},
 		{"foundation_results", func() error { return CheckResults(ctx, clients.S3, m.Results, m.Deployment, m.Owner) }},
 		{"foundation_execution", func() error { return checkExecution(ctx, clients.SSM, clients.S3, m) }},
-	} {
+	}
+	if m.SchemaVersion == 5 {
+		probes = append(probes, struct {
+			name string
+			run  func() error
+		}{"foundation_launch_ledger", func() error { return checkLaunchLedger(ctx, clients.S3, m) }})
+	}
+	for _, probe := range probes {
 		err := ctx.Err()
 		if err == nil {
 			err = probe.run()
@@ -101,20 +113,24 @@ func roleName(arn string) string { return arn[strings.LastIndex(arn, "/")+1:] }
 // Message is an allowlist boundary for structured diagnostics, including injected dependencies.
 func Message(name string) string {
 	switch name {
+	case "foundation_configuration":
+		return "launch configuration is unsupported; verify the complete version 5 manifest and profile type/subnet/AZ choices before allocation"
 	case "foundation_network":
 		return "network check failed; verify scoped VPC/subnet, DNS, route association, gateway, no ingress and HTTP/HTTPS egress; review a foundation plan"
 	case "foundation_image":
-		return "image check failed; verify Canonical Ubuntu 24.04 provenance, x86_64 types and sufficient profile disk size"
+		return "image check failed; verify Canonical Ubuntu 24.04 provenance, exact root minimum, x86_64 type capabilities and approved type/AZ offerings; offerings do not measure Spot capacity"
 	case "foundation_template":
 		return "template check failed; verify pinned version, image, profile, network, bootstrap digest, encrypted/deleted root and IMDSv2; review and re-export the foundation"
 	case "foundation_iam":
-		return "IAM check failed; verify role/profile membership, trust and policy digests and absence of extra policies; review with the setup profile and re-export intended changes"
+		return "IAM check failed; verify role/profile membership, trust and policy digests, absence of extra policies and the version 5 Spot service-linked role prerequisite; review with the setup profile and re-export intended changes"
 	case "foundation_readiness":
 		return "readiness document check failed; verify the exact version and fixed content, then re-export the foundation"
 	case "foundation_results":
 		return "result storage check failed; verify scoped bucket ownership, encryption, public access, immutable policy and retention, then review and re-export the foundation"
 	case "foundation_execution":
 		return "execution check failed; verify the pinned document and runner artifact, then apply, re-export and replace old workers"
+	case "foundation_launch_ledger":
+		return "launch ledger check failed; verify the permanent scoped prefix, immutable bucket policy and results-only expiration; retain launch records until deliberate deployment removal"
 	default:
 		return "cannot verify deployed resources; check selected credentials, foundation read permissions and connectivity, then follow docs/setup.md"
 	}

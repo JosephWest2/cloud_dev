@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
@@ -90,6 +93,14 @@ func TestOpenTofuExport(t *testing.T) {
 		if err != nil {
 			t.Fatal("OpenTofu exported an invalid CLI manifest:", err)
 		}
+		if m.SchemaVersion != 5 {
+			t.Fatal("foundation must export manifest version 5")
+		}
+		resources := map[string]map[string]json.RawMessage{}
+		for _, r := range event.State.Values.Root.Resources {
+			resources[r.Address] = r.Values
+		}
+		verifyPlacementExport(t, m, resources)
 		expected := map[string]map[string]string{
 			"aws_iam_role.instance":        {"assume_role_policy": m.Roles["instance"].TrustSHA256},
 			"aws_iam_role.operator":        {"assume_role_policy": m.Roles["operator"].TrustSHA256},
@@ -134,5 +145,141 @@ func TestOpenTofuExport(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no mock-applied manifest in OpenTofu test output")
+	}
+}
+
+func verifyPlacementExport(t *testing.T, m config.Manifest, resources map[string]map[string]json.RawMessage) {
+	t.Helper()
+	var template struct {
+		ID                string `json:"id"`
+		Version           int    `json:"latest_version"`
+		ImageID           string `json:"image_id"`
+		NetworkInterfaces []struct {
+			DeviceIndex int      `json:"device_index"`
+			SubnetID    string   `json:"subnet_id"`
+			Groups      []string `json:"security_groups"`
+			Public      string   `json:"associate_public_ip_address"`
+			Delete      string   `json:"delete_on_termination"`
+		} `json:"network_interfaces"`
+		Blocks []struct {
+			Device string `json:"device_name"`
+			EBS    []struct {
+				Size      int    `json:"volume_size"`
+				Type      string `json:"volume_type"`
+				Encrypted string `json:"encrypted"`
+				Delete    string `json:"delete_on_termination"`
+			} `json:"ebs"`
+		} `json:"block_device_mappings"`
+	}
+	decode := func(address string, target any) {
+		t.Helper()
+		raw, exists := resources[address]
+		if !exists {
+			t.Fatal("missing placement export resource", address)
+		}
+		b, err := json.Marshal(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(b, target); err != nil {
+			t.Fatal(address, err)
+		}
+	}
+	decode("aws_launch_template.agent", &template)
+	img := m.Images["agent"]
+	if template.ID != img.LaunchTemplateID || strconv.Itoa(template.Version) != img.LaunchTemplateVersion || template.ImageID != img.AMIID || len(template.NetworkInterfaces) != 1 || len(template.Blocks) != 1 {
+		t.Fatal("template export identity/mappings differ")
+	}
+	ni := template.NetworkInterfaces[0]
+	if ni.DeviceIndex != 0 || ni.SubnetID != "" || len(ni.Groups) != 1 || ni.Groups[0] != m.SecurityGroupID || ni.Public != "true" || ni.Delete != "true" {
+		t.Fatal("exported template cannot safely accept subnet overrides")
+	}
+	block := template.Blocks[0]
+	if block.Device != img.RootDeviceName || len(block.EBS) != 1 {
+		t.Fatal("template root mapping differs")
+	}
+	e := block.EBS[0]
+	if img.RootDisk == nil || e.Size != img.RootDisk.SizeGB || e.Type != img.RootDisk.Type || e.Encrypted != strconv.FormatBool(img.RootDisk.Encrypted) || e.Delete != strconv.FormatBool(img.RootDisk.DeleteOnTermination) {
+		t.Fatal("template root defaults differ from export")
+	}
+	var image struct {
+		ID     string `json:"id"`
+		Root   string `json:"root_device_name"`
+		Blocks []struct {
+			Device string `json:"device_name"`
+			EBS    struct {
+				Size string `json:"volume_size"`
+			} `json:"ebs"`
+		} `json:"block_device_mappings"`
+	}
+	decode("data.aws_ami.ubuntu", &image)
+	count := 0
+	for _, block := range image.Blocks {
+		if block.Device == img.RootDeviceName {
+			count++
+			if block.EBS.Size != strconv.Itoa(img.MinimumRootDiskGB) {
+				t.Fatal("AMI snapshot minimum differs from export")
+			}
+		}
+	}
+	if image.ID != img.AMIID || image.Root != img.RootDeviceName || count != 1 {
+		t.Fatal("AMI root export differs")
+	}
+	for _, subnet := range m.Subnets {
+		address := "aws_subnet.devbox"
+		association := "aws_route_table_association.devbox"
+		if subnet.AvailabilityZone != "us-east-2a" {
+			address = "aws_subnet.additional[" + strconv.Quote(subnet.AvailabilityZone) + "]"
+			association = "aws_route_table_association.additional[" + strconv.Quote(subnet.AvailabilityZone) + "]"
+		}
+		var actual struct {
+			ID  string `json:"id"`
+			AZ  string `json:"availability_zone"`
+			VPC string `json:"vpc_id"`
+		}
+		decode(address, &actual)
+		if actual.ID != subnet.ID || actual.AZ != subnet.AvailabilityZone || actual.VPC != m.VPCID {
+			t.Fatal("subnet export differs", address)
+		}
+		var route struct {
+			Subnet string `json:"subnet_id"`
+			Table  string `json:"route_table_id"`
+		}
+		decode(association, &route)
+		if route.Subnet != subnet.ID || route.Table != m.RouteTableID {
+			t.Fatal("selected subnet lacks its exported route association")
+		}
+		var offerings struct {
+			Types []string `json:"instance_types"`
+		}
+		decode("data.aws_ec2_instance_type_offerings.selected["+strconv.Quote(subnet.AvailabilityZone)+"]", &offerings)
+		for _, pool := range m.CompatiblePools {
+			if slices.Contains(pool.SubnetIDs, subnet.ID) != slices.Contains(offerings.Types, pool.InstanceType) {
+				t.Fatal("exported pool is not the exact offering intersection", pool.InstanceType, subnet.AvailabilityZone)
+			}
+		}
+	}
+	var bucket struct {
+		Policy string `json:"policy"`
+	}
+	decode("aws_s3_bucket_policy.results", &bucket)
+	if m.LaunchLedger == nil || !immutableLaunchPolicy(bucket.Policy, *m.LaunchLedger) {
+		t.Fatal("exported ledger lacks enforced conditional creation")
+	}
+	var lifecycle struct {
+		Rule []struct {
+			Filter []struct {
+				Prefix string `json:"prefix"`
+			} `json:"filter"`
+		} `json:"rule"`
+	}
+	decode("aws_s3_bucket_lifecycle_configuration.results", &lifecycle)
+	if len(lifecycle.Rule) == 0 {
+		t.Fatal("missing result retention")
+	}
+	for _, rule := range lifecycle.Rule {
+		if len(rule.Filter) != 1 || rule.Filter[0].Prefix != m.Results.Prefix || strings.HasPrefix(m.LaunchLedger.Prefix, rule.Filter[0].Prefix) {
+			t.Fatal("ledger covered by automatic expiration")
+		}
 	}
 }

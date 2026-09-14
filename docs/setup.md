@@ -132,8 +132,9 @@ plan/apply, and fresh export. Old exports keep their pinned version; do not use
 First follow the [dedicated SSH key setup](acceptance/09-readiness-shell.md#configure-the-dedicated-key).
 Set `ssh_public_key` in foundation.tfvars to the public key's first two fields
 (type and base64, without comment/newline). Private keys never enter OpenTofu.
-This update exports manifest v4, a new bootstrap/template version, the pinned
-status/host-key probe, and the execution/storage contract. Existing workers do
+Prepare the account-wide [Spot service-linked role](#prepare-the-accounts-spot-role)
+with the setup identity before running `doctor`. This update exports manifest v5,
+the multi-AZ placement and launch-ledger contract, and a new pinned template version. Existing workers do
 not acquire the runner, updated agent requirement, or rotated public key;
 inspect and manually remove them before replacing them with a new launch.
 Build the real Linux/amd64 runner before planning:
@@ -170,10 +171,10 @@ tofu output -json deployment_manifest > "${XDG_CONFIG_HOME:-$HOME/.config}/devbo
 ```
 
 Only export the named output. Do not export full state or all provider diagnostics.
-This schema-v4 JSON is non-secret, but contains account/resource identifiers; keep
+This schema-v5 JSON is non-secret, but contains account/resource identifiers; keep
 it local. The manifest is trusted configuration: protect it from unauthorized
 edits. It is not signed and is not an IAM authorization token. Existing schema-v1/v2
-exports must be replaced with a real schema-v4 export. Re-export existing v3
+exports must be replaced with a real schema-v5 export. Re-export existing v3
 deployments after applying this foundation update.
 
 Durable resources are VPC/subnet/IGW/routing, security group, two IAM roles and
@@ -392,3 +393,105 @@ it continues to store billable state versions. To remove the bucket as well:
    changes; remove generated backend files, local input/plan/state copies when no
    longer needed, and the local operator profile. Keep protected backups according
    to your own retention needs.
+
+## Upgrade to the multi-AZ Spot foundation (#29)
+
+Use the same account, deployment, owner, exact AMI and backend as the existing
+foundation. Save the old manifest, input files and reviewed state backup first.
+Run offline validation in a different checkout/data directory from the live
+backend; `make infra-check TOFU=/path/to/tofu-1.12.6` uses mock providers and
+`init -backend=false`. Never copy live `.terraform` metadata into that checkout.
+
+New `availability_zones` selects 1–3 distinct standard Ohio AZs (default a/b/c).
+The original `aws_subnet.devbox` and `aws_route_table_association.devbox` retain
+their addresses, `us-east-2a`, and `10.77.1.0/24`. Additional subnets use stable
+AZ keys and `10.77.2.0/24` in b, `10.77.3.0/24` in c, each associated with the
+existing public route table. Reordering the list cannot replace networking. If a
+later selection excludes a, the original subnet remains for existing workers,
+but it is excluded from new launch choices. Removing b/c can destroy those
+subnets: first inspect and clean up their workers, then review that explicit
+change. This upgrade's normal plan adds b/c; it must not replace the original
+VPC, subnet, route association, security group or existing workers.
+
+`instance_types` defaults to the bundled four-type pool. Setup reads each type's
+capabilities and per-AZ offerings and exports only actual approved pairs. This
+does not establish available Spot capacity. `root_disk_gb` defaults to 100 and
+must fit the exact AMI root snapshot. The numeric template version records that
+default; the later Fleet adapter may apply the validated profile disk override.
+The template's primary interface loses its fixed subnet so Fleet can select one,
+while public IPv4, security group and interface deletion stay pinned. Subnets
+themselves keep `map_public_ip_on_launch=false`; only worker templates allocate
+public IPv4. No NAT gateway, EIP, ingress or disposable instance is provisioned.
+
+### Prepare the account's Spot role
+
+Establish the account-wide Spot service-linked role through the **setup**
+identity. Check first:
+
+```sh
+aws iam get-role --role-name AWSServiceRoleForEC2Spot --profile devbox-setup
+```
+
+Only if that returns `NoSuchEntity`, create it with setup:
+
+```sh
+aws iam create-service-linked-role --aws-service-name spot.amazonaws.com --profile devbox-setup
+```
+
+Do not treat denied/expired-credential errors as absence. If another setup
+process creates it concurrently, verify the exact role with `get-role`. The
+operator has only the scoped read needed for `doctor`, never general role
+creation/deletion. Do not import this shared role into worker lifecycle state or
+delete it during deployment/worker cleanup. Instant Fleet does **not** require
+`AWSServiceRoleForEC2Fleet`; see the
+[Fleet prerequisites](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-fleet-prerequisites.html).
+
+### Plan and apply the upgrade
+
+From a separate live checkout of the reviewed revision, copy only the trusted
+`foundation.tfvars` and `backend.hcl`, build the pinned runner, and use the setup
+profile explicitly:
+
+```sh
+make runner
+AWS_PROFILE=devbox-setup tofu -chdir=infra/foundation init -backend-config=backend.hcl
+AWS_PROFILE=devbox-setup tofu -chdir=infra/foundation plan -var-file=foundation.tfvars -out=spot-upgrade.tfplan
+tofu -chdir=infra/foundation show -no-color spot-upgrade.tfplan
+```
+
+Review the exact plan before applying. Expect added selected subnets and route
+associations, updated operator policy, the shared storage policy, the current
+runner artifact if its hash changed, and a new template version with its
+resolved bootstrap. Investigate unexpected resource replacement, result/state
+storage deletion, changed retention, foreign scope or mutable template pins.
+Keep the built runner unchanged between plan and apply. The setup commands are:
+
+```sh
+AWS_PROFILE=devbox-setup tofu -chdir=infra/foundation apply spot-upgrade.tfplan
+AWS_PROFILE=devbox-setup tofu -chdir=infra/foundation output -json deployment_manifest > /path/to/devbox-config/deployment.json
+devbox --config /path/to/devbox-config/config.toml doctor --aws-profile devbox-operator --json
+```
+
+Export next to the intended CLI config; a stale default manifest can otherwise
+select an earlier template. Keep an old trusted results-only descriptor for
+completed logs. V5 adds exact subnet/AZ mappings, compatible type pools, AMI root
+minimum/template disk defaults and `launch_ledger`; it preserves runner,
+execution, readiness and result-storage exports. Legacy inventory/cleanup and
+completed logs remain available without batch prerequisites. New v5 launches
+remain disabled until the allocation/recovery integration in #32.
+
+The shared ledger uses the existing private result bucket under the separate
+`launches/v2/ACCOUNT/REGION/DEPLOYMENT/OWNER/` prefix. Its conditional dispatch
+claims coordinate copied receipts and separate clients. They have no automatic
+expiry and runtime roles cannot delete them; worker roles have no ledger access.
+Command results retain their existing 30-day default, and their lifecycle rule
+must never cover launch records or runner artifacts. Small ledger objects are
+retained billable S3 storage. Deliberate full deployment deletion must stop all
+clients, preserve required recovery records, and explicitly remove ledger objects
+with setup authority; deleting them invalidates stale receipts' retry guarantees.
+
+`doctor` verifies actual resources and pins, not effective allocation permissions.
+Static policy/mock tests do not prove Spot authorization. Actual restricted-role
+Spot/On-Demand launch, independent worker use, and exact disposable-root cleanup
+are the fresh acceptance gate in #34. Never force live Spot scarcity to test
+partial/unknown capacity; controlled SDK tests own those failure cases.
