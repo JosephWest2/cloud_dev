@@ -16,7 +16,7 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/testutil"
 )
 
-func TestReservedLifecycleSyntaxDoesNotReachAWS(t *testing.T) {
+func TestPluralTeardownRequiresValidConfigurationBeforeAWS(t *testing.T) {
 	for _, args := range [][]string{
 		{"down", "worker1", "i-12345678"},
 		{"down", "--group", "smoke-batch"},
@@ -26,7 +26,7 @@ func TestReservedLifecycleSyntaxDoesNotReachAWS(t *testing.T) {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			var out, diag bytes.Buffer
 			code := RunWithLifecycle(context.Background(), append(args, "--json", "--config", "/nonexistent/devbox.toml"), &out, &diag, doctor.Dependencies{}, lifecycle.Dependencies{New: func(context.Context, config.Config) (*lifecycle.Service, error) {
-				t.Fatal("reserved syntax reached AWS")
+				t.Fatal("invalid configuration reached AWS")
 				return nil, nil
 			}})
 			var result lifecycle.Result
@@ -34,8 +34,8 @@ func TestReservedLifecycleSyntaxDoesNotReachAWS(t *testing.T) {
 			if err := decoder.Decode(&result); err != nil || decoder.Decode(new(any)) != io.EOF {
 				t.Fatalf("expected one JSON result: %v", err)
 			}
-			if code != 2 || result.Code != "feature_unavailable" || result.OK || result.Command == "" || result.Instances == nil {
-				t.Fatalf("reserved selection must stop before config/AWS: exit=%d, result=%+v", code, result)
+			if code != 2 || result.Code != "config_invalid" || result.OK || result.Command == "" || result.Instances == nil {
+				t.Fatalf("selection must reject invalid config before AWS: exit=%d, result=%+v", code, result)
 			}
 		})
 	}
@@ -136,7 +136,7 @@ func TestHelpExplainsBatchLaunchAndRecovery(t *testing.T) {
 	if code := Run(context.Background(), []string{"--help"}, &out, &diag, doctor.Dependencies{}); code != 0 {
 		t.Fatalf("help failed: %d", code)
 	}
-	for _, expected := range []string{"Batch launch and recovery", "Reserved teardown syntax", "up agent [--count N] [--group GROUP] [--name BASE]", "up --retry-missing REQUEST_ID --after ATTEMPT_ID", "down --all [--yes]", "configured maximum default 10", "one overall deadline", "without allocating"} {
+	for _, expected := range []string{"Batch launch and recovery", "Scoped teardown", "up agent [--count N] [--group GROUP] [--name BASE]", "up --retry-missing REQUEST_ID --after ATTEMPT_ID", "down --all [--yes]", "configured maximum default 10", "one overall deadline", "without allocating"} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("help omits %q", expected)
 		}

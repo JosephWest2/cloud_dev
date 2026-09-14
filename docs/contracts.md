@@ -4,8 +4,8 @@ The [Spot batch contract](#spot-batch-contract-28) adds profile v2, deployment
 v5 and receipt v2 while retaining config/result-storage v1 and legacy receipt
 recovery. Group launch, discovery and shared recovery are integrated in #32.
 The legacy single-worker contracts below continue to apply to v4 launches and
-v1 receipts. Plural/group teardown remains gated until #33; individual teardown
-works with both old names and generated batch names or explicit instance IDs.
+v1 receipts. Scoped plural/group teardown is integrated in #33 and works with
+both old names and generated batch names or explicit instance IDs.
 
 ## User configuration and workload profile
 
@@ -839,8 +839,8 @@ the original template, document, instance or SSH identity still exists.
 This section is normative for #28–#34. #28 provides pure validation, parser
 coverage and shared Go types; #29 verifies/provisions the foundation, #30 builds
 one immutable allocation attempt, #31 implements shared recovery, #32 enables
-launch/inventory/access, and #33 enables plural teardown. Only plural/group
-teardown currently returns `feature_unavailable` with exit 2 before AWS. No successful
+launch/inventory/access, and #33 enables plural teardown. All these operational
+forms are integrated. No successful
 parser or plan test is evidence of a Spot launch or live IAM authorization.
 
 ### Configuration, profiles and migration
@@ -1132,5 +1132,22 @@ per-target errors. Preserve exact root-volume mappings before mutation and repor
 termination requested/unknown/denied/observed separately from root deletion
 deleted/retained/unavailable. Absence alone is not proof of cleanup. Repeated
 teardown is harmless; it never deletes result storage, ledger records or unrelated
-volumes. #33 owns operational confirmation/cleanup tests, and #34 records fresh
-live acceptance and exact-volume cleanup before the parent can close.
+volumes. #34 records fresh live acceptance and exact-volume cleanup before the
+parent can close.
+
+Teardown JSON is one schema-v2 envelope with command/result/exit fields, `status`,
+`selected_count`, `terminated_count`, `cleaned_count`, `instances` and `errors`.
+Each worker retains its instance/root metadata plus termination `status` and
+per-worker errors. `cleaned_count` requires exact observed EC2 termination and
+verified deletion of every captured root; missing mappings never count. Complete
+cleanup returns `teardown_complete`, exit 0. Some cleanups with other failures
+return `teardown_partial`, exit 3; zero complete cleanups return
+`teardown_failed`, exit 1. A successful empty selection is `no_managed_match` and
+does not assert cleanup of a particular resource.
+
+At most four teardown workers run concurrently. The command shares one deadline
+across selection, confirmation and cleanup (20 seconds by default, configurable
+up to five minutes). Individual AWS requests have a 15-second cap, and inventory
+reads have a 128-page bound. Incomplete group/all discovery authorizes no target;
+an incomplete explicit lookup cannot authorize its candidates, while independently
+verified selectors may proceed. Preview/output failures never grant consent.

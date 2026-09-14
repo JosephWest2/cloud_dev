@@ -9,6 +9,7 @@ import (
 )
 
 func emitBatch(r lifecycle.BatchResult, prefix string, jsonMode bool, stdout, stderr io.Writer) int {
+	stdout = completeOutput{stdout}
 	if prefix == "" {
 		prefix = "devbox"
 	}

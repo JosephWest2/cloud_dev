@@ -23,7 +23,9 @@ const help = `Usage: devbox [options] doctor
        devbox [options] up --resume REQUEST_ID
        devbox [options] up --retry-missing REQUEST_ID --after ATTEMPT_ID
        devbox [options] ls [--group GROUP]
-       devbox [options] down NAME_OR_INSTANCE_ID
+       devbox [options] down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
+       devbox [options] down --group GROUP
+       devbox [options] down --all [--yes]
        devbox [options] ssh NAME_OR_INSTANCE_ID
        devbox [options] ssh-config NAME_OR_INSTANCE_ID
        devbox [options] proxy INSTANCE_ID
@@ -62,11 +64,16 @@ Batch launch and recovery:
   workers under one overall deadline (default 5m). Resume never replaces
   interrupted or removed workers. Separate requests may share a group.
 
-Reserved teardown syntax (available after safety integration):
+Scoped teardown:
   down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
   down --group GROUP
   down --all [--yes]
-  Selectors are exclusive. --yes only applies to down --all.
+  Selectors are exclusive. --yes only applies to down --all; its exact scope
+  and candidate IDs are always previewed on stderr. Without --yes, --all
+  requires terminal confirmation. Piped input and EOF do not grant consent.
+  Candidate IDs are frozen before confirmation and revalidated before removal.
+  Independent valid targets can proceed when other selections fail. EC2
+  termination and exact root-volume deletion are reported separately.
 
 Exec options (all local options must precede --):
   --cwd PATH               Remote directory (default: /home/devbox)
@@ -148,6 +155,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	var launchFlags lifecycle.LaunchFlags
 	var launch lifecycle.UpOptions
 	var launchSelection *lifecycle.LaunchSelection
+	var downSelection *lifecycle.DownSelection
 	var group string
 	all, yes := false, false
 	lifecycleOptions := map[string]bool{}
@@ -332,7 +340,6 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	if command == "exec" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0]) || !separator || len(execOptions.Argv) == 0 || execOptions.Argv[0] == "") {
 		return fail("use exec with one managed name or instance ID, then -- COMMAND [ARGS...]")
 	}
-	stagedFeature := false
 	if command == "up" {
 		launchFlags.Group = group
 		selection, err := lifecycle.ResolveLaunchSelection(positional, launchFlags, config.HardMaxCount)
@@ -349,18 +356,16 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		return fail("interactive ssh and proxy reject --json; use ssh-config --json for separate configuration metadata")
 	}
 	if command == "down" {
-		if err := lifecycle.ValidateDownSelection(lifecycle.DownSelection{Targets: positional, Group: group, All: all, Yes: yes}); err != nil {
+		selection := lifecycle.DownSelection{Targets: positional, Group: group, All: all, Yes: yes}
+		if err := lifecycle.ValidateDownSelection(selection); err != nil {
 			return fail(err.Error())
 		}
-		stagedFeature = len(positional) != 1 || group != "" || all
+		downSelection = &selection
 	}
 	if command == "ls" && group != "" {
 		if !lifecycle.ValidGroup(group) {
 			return fail("--group requires a valid friendly label of 1–63 characters")
 		}
-	}
-	if stagedFeature {
-		return emitLifecycle(lifecycle.Result{SchemaVersion: 1, Command: command, OK: false, ExitCode: 2, Code: "feature_unavailable", Message: "plural and group teardown will be available after its safety integration; currently use down with one name or instance ID", Outcome: lifecycle.Outcome{Status: "feature_unavailable", Instances: []lifecycle.Instance{}}}, jsonMode, stdout, stderr)
 	}
 	if command == "version" {
 		if jsonMode {
@@ -424,9 +429,11 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if command != "doctor" {
-		opts := lifecycle.Options{Command: command, UpOptions: launch, Selection: launchSelection, Group: group}
+		opts := lifecycle.Options{Command: command, UpOptions: launch, Selection: launchSelection, Group: group, DownSelection: downSelection}
 		if command == "down" {
-			opts.Target = positional[0]
+			if life.ConfirmDown == nil {
+				life.ConfirmDown = newDownConfirmation(os.Stdin, stderr, downInputIsTerminal)
+			}
 		}
 		return emitLifecycle(lifecycle.Run(ctx, path, overrides, opts, life, stderr), jsonMode, stdout, stderr)
 	}
@@ -453,6 +460,9 @@ func emit(r doctor.Result, jsonMode bool, stdout, stderr io.Writer) int {
 }
 
 func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) int {
+	if r.Teardown != nil {
+		return emitTeardown(*r.Teardown, r.RecoveryPrefix, jsonMode, stdout, stderr)
+	}
 	if r.Batch != nil {
 		return emitBatch(*r.Batch, r.RecoveryPrefix, jsonMode, stdout, stderr)
 	}
