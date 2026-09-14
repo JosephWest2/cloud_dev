@@ -15,7 +15,7 @@ submission on September 13, 2026.
 | #18 | Scoped one-attempt dispatch and integrated runner publication; actual SDK lost-response test and live publication | Complete; [eleven live cases and post-teardown recovery passed](../acceptance/18-exec-dispatch.md), PR #24 |
 | #19 | Observation, exact remote status, timeout/interruption semantics; process tests and live timeout/Ctrl-C | Complete; [nine live cases and post-teardown recovery passed](../acceptance/19-exec-observation.md), PR #25 |
 | #20 | Complete S3 retrieval/exports with cloud-only recovery; binary/checksum, missing/denied/corrupt data and post-down recovery | Complete; [three live cases and post-down CLI exports passed](../acceptance/20-durable-logs.md), PR #26 |
-| #21 | `docs/acceptance/02-exec-logs.md`, requirement/evidence matrix, reproducible full live exercise and independently verified cleanup | In progress; see [#21 plan](21-exec-logs-acceptance.md) |
+| #21 | `docs/acceptance/02-exec-logs.md`, requirement/evidence matrix, reproducible full live exercise and independently verified cleanup | Complete; [six live commands and all post-down byte comparisons passed](../acceptance/02-exec-logs.md), PR #27 |
 
 Each child gets its own reviewable change/PR. A newly assigned reviewer must
 inspect that child's final diff, relevant tests and issue gates; an implementation

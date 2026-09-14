@@ -2,8 +2,10 @@
 
 This is the reproducible acceptance runbook for [#2](https://github.com/JosephWest2/cloud_dev/issues/2)
 and its final slice [#21](https://github.com/JosephWest2/cloud_dev/issues/21).
-The fresh #21 outcome is explicitly pending in the evidence section below;
-earlier passing slices do not establish this final gate.
+On September 14, 2026 UTC, all six live command paths passed, and all twelve
+streams remained byte-identical after exact worker/root cleanup. The evidence
+below distinguishes this final fixture campaign from earlier live slices and
+controlled failure tests. Final independent merge review is recorded separately.
 
 ## Prerequisites and fixed scope
 
@@ -333,7 +335,9 @@ while the workload is running, then a complete result (retrieval exit 0).
 Logs is a snapshot, so repeat by ID with a finite deadline; it does not tail.
 
 The retrieved begin/finish timestamps must enclose Ctrl-C, and remote finish
-must follow local CLI exit. The remote job must exit 0 with two JSON stdout
+must follow local CLI exit. Runner metadata timestamps have whole-second
+precision; compare fractional workload times with the represented one-second
+interval. The remote job must exit 0 with two JSON stdout
 lines and exact stderr `DEVBOX21_DETACHED_FINISHED\n`. The reviewed campaign
 records signal/exit timestamps, establishes a started record, verifies the
 supervised worker owns the controlling PTY foreground group, then writes byte
@@ -496,8 +500,9 @@ EC2 may continue to list terminated instances briefly. An arbitrary volume API f
 evidence. If deletion is still propagating, bounded read-only checks of that
 same ID may continue; incomplete cleanup leaves acceptance open.
 
-Run all four logs modes again for every original ID with fresh state and new
-files. Require the same workload, complete records, original submission/expiry,
+Run text and JSON status, both-file export and each raw selection again for every
+original ID with fresh state and new files. Require the same workload, complete
+records, original submission/expiry,
 full bytes and SHA-256 after teardown, with retrieval exit 0. The independent
 post-down reader performs only STS/S3 reads. Controlled tests establish the
 unavailable-SSM-history property; do not describe actual live history as expired
@@ -574,50 +579,190 @@ go test ./internal/execution -run 'TestRecover(OptionalSSMFailuresAndPublication
 go test ./cmd/devbox -run 'TestSupervisor(PreservesEstablishedCompletionDuringInterrupt|DetachPreservesOneEnvelopeAndRecoveryIDs)$' -v
 ```
 
-## Fresh #21 actual evidence — pending
+## Fresh #21 actual evidence
 
-**This section is deliberately incomplete until the live campaign and fresh
-independent review pass. #21 and parent #2 must remain open while it is pending.**
-Private evidence is reserved at `/tmp/devbox-issue21-live-checks`; publish only
-the selected non-secret identifiers, versions, timestamps, counts and hashes.
-Never commit credentials, signed URLs, raw API/state responses or workload bytes.
+All six commands completed their required paths on **September 14, 2026 UTC**.
+The actual campaign retained one worker and one fixture checkout across five
+original submissions and one guarded continuation. It never replayed an attempted
+command. Private evidence is under `/tmp/devbox-issue21-live-checks`; the final
+allowlisted summary is `evidence/final-aggregate.json`. Credentials, raw API/state
+responses, terminal transcripts and workload bytes remain outside the repository.
 
-Fresh `make check`, `make build` and isolated `make infra-check` have passed
-from the frozen source above. Captured local versions are Go
-`1.27.0-X:nodwarf5` on Linux amd64, OpenTofu `1.12.6`, locked AWS provider
-`6.64.0`, AWS CLI `2.34.32`, OpenSSH `10.5p1`, Session Manager Plugin
-`1.2.835.0` and Git `2.55.0`. The non-secret version record is
-`evidence/tool-versions.json`. These completed offline checks do not establish
-the pending worker or fixture gate.
+Fresh `make check`, `make build` and isolated `make infra-check` all returned 0
+from source `17e2f1804db4b627efd3094a94763b006fa17c57`; logs are under
+`/tmp/devbox-issue21-checks`. The source and CLI hash at the top of this document
+did not change during acceptance. Local versions were Go `1.27.0-X:nodwarf5`
+on Linux amd64, OpenTofu `1.12.6`, locked AWS provider `6.64.0`, AWS CLI
+`2.34.32`, OpenSSH `10.5p1`, Session Manager Plugin `1.2.835.0`, Python
+`3.14.7`, Git `2.55.0` and devbox `0.1.0-dev`. Actual worker versions were
+Ubuntu `24.04`, Git `2.43.0` and Python `3.12.3`.
 
-The final reviewer must fill and verify this one evidence record:
+Fresh export and doctor passed all 14 checks with no initial nonterminated scoped
+worker. The launched worker reached running, SSM online, bootstrap complete and
+readiness ready. Independent inspection passed exact request/scope, template 4,
+AMI, instance profile, VPC/subnet/security group, required IMDSv2, encrypted
+100 GiB gp3 root with deletion on termination, and zero ingress on every group.
+Actual `devbox ssh` returned 0 with both exact fixture markers; the clean detached
+checkout matched `621e4974ca25ce531773def586ba3ed8e736b3fc`.
 
-- Actual UTC campaign date; tested full source and final documentation commit;
-  CLI, campaign, SSH helper/script and cleanup-helper SHA-256; local Go/OpenTofu/
-  provider/AWS CLI/OpenSSH/Plugin/Python/Git/devbox versions and remote Ubuntu/
-  Git/Python versions; final offline check outcomes and private log locations.
-- Fresh export/doctor 14-pass and no initial nonterminated instances; exact launch request,
-  instance and captured original root IDs; launch/template/AMI/role/network/
-  storage inspection; exact fixture revision, real SSH exit and READY/EXIT markers.
-- Six distinct public recovery IDs and SSM IDs mapped to L1–L6, actual local
-  outcomes/exits, durable workloads/publication, each server submission/shared
-  expiry/start/finish UTC timestamp; no replay, uncertain or skipped attempt.
-- For each original stdout/stderr: actual byte length and full SHA-256, before/
-  after download comparisons and private 0600 exports. L4 must additionally
-  match the independent deterministic expected bytes above.
-- L5 acknowledgement/start/actual Ctrl-C/local exit/remote begin/finish times,
-  real pending snapshot times/count, final result, local descendant cleanup;
-  L6 actual timeout/signal/marker evidence; one-envelope JSON and text/logs output
-  separation; total command, logs invocation and independent assertion counts.
-- Exact down exit, exact terminated ID, original root `InvalidVolume.NotFound`,
-  empty scoped nonterminated-instance/volume inventories and final `ls`; six original IDs
-  recovered afterward with unchanged complete status and all stream bytes/hashes,
-  no missing baselines, skipped cases, remote finalizer or redispatch.
-- Any failed attempts or corrected helpers, bounded recovery and affected reruns;
-  fresh non-implementing review of helpers before use and actual evidence,
-  cleanup, report and PR before merge; final #21 PR and parent closure outcome.
+| Lifecycle recovery identifier | Actual value |
+| --- | --- |
+| Launch request | `5f85d90d2143d7b54edb6f0b3015c98e` |
+| Exact worker | `i-0187d2a6a708e198e` |
+| Captured original root | `vol-0e08ebaac53219717` |
 
-The seven paths and all failure gates above must have passing evidence before
-closing the parent, with all six child issues closed. Interactive terminal
-streaming, coding-agent orchestration, repository-specific images, Spot/groups
-and scheduled expiry remain in later issues.
+Fresh non-implementing reviewers approved the helpers before use and the later
+helper-only correction/continuation guard. The frozen helper identities are:
+
+| Helper | SHA-256 |
+| --- | --- |
+| Original campaign `check.py` | `acac684c795b2532468ad4f4a98516657b24acc3a309c9ce7362329d3982e398` |
+| Corrected campaign `check.py` | `f673e93eb3ffb4403b9908b745fa023d93714107bda064303efe68b191af8e7b` |
+| SSH `fixture.py` | `cd123574cc77036f9cace937962f0f17234801ecb6753dbc2fcb8bde0ef6bc97` |
+| `fixture-shell.input` | `37eb761f326f8f67789e30771b3505f949c84973719354113d72235a8d107ae2` |
+| `lifecycle.py` | `729e8af633291d5044f7260bad1b9d8c352be07199c23d7905abe9c3094d551a` |
+| `inspect_worker.py` | `ce3e2d7c64b6c577c07b34df993a9adafee1645158c3f8d9230e4b195483536d` |
+| `verify_cleanup.py` | `864663f2983df412ae9fbde3ce599cca872b399ee847d5b7385155e5ab3c6913` |
+| Guarded `continue_timeout.py` | `ca9ba248a1bbc18880c2048efff3e3203ce1f9553ca8aa4e3902d119959fef43` |
+
+### Actual results and recovery IDs
+
+| Case | Exec outcome / actual local exit | Durable workload | Full publication / logs retrieval |
+| --- | --- | --- | --- |
+| L1 fixture success | Text `remote_exit` / 0 | Exited 0; one passing unittest | Complete / 0 |
+| L2 deliberate assertion | JSON `remote_exit` / 1 | Exited 1; expected `6 != 7` failure | Complete / 0 |
+| L3 literal context | JSON `remote_exit` / 0 | Exited 0; exact 13 args, cwd, nonroot user, environment/EOF/umask | Complete / 0 |
+| L4 large binary | JSON `remote_exit` / 255 | Exited 255; exact 1 MiB stdout and 768 KiB stderr | Complete / 0 |
+| L5 terminal Ctrl-C | JSON `interrupted` / 4 | Continued and exited 0 after local detach | Complete / 0 after seven pending snapshots |
+| L6 two-second execution limit | JSON `execution_timeout` / 4 | Execution timeout, signal 15, no ordinary exit | Complete / 0; exact partial stdout and empty stderr |
+
+Every JSON invocation produced one newline-terminated metadata envelope.
+Connected exec results retained exact workload status; L5 retained its original
+IDs and started observation without inventing an exit. Text exec/logs metadata
+stayed separate from workload bytes. Every completed command passed text/JSON
+status, two-file export, raw stdout and raw stderr checks. Status reported
+`verification=not_downloaded`; downloads reported verified selected bytes,
+private 0600 exports and no temporary leftovers. Every logs process started with
+new empty devbox state, a six-field storage descriptor and the restricted
+`sh`/`aws` PATH, without SSH keys, runtime pins or command receipts.
+
+| Case | Public command ID | SSM command ID |
+| --- | --- | --- |
+| L1 | `dc1-1944c64be27d0049ac2c189a4cab5725` | `86427f72-f174-44f9-bb64-848a9131def6` |
+| L2 | `dc1-810b553e16043c75f95665522f7b73dc` | `cfe843ac-5500-4560-9b61-0a98f56e35b3` |
+| L3 | `dc1-92045e134616e5443ef99ef0bde464ef` | `6ee212bf-53d7-488f-8f16-da5d8a1718a1` |
+| L4 | `dc1-0c3d4bc0d96a54a3876db78254737ff7` | `dbed4a36-1025-4186-bd8e-98e79ec8939b` |
+| L5 | `dc1-8f3cb686d423ac2a13ef8d958c22a9f7` | `f7d9f19d-0229-4b1b-a21c-f491932b3dd9` |
+| L6 | `dc1-bc57e969949c8eb55529ad180cc74803` | `c3d20b7e-8609-4ccb-a5a3-04b388281247` |
+
+These non-secret IDs still require the retained trusted scope and an authorized
+reader. For example, within its retention window:
+
+```sh
+fresh_logs dc1-0c3d4bc0d96a54a3876db78254737ff7 --json
+```
+
+Independent S3 reads established all five records, exact bindings, AES256,
+capture/publication agreement and shared submission-based deadlines. All dates
+below are UTC; started/finished metadata uses whole-second precision.
+
+| Case | Server submission | Started → finished on 2026-09-14 | Shared expiry |
+| --- | --- | --- | --- |
+| L1 | `2026-09-14T00:39:16Z` | `00:39:16Z` → `00:39:16Z` | `2026-10-14T00:39:16Z` |
+| L2 | `2026-09-14T00:39:46Z` | `00:39:46Z` → `00:39:46Z` | `2026-10-14T00:39:46Z` |
+| L3 | `2026-09-14T00:40:15Z` | `00:40:15Z` → `00:40:15Z` | `2026-10-14T00:40:15Z` |
+| L4 | `2026-09-14T00:40:33Z` | `00:40:33Z` → `00:40:33Z` | `2026-10-14T00:40:33Z` |
+| L5 | `2026-09-14T00:40:55Z` | `00:40:55Z` → `00:41:25Z` | `2026-10-14T00:40:55Z` |
+| L6 | `2026-09-14T00:52:12Z` | `00:52:12Z` → `00:52:14Z` | `2026-10-14T00:52:12Z` |
+
+The complete original streams and post-down downloads shared these lengths and
+SHA-256 values. L4 additionally matched the independent expected byte patterns.
+Empty streams were actual zero-byte objects/files, not absent output.
+
+| Case / stream | Bytes | SHA-256 before and after down |
+| --- | ---: | --- |
+| L1 stdout | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| L1 stderr | 155 | `5d0e404c90db5713216f29517decad307fd800c4d1797b39c841b4ed5ff3f21c` |
+| L2 stdout | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| L2 stderr | 326 | `0a94e16f8fb8fc8fa5056b1a84b1fa8cf48f3a316c05f4e5302feb38b9c615f5` |
+| L3 stdout | 443 | `2c8fdbd4de69ceeb53749552569ed0939612c5b21ce1049ce918e399b1201660` |
+| L3 stderr | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+| L4 stdout | 1,048,576 | `e4b90b6607d9958b6f4c811acdd39ef3eb79cc8edd7fb24eacfcf36d455e16a2` |
+| L4 stderr | 786,432 | `aa5ab7a6138cc2697d302082ac548b566589108f3f59daf81c01f1b26a5b036f` |
+| L5 stdout | 91 | `9c2f8dc707b5249d113c0f5014802f102219be21edc72636a7f041b4b86c220c` |
+| L5 stderr | 27 | `a48b6bac95ff086a234d0378f9ac40eaf30995b956abc4afb7eb5ad060d5201d` |
+| L6 stdout | 35 | `3f8997660de3a85adf91b59f69832cbafa581a640ffe35f8152ec7760ac55670` |
+| L6 stderr | 0 | `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855` |
+
+### Detachment, preserved failure and guarded continuation
+
+L5's acknowledgement was observed at `00:40:54.871010Z`; its workload began at
+`00:40:55.139608Z`. Actual controlling-PTY Ctrl-C arrived at
+`00:41:00.832497Z`, **5.692889 seconds after remote start**. The CLI exited at
+`00:41:00.833710Z`, **1.213 ms later**, with local exit 4. The remote workload
+finished at `00:41:25.139737Z`, after **30.000128 seconds** of sleep and
+**24.306027 seconds after local exit**. No remote cancellation occurred and
+all dedicated local session groups stopped without emergency cleanup.
+
+Seven fresh `pending`/1 snapshots finished between `00:41:02.143984Z` and
+`00:41:22.624100Z`, entirely within the remote execution interval. The next
+snapshot completed at `00:41:25.532699Z`, reporting final workload exit 0 and
+complete publication. These are original live pending observations, not
+snapshots reconstructed during later recovery.
+
+The original helper stopped after **539 checks: 538 passed and one failed**, with
+28 logs processes. The failing assertion compared fractional workload finish
+`00:41:25.139737Z` against the runner's whole-second `finished_at=00:41:25Z` as
+if that value had subsecond precision. The command had completed correctly;
+this was a helper-only timestamp assertion error. The original helper,
+checks, attempts, snapshots and byte evidence remain unchanged.
+
+A fresh reviewer approved comparing against the represented one-second interval
+and reusing the saved original pending observations. Corrected read-only recovery
+of L1–L5 passed **471 checks with 25 logs processes**, established the fifth
+complete byte baseline and explicitly skipped the never-attempted L6. A separately
+reviewed guard proved no L6 attempt or recovery ID existed, bound the unchanged
+CLI/manifest/worker/fixture, and submitted only L6 into `run-02`. That command
+passed **105 checks with five logs processes**. There are exactly six distinct
+public IDs and six distinct SSM IDs across the two runs; none was redispatched.
+Product code, runtime artifact and infrastructure did not change.
+
+### Exact cleanup and post-down verification
+
+Down returned 0 for `i-0187d2a6a708e198e`. Independent operator reads confirmed
+that exact instance terminated and original root `vol-0e08ebaac53219717`
+returned `InvalidVolume.NotFound`. Cleanup completed at
+`2026-09-14T00:54:35.994257Z`, with **zero scoped nonterminated instances and
+zero scoped volumes**. Final `devbox ls` returned 0 and showed two terminated
+entries, including the exact campaign worker; it contained no active worker.
+
+Both post-down recoveries required their pre-down complete baselines. Original
+`run-01` recovered its five submitted IDs with **474 passing checks and 25 new
+logs processes**, explicitly skipping its original unattempted L6 slot.
+`run-02` recovered L6 with **95 passing checks and five new logs processes**,
+with no skip. Together, **all six submitted commands passed 569 post-down
+assertions through 30 fresh logs processes**. No submitted case was omitted.
+Across original execution, recovery, continuation and post-down phases, 88 fresh
+logs processes ran; seven original pending snapshots correctly returned 1.
+
+All **twelve streams, totaling 1,836,085 bytes**, were independently compared
+byte-for-byte before and after teardown and had unchanged SHA-256, workload,
+publication, bindings and deadlines. Production logs calls used retained storage
+descriptors and fresh empty state; the independent reader used only STS/S3.
+No worker, EC2/SSM observation, local finalizer, cancellation or redispatch was
+needed. This proves immediate retained recovery; controlled tests above prove
+unavailable-history behavior, and thirty days of physical deletion were not
+observed. The durable foundation and valid results remain intentionally retained.
+
+Fresh non-implementing review independently approved the actual six-command
+evidence, original-versus-after byte comparisons, deadlines, no-replay guards
+and raw cleanup responses. It also verified every complete baseline preceded
+AWS shutdown at `00:53:03Z`, and every post-down logs process followed completed
+cleanup at `00:54:35.994257Z`. Fresh final review also approved this report's
+identifiers, timestamps, hashes, versions, counts and cleanup conclusions.
+[The #21 plan](../plans/21-exec-logs-acceptance.md) and
+[PR #27](https://github.com/JosephWest2/cloud_dev/pull/27) record the final
+commit verification and merge outcome. Parent #2 closes after confirming all
+six child issues are closed and its acceptance gates have passed.
+Interactive terminal streaming, coding-agent orchestration, repository-specific
+images, Spot/groups and scheduled expiry remain in later issues.
