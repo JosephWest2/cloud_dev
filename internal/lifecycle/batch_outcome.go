@@ -34,7 +34,7 @@ func unverifiedRecoveryEvidence(id string, receipts ...BatchReceipt) LaunchObser
 			}
 			out.Receipt.Attempts[n].InstanceIDs = unionInstanceIDs(out.Receipt.Attempts[n].InstanceIDs, a.InstanceIDs)
 			for _, workerID := range out.Receipt.Attempts[n].InstanceIDs {
-				workers[workerID] = WorkerOutcome{Instance: Instance{ID: workerID, RequestID: id, State: "unknown", SSM: "not_observed", Bootstrap: "not_observed", Readiness: "not_observed", RootDeletion: "unavailable", Volumes: []Volume{}}, AttemptID: a.AttemptID, Status: "not_observed"}
+				workers[workerID] = WorkerOutcome{Instance: Instance{ID: workerID, RequestID: id, State: "unknown", SSM: "not_observed", Bootstrap: "not_observed", Readiness: "not_observed", RootDeletion: "unavailable", Volumes: []Volume{}, AttemptID: a.AttemptID}, Status: "not_observed"}
 			}
 		}
 	}

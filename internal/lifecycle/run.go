@@ -12,6 +12,8 @@ import (
 
 type Options struct {
 	Command, Target string
+	Selection       *LaunchSelection
+	Group           string
 	UpOptions
 }
 type Dependencies struct {
@@ -19,17 +21,21 @@ type Dependencies struct {
 	Store *Store
 }
 type Result struct {
-	RecoveryPrefix string `json:"-"`
-	SchemaVersion  int    `json:"schema_version"`
-	Command        string `json:"command"`
-	OK             bool   `json:"ok"`
-	ExitCode       int    `json:"exit_code"`
-	Code           string `json:"code"`
-	Message        string `json:"message"`
+	Batch          *BatchResult `json:"-"`
+	RecoveryPrefix string       `json:"-"`
+	SchemaVersion  int          `json:"schema_version"`
+	Command        string       `json:"command"`
+	OK             bool         `json:"ok"`
+	ExitCode       int          `json:"exit_code"`
+	Code           string       `json:"code"`
+	Message        string       `json:"message"`
 	Outcome
 }
 
 func Run(ctx context.Context, path string, overrides config.Overrides, o Options, deps Dependencies, diagnostics io.Writer) Result {
+	if o.Command == "up" && o.Selection != nil {
+		return runSelectedUp(ctx, path, overrides, o, deps, diagnostics)
+	}
 	r := Result{SchemaVersion: 1, Command: o.Command, OK: true, Outcome: Outcome{Instances: []Instance{}}}
 	fail := func(err error, exit int) Result {
 		r.OK = false
@@ -112,7 +118,12 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 	}
 	switch o.Command {
 	case "ls":
-		r.Instances, err = service.List(ctx)
+		r.SchemaVersion = 2
+		if o.Group == "" {
+			r.Instances, err = service.List(ctx)
+		} else {
+			r.Instances, err = service.ListGroup(ctx, o.Group)
+		}
 		r.Status = "inventory"
 		if err == nil && len(r.Instances) > 0 {
 			m, err = config.LoadManifest(c.Manifest, c, config.Profile{Image: "agent"})

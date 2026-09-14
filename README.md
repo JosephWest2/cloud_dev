@@ -7,20 +7,22 @@ transfer use the generated OpenSSH configuration. No inbound ports are opened.
 
 Start with installation and identity below, then follow the
 [foundation setup guide](docs/setup.md) for state bootstrap/migration, a dedicated
-SSH key, provisioning and manifest-v4 export. The
+SSH key, provisioning and manifest-v5 export. The
 [MVP 1 acceptance runbook and results](docs/acceptance/01-lifecycle.md) connect the
 complete lifecycle workflow, failure checks and cleanup evidence. The
 [MVP 2 acceptance runbook](docs/acceptance/02-exec-logs.md) covers remote checks,
 literal arguments, complete output, detachment and recovery after teardown.
-Existing deployments
-need the runner/bootstrap update and a real manifest-v4 export before new launches
-or access. Scoped inventory and teardown remain available for older workers.
+Existing deployments need the [multi-AZ foundation upgrade](docs/setup.md#upgrade-to-the-multi-az-spot-foundation-29)
+and a real manifest-v5 export for batch launches. Scoped inventory and teardown
+remain available for older workers; legacy single-worker receipt recovery remains
+supported. Fresh live Spot acceptance and cleanup are tracked in issue #34.
 
 The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
-Ubuntu 24.04 LTS x86-64, one public subnet and public IPv4, outbound TCP 80/443,
+Ubuntu 24.04 LTS x86-64, approved public subnets across selected AZs with public IPv4, outbound TCP 80/443,
 and zero security-group ingress. AMI and launch-template versions are explicitly
-pinned during setup. Acceptance uses On-Demand; the bundled profile's intended
-Spot default is preserved, and Spot launches remain unsupported.
+pinned during setup. The bundled profile defaults to Spot through an instant
+Fleet. Explicit `--on-demand` selects On-Demand; there is no automatic fallback
+or replacement of interrupted workers.
 
 ## Install from a checkout
 
@@ -197,29 +199,45 @@ Spot behavior and structured-output rules, and
 [foundation validation evidence](docs/acceptance/07-foundation.md) and
 [IAM boundaries](docs/iam.md).
 
-## Launch, rediscover and remove a devbox
+## Launch, rediscover and use a group
 
 ```sh
-devbox up agent --on-demand --name smoke --aws-profile devbox-operator --timeout 5m --json
-devbox ls --aws-profile devbox-operator --json
-devbox ssh smoke --aws-profile devbox-operator
+devbox up agent --count 2 --group smoke-batch --aws-profile devbox-operator --timeout 5m --json > batch.json
+# Inspect batch.json even if up returns a partial result or timeout.
+devbox ls --group smoke-batch --aws-profile devbox-operator --json
+first_worker=$(jq -r '.instances[0].instance_id' batch.json)
+second_worker=$(jq -r '.instances[1].instance_id' batch.json)
+# Use IDs returned by the actual result; a partial batch may have only one.
+devbox ssh "$first_worker" --aws-profile devbox-operator
 # In the remote shell: uname -a; whoami; exit 0
-devbox down smoke --aws-profile devbox-operator --timeout 5m --json
-devbox down smoke --aws-profile devbox-operator --json
+devbox exec "$first_worker" --aws-profile devbox-operator -- uname -a
+devbox exec "$second_worker" --aws-profile devbox-operator -- /usr/bin/printf 'second worker\n'
+devbox down "$first_worker" --aws-profile devbox-operator --timeout 5m --json
+devbox down "$second_worker" --aws-profile devbox-operator --timeout 5m --json
 ```
 
 These examples explicitly select the restricted operator profile, preventing a
 setup `AWS_PROFILE` environment variable from overriding TOML. Substitute your
 operator profile's name if it differs from `devbox-operator`.
-The initial launch path requires explicit On-Demand and selects the first profile
-instance type; Spot and automatic fallback are unsupported. `up` verifies the
-foundation before allocating. Allocation success reports exact image, type,
-market and template pins; full readiness additionally requires EC2 running,
-SSM online and bootstrap complete. `up` waits up to 5m by default.
+`up` verifies the foundation and prints profile, region, market, instance count,
+base/group and eligible type/subnet/AZ choices before allocating. Actual placement
+appears per worker. Set `max_count` in the local TOML (default 10, range 1–100);
+there is no CLI or environment override. Use `--on-demand` explicitly when
+needed; it selects the first profile type across its approved subnets.
 
-Successful JSON `up` has `ok=true`, `exit_code=0`, and an instance with
+Names derive from the base and full instance ID, such as
+`smoke-batch-i-0123456789abcdef0`. Use the exact generated name or ID for `ssh`,
+`ssh-config`, `exec` and individual `down`. Names remain stable after partial
+capacity, retries and peer removal. One group can contain several independent
+launch requests. Group discovery uses AWS tags and does not need local receipts.
+
+Full readiness requires EC2 running, SSM online and bootstrap complete. Up to
+four workers are observed concurrently under one overall deadline, default 5m;
+failed or slow workers retain their IDs and do not cancel healthy peers.
+
+Successful schema-v2 JSON `up` has `ok=true`, `exit_code=0`, and workers with
 `ec2_state=running`, `ssm=online`, `bootstrap=complete`, `readiness=ready` and
-`market=on-demand`. Progress and recovery instructions go to stderr; stdout is
+the actual `market`. Progress and recovery instructions go to stderr; stdout is
 one JSON envelope. Record the request/instance/root-volume IDs before teardown.
 See [the acceptance procedure](docs/acceptance/01-lifecycle.md#launch-shell-and-rediscovery)
 for exact evidence commands and expected fields.
@@ -232,7 +250,7 @@ Ctrl-C interrupts the remote foreground command; terminal resizing is forwarded;
 Exiting immediately after an interrupted command can return 130. Interactive
 `ssh` and `ssm-proxy` reject `--json` before AWS calls.
 
-`devbox ssh-config smoke --aws-profile devbox-operator --json` returns `ssh_config_path` and `ssh_host` for
+`devbox ssh-config "$first_worker" --aws-profile devbox-operator --json` returns `ssh_config_path` and `ssh_host` for
 `ssh -F CONFIG_PATH SSH_HOST`, scp/sftp and remote editors. It does not edit
 `~/.ssh/config`. Follow [transfer/editor examples](docs/acceptance/09-readiness-shell.md#launch-observe-connect-and-transfer).
 Regenerate configuration after moving the CLI/config. A changed host key requires
@@ -265,9 +283,27 @@ devbox up --resume REQUEST_ID --aws-profile devbox-operator --timeout 5m --json
 
 Use the original config/scope. Do not retry an uncertain launch with a fresh `up`.
 Receipts live under `${XDG_STATE_HOME:-$HOME/.local/state}/devbox/requests`.
-After dispatch, resume only reconciles AWS; it never sends another launch. An
-outcome can remain unresolved, including a crash immediately before sending.
-Losing the receipt cannot prevent `ls` or cleanup by `down INSTANCE_ID`.
+Batch resume observes shared S3 records and AWS; it never sends another launch,
+including for a prepared request. An outcome can remain unresolved, including a
+crash immediately before sending. Losing the local receipt cannot prevent
+shared recovery, `ls`, access or cleanup by `down INSTANCE_ID`.
+
+A definitive one-of-two allocation reports `partial_capacity`, exit 3 and a
+retry command for exactly one missing worker. A complete allocation with only
+one ready worker instead reports `readiness_failed`, exit 3. Unknown allocation
+reports `missing_count: null` and exit 1; timeout/interruption returns exit 4.
+Explicit missing-capacity consent is a separate command:
+
+```sh
+devbox up --retry-missing REQUEST_ID --after ATTEMPT_ID --aws-profile devbox-operator --json
+```
+
+Repeating the same retry, even on a second computer, observes its existing
+successor. It never replaces interrupted or removed workers. Missing capacity
+uses historical fulfillment from permanent shared records, and cannot be
+inferred from an empty inventory. The pool and market stay pinned. To change
+them, inspect the old request and deliberately start an independent new request.
+No-capacity results explain these choices without launching automatically.
 After an allocated timeout, inspect with `ls --json`, retry the same receipt or
 SSH by instance ID if readiness permits, and remove the worker with
 `down INSTANCE_ID --timeout 5m --json`, using the original config/profile/region.
@@ -275,7 +311,7 @@ Failed bootstrap blocks SSH; fix the foundation and replace the disposable
 worker after cleanup. If credentials expire during cleanup, refresh the selected
 source profile and retry the exact ID; keep cleanup marked incomplete until
 EC2 termination and root deletion are observed.
-Read the [recovery/output contract](docs/contracts.md#instance-lifecycle-and-request-recovery-8)
+Read the [batch recovery/output contract](docs/contracts.md#spot-batch-contract-28)
 and [parent acceptance record](docs/acceptance/01-lifecycle.md) for failure
 coverage, volume verification, and the final gate status. Historical
 [#8 lifecycle](docs/acceptance/08-lifecycle.md) and
@@ -283,12 +319,12 @@ coverage, volume verification, and the final gate status. Historical
 
 ## Run a noninteractive command
 
-Use a newly bootstrapped worker and the matching manifest v4:
+Use a newly bootstrapped worker and its matching manifest v4 or v5:
 
 ```sh
-devbox exec smoke -- /usr/bin/printf '%s\n' '' 'two words' '$(id)' '--json'
-devbox exec smoke --cwd project --exec-timeout 10m -- sh -c 'make check'
-devbox --json exec smoke --wait-timeout 2m -- /usr/bin/false
+devbox exec "$first_worker" -- /usr/bin/printf '%s\n' '' 'two words' '$(id)' '--json'
+devbox exec "$first_worker" --cwd project --exec-timeout 10m -- sh -c 'make check'
+devbox --json exec "$first_worker" --wait-timeout 2m -- /usr/bin/false
 ```
 
 Everything after the first `--` is passed literally, including remote `--help`,

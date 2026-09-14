@@ -209,12 +209,7 @@ type AttemptOutcome struct {
 
 type WorkerOutcome struct {
 	Instance
-	Group            string `json:"group,omitempty"`
-	BaseName         string `json:"base_name"`
-	AttemptID        string `json:"attempt_id"`
-	SubnetID         string `json:"subnet_id"`
-	AvailabilityZone string `json:"availability_zone"`
-	Status           string `json:"status"`
+	Status string `json:"status"`
 }
 
 type ResourceError struct {

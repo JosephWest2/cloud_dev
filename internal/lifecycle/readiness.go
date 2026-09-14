@@ -103,7 +103,14 @@ func observationError(i *Instance, err error) {
 	}
 }
 
-func (s *Service) observe(ctx context.Context, m config.Manifest, i *Instance) (err error) {
+func (s *Service) observe(ctx context.Context, m config.Manifest, i *Instance) error {
+	return s.observeWithGuard(ctx, m, i, nil)
+}
+
+// Batch callers additionally bind their immutable launch pins at the final
+// scope lookup immediately before a probe is sent. Legacy callers retain their
+// existing exact-target and scope checks without requiring a batch receipt.
+func (s *Service) observeWithGuard(ctx context.Context, m config.Manifest, i *Instance, guard func(Instance) error) (err error) {
 	i.SSM, i.Bootstrap, i.Readiness, i.ObservationCode, i.HostKey = "unknown", "unknown", "unknown", "", ""
 	defer func() {
 		if err != nil {
@@ -148,6 +155,11 @@ func (s *Service) observe(ctx context.Context, m config.Manifest, i *Instance) (
 	fresh, e := s.Resolve(ctx, i.ID)
 	if e != nil {
 		return e
+	}
+	if guard != nil {
+		if e = guard(fresh[0]); e != nil {
+			return e
+		}
 	}
 	if fresh[0].State != "running" {
 		i.State = fresh[0].State

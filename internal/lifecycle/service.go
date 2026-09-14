@@ -27,6 +27,8 @@ type EC2 interface {
 
 type Service struct {
 	API              EC2
+	Fleet            FleetAPI
+	LaunchRecords    S3LaunchAPI
 	SSM              SSM
 	Scope            config.Config
 	VerifyFoundation func(context.Context, config.Manifest, config.Profile) error
@@ -44,7 +46,7 @@ func New(ctx context.Context, c config.Config) (*Service, error) {
 		return nil, err
 	}
 	client := ec2.NewFromConfig(a)
-	return &Service{API: client, SSM: ssm.NewFromConfig(a), Scope: c, VerifyFoundation: func(ctx context.Context, m config.Manifest, p config.Profile) error {
+	return &Service{API: client, Fleet: client, LaunchRecords: s3.NewFromConfig(a), SSM: ssm.NewFromConfig(a), Scope: c, VerifyFoundation: func(ctx context.Context, m config.Manifest, p config.Profile) error {
 		for _, check := range foundation.Verify(ctx, foundation.Clients{EC2: client, IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p) {
 			if check.Err != nil {
 				return failure("foundation_drift", foundation.Message(check.Name))

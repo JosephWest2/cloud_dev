@@ -477,8 +477,10 @@ select an earlier template. Keep an old trusted results-only descriptor for
 completed logs. V5 adds exact subnet/AZ mappings, compatible type pools, AMI root
 minimum/template disk defaults and `launch_ledger`; it preserves runner,
 execution, readiness and result-storage exports. Legacy inventory/cleanup and
-completed logs remain available without batch prerequisites. New v5 launches
-remain disabled until the allocation/recovery integration in #32.
+completed logs remain available without batch prerequisites. With the v5 export,
+`devbox up agent --count 2 --group smoke-batch` uses the integrated allocator and
+permanent shared recovery. Apply and verify the reviewed foundation before
+running it; fresh live acceptance and cleanup remain the #34 gate.
 
 The shared ledger uses the existing private result bucket under the separate
 `launches/v2/ACCOUNT/REGION/DEPLOYMENT/OWNER/` prefix. Its conditional dispatch

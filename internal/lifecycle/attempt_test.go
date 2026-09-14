@@ -282,7 +282,7 @@ func TestAttemptCountsRequireExactVerifiedAttemptIdentities(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			r := receiptFixture(t)
 			a := r.Attempts[0]
-			w := WorkerOutcome{Instance: Instance{ID: a.InstanceIDs[0]}, AttemptID: a.AttemptID, Status: "allocated"}
+			w := WorkerOutcome{Instance: Instance{ID: a.InstanceIDs[0], AttemptID: a.AttemptID}, Status: "allocated"}
 			switch name {
 			case "wrong-id":
 				w.ID = "i-23456789"

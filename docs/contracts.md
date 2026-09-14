@@ -2,9 +2,10 @@
 
 The [Spot batch contract](#spot-batch-contract-28) adds profile v2, deployment
 v5 and receipt v2 while retaining config/result-storage v1 and legacy receipt
-recovery. Issue #28 implements validation and shared types; its new command
-forms are reserved and fail before AWS until allocation/recovery integration.
-The single-worker operations below remain the currently executable lifecycle.
+recovery. Group launch, discovery and shared recovery are integrated in #32.
+The legacy single-worker contracts below continue to apply to v4 launches and
+v1 receipts. Plural/group teardown remains gated until #33; individual teardown
+works with both old names and generated batch names or explicit instance IDs.
 
 ## User configuration and workload profile
 
@@ -31,20 +32,19 @@ document. An optional user profile_file uses the same contract:
 | `image` | Manifest image key, with the same character/length rules as deployment |
 | `disk_gb` | Integer 8–16384; actual image size and volume constraints checked later |
 
-The launch path preserves explicit market selection. Until Spot launches
-are implemented, `devbox up agent` using the default profile must explain that
-Spot is unsupported and show `devbox up agent --on-demand`. It must not launch
-On-Demand implicitly. `--on-demand` is a launch override, not a doctor
-option. No market fallback is implemented here.
+The v5 launch path defaults to the profile's Spot market. On-Demand always
+requires explicit `--on-demand`, including an On-Demand profile. The legacy v4
+path supports only explicit single-worker On-Demand. `--on-demand` is a launch
+override, not a doctor option. There is no automatic market fallback.
 
 ## Deployment manifest
 
-The foundation exports a non-secret schema-v4 JSON object using
+The current foundation exports a non-secret schema-v5 JSON object using
 `tofu output -json deployment_manifest`. Schemas 1–3 are deliberately rejected:
 apply the runner/storage foundation, re-export and replace old workers for new
 execution support. Unknown fields and trailing JSON are
-rejected. User config and existing result envelopes stay at version 1. Version 5
-is also accepted; its additional launch prerequisites are specified below.
+rejected. User config and command-result storage stay at version 1. Legacy
+manifest v4 remains accepted; the v5 additions for batch launch are specified below.
 
 | Manifest field | Contract |
 | --- | --- |
@@ -839,8 +839,8 @@ the original template, document, instance or SSH identity still exists.
 This section is normative for #28–#34. #28 provides pure validation, parser
 coverage and shared Go types; #29 verifies/provisions the foundation, #30 builds
 one immutable allocation attempt, #31 implements shared recovery, #32 enables
-launch/inventory/access, and #33 enables plural teardown. New operational forms
-currently return `feature_unavailable` with exit 2 before AWS. No successful
+launch/inventory/access, and #33 enables plural teardown. Only plural/group
+teardown currently returns `feature_unavailable` with exit 2 before AWS. No successful
 parser or plan test is evidence of a Spot launch or live IAM authorization.
 
 ### Configuration, profiles and migration
@@ -874,8 +874,8 @@ Profile v1 still loads, normalizing architecture/disk defaults to the supported
 values. V2-only TOML fields in v1 fail, including explicit empty/false values.
 Upgrade such a profile's version before adding those fields.
 Placement restrictions also require manifest v5; the legacy single-subnet path
-rejects them rather than ignoring them. New launches with v5 remain gated until
-the batch allocator and recovery are integrated.
+rejects them rather than ignoring them. New v5 launches use the shared batch
+allocator and recovery service; the legacy allocator cannot bypass that path.
 
 Manifest v5 retains all v4 execution, results, IAM, image and network fields and
 adds the following. V4 remains accepted for the existing single-worker path,
@@ -1105,8 +1105,17 @@ missing `0`, two generated names and exit 0. A definitive one-of-two result has
 missing worker. A lost response with one observed ID has requested `2`, known
 fulfilled `1`, missing `null`, `allocation_unknown` and a reconcile-only command.
 An interrupted worker remains historically fulfilled, so its absence does not
-increase missing count or authorize replacement. #32 observes every worker with
-bounded concurrency within one overall readiness deadline.
+increase missing count or authorize replacement. #32 observes at most four
+verified workers concurrently under one overall readiness deadline of at most
+five minutes, including document verification and queue time. A shorter caller
+deadline wins. Failed workers do not cancel peers; unverified identities are not
+probed. Batch pins are rechecked on the final exact-ID read before each probe.
+Advisory progress may be dropped under output backpressure so it cannot delay
+queued workers; the final result retains every known worker and root-volume ID.
+Inventory JSON uses schema 2 with group/base/request/attempt/subnet/AZ fields,
+including legacy workers with empty batch metadata. Text inventory includes the
+same identity fields. Missing local launch profiles or receipts do not prevent
+cloud group discovery, access or teardown.
 
 `down` accepts one selector: explicit names/IDs, one group, or all scoped workers.
 `--yes` applies only to `--all`. Resolve and freeze candidate IDs before its
