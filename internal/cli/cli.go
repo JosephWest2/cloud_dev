@@ -19,9 +19,10 @@ import (
 )
 
 const help = `Usage: devbox [options] doctor
-       devbox [options] up agent --on-demand --name NAME
+       devbox [options] up agent [--count N] [--group GROUP] [--name BASE] [--on-demand]
        devbox [options] up --resume REQUEST_ID
-       devbox [options] ls
+       devbox [options] up --retry-missing REQUEST_ID --after ATTEMPT_ID
+       devbox [options] ls [--group GROUP]
        devbox [options] down NAME_OR_INSTANCE_ID
        devbox [options] ssh NAME_OR_INSTANCE_ID
        devbox [options] ssh-config NAME_OR_INSTANCE_ID
@@ -36,19 +37,18 @@ Options may appear before or after the command:
   --aws-profile NAME    AWS profile (overrides AWS_PROFILE and user TOML)
   --region REGION       Explicit region (overrides user TOML)
   --timeout DURATION    Setup deadline (up/access/exec: 5m; others: 20s; max: 5m)
-  --name NAME           Friendly name for a new launch
-  --on-demand           Explicitly select supported On-Demand purchasing
-  --resume REQUEST_ID   Reconcile or resume a durable launch request
+  --name BASE           Base for stable names ending in each instance ID
+  --count N             Instance count within configured max_count (default 10)
+  --group GROUP         Launch group or exact inventory filter
+  --on-demand           Explicitly select On-Demand; no automatic fallback
+  --resume REQUEST_ID   Observe a batch request without allocating
   --json                One versioned JSON result on stdout
   --help, -h            Show this help
 
-Reserved batch contract (validated syntax; operations are not available yet):
+Batch launch and recovery:
   up agent [--count N] [--group GROUP] [--name BASE] [--on-demand]
   up --retry-missing REQUEST_ID --after ATTEMPT_ID
   ls [--group GROUP]
-  down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
-  down --group GROUP
-  down --all [--yes]
   Count means instances; default 1, configured maximum default 10, range 1–100.
   Name defaults to the group, otherwise agent. Name/group labels are 1–63
   letters, digits, underscores or hyphens, starting with a letter or digit;
@@ -57,8 +57,16 @@ Reserved batch contract (validated syntax; operations are not available yet):
   Recovery cannot combine with launch parameters. --resume only reconciles
   batch receipts; --retry-missing explicitly requests proven missing capacity
   after the named attempt. These are separate from an SDK retry of one input.
-  Down selectors are exclusive. --yes only applies to down --all; its preview
-  is always required, and noninteractive use without --yes must decline.
+  Launch preview lists eligible choices on stderr before allocation; each
+  result reports actual placements. Readiness uses up to four concurrent
+  workers under one overall deadline (default 5m). Resume never replaces
+  interrupted or removed workers. Separate requests may share a group.
+
+Reserved teardown syntax (available after safety integration):
+  down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
+  down --group GROUP
+  down --all [--yes]
+  Selectors are exclusive. --yes only applies to down --all.
 
 Exec options (all local options must precede --):
   --cwd PATH               Remote directory (default: /home/devbox)
@@ -74,8 +82,9 @@ Logs options:
   Default logs prints status; its exit code describes retrieval, not workload exit.
 
 doctor checks local setup and AWS identity without provisioning resources.
-Available up launches one named On-Demand instance; Spot/batch operations are
-reserved until integration. Existing ls/down use AWS inventory.
+up uses pinned instant Spot Fleet allocation with the version-5 foundation.
+Version-4 explicit single-worker On-Demand and legacy receipt recovery remain
+available. ls, individual access and down use AWS inventory without receipts.
 up waits for EC2 + SSM + bootstrap readiness. ssh uses real SSH over SSM.
 ssh-config supports editors/scp/sftp; proxy is its transport helper.
 ssh/proxy reject --json. Failed/finished sessions retain workers: run down.
@@ -138,6 +147,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	var positional []string
 	var launchFlags lifecycle.LaunchFlags
 	var launch lifecycle.UpOptions
+	var launchSelection *lifecycle.LaunchSelection
 	var group string
 	all, yes := false, false
 	lifecycleOptions := map[string]bool{}
@@ -171,7 +181,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 			continue
 		}
 		if a == "--spot" {
-			return fail("Spot is unsupported; use up agent --on-demand --name NAME")
+			return fail("Spot is the default market; omit --spot, or explicitly select --on-demand")
 		}
 		if a == "--json" {
 			continue
@@ -330,7 +340,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 			return fail(err.Error())
 		}
 		launch = lifecycle.UpOptions{Name: selection.Name, Resume: selection.Resume, OnDemand: selection.OnDemand}
-		stagedFeature = selection.RetryMissing != "" || selection.Resume == "" && (launchFlags.Count != "" || group != "" || !selection.OnDemand || launchFlags.Name == "")
+		launchSelection = &selection
 	}
 	if isAccess && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0])) {
 		return fail("use ssh/ssh-config/proxy with one friendly name or instance ID")
@@ -348,10 +358,9 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		if !lifecycle.ValidGroup(group) {
 			return fail("--group requires a valid friendly label of 1–63 characters")
 		}
-		stagedFeature = true
 	}
 	if stagedFeature {
-		return emitLifecycle(lifecycle.Result{SchemaVersion: 1, Command: command, OK: false, ExitCode: 2, Code: "feature_unavailable", Message: "this Spot/batch/group/retry selection is reserved until lifecycle integration; currently use up agent --on-demand --name NAME, up --resume REQUEST_ID, ls, or down with one target", Outcome: lifecycle.Outcome{Status: "feature_unavailable", Instances: []lifecycle.Instance{}}}, jsonMode, stdout, stderr)
+		return emitLifecycle(lifecycle.Result{SchemaVersion: 1, Command: command, OK: false, ExitCode: 2, Code: "feature_unavailable", Message: "plural and group teardown will be available after its safety integration; currently use down with one name or instance ID", Outcome: lifecycle.Outcome{Status: "feature_unavailable", Instances: []lifecycle.Instance{}}}, jsonMode, stdout, stderr)
 	}
 	if command == "version" {
 		if jsonMode {
@@ -415,7 +424,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if command != "doctor" {
-		opts := lifecycle.Options{Command: command, UpOptions: launch}
+		opts := lifecycle.Options{Command: command, UpOptions: launch, Selection: launchSelection, Group: group}
 		if command == "down" {
 			opts.Target = positional[0]
 		}
@@ -444,6 +453,9 @@ func emit(r doctor.Result, jsonMode bool, stdout, stderr io.Writer) int {
 }
 
 func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) int {
+	if r.Batch != nil {
+		return emitBatch(*r.Batch, r.RecoveryPrefix, jsonMode, stdout, stderr)
+	}
 	if jsonMode {
 		if err := json.NewEncoder(stdout).Encode(r); err != nil {
 			fmt.Fprintln(stderr, "cannot write command result")
@@ -459,7 +471,7 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 			}
 		}
 		for _, i := range r.Instances {
-			if _, err := fmt.Fprintf(stdout, "%s name=%q request=%q image=%s type=%s market=%s template=%s/%s ec2=%s ssm=%s bootstrap=%s readiness=%s root_deletion=%s\n", i.ID, i.Name, i.RequestID, i.Image, i.Type, i.Market, i.TemplateID, i.TemplateVersion, i.State, i.SSM, i.Bootstrap, i.Readiness, i.RootDeletion); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%s name=%q base=%q group=%q request=%q attempt=%s image=%s type=%s subnet=%s az=%s market=%s template=%s/%s ec2=%s ssm=%s bootstrap=%s readiness=%s root_deletion=%s\n", i.ID, i.Name, i.BaseName, i.Group, i.RequestID, i.AttemptID, i.Image, i.Type, i.SubnetID, i.AvailabilityZone, i.Market, i.TemplateID, i.TemplateVersion, i.State, i.SSM, i.Bootstrap, i.Readiness, i.RootDeletion); err != nil {
 				return doctor.ExitPrerequisite
 			}
 			if i.ProbeCommandID != "" || i.ObservationCode != "" {

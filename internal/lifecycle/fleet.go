@@ -260,8 +260,8 @@ func fleetWorker(plan LaunchPlan, attempt AttemptReceipt, id string, choice conf
 	return WorkerOutcome{
 		Instance: Instance{ID: id, Name: name, RequestID: plan.RequestID, Profile: plan.Profile, CreatedAt: plan.CreatedAt,
 			Image: plan.Image.AMIID, Type: choice.InstanceType, Market: plan.Market, TemplateID: plan.Image.LaunchTemplateID, TemplateVersion: plan.Image.LaunchTemplateVersion,
-			State: "unknown", SSM: "not_observed", Bootstrap: "not_observed", Readiness: "not_observed", RootDeletion: "unavailable", Volumes: []Volume{}},
-		Group: plan.Group, BaseName: plan.BaseName, AttemptID: attempt.AttemptID, SubnetID: choice.SubnetID, AvailabilityZone: choice.AvailabilityZone, Status: "not_observed",
+			State: "unknown", SSM: "not_observed", Bootstrap: "not_observed", Readiness: "not_observed", RootDeletion: "unavailable", Volumes: []Volume{},
+			Group: plan.Group, BaseName: plan.BaseName, AttemptID: attempt.AttemptID, SubnetID: choice.SubnetID, AvailabilityZone: choice.AvailabilityZone}, Status: "not_observed",
 	}
 }
 

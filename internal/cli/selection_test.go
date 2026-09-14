@@ -17,17 +17,7 @@ import (
 )
 
 func TestReservedLifecycleSyntaxDoesNotReachAWS(t *testing.T) {
-	request, attempt := strings.Repeat("a", 32), strings.Repeat("b", 32)
 	for _, args := range [][]string{
-		{"up", "agent", "--count", "2", "--group", "smoke-batch"},
-		{"--count=2", "up", "agent", "--group=smoke-batch", "--name=worker"},
-		{"up", "agent"},
-		{"up", "agent", "--on-demand"},
-		{"up", "agent", "--name", "worker"},
-		{"up", "agent", "--on-demand", "--name", "worker", "--count", "1"},
-		{"up", "agent", "--count", "100", "--group", "smoke-batch"},
-		{"up", "--retry-missing", request, "--after", attempt},
-		{"ls", "--group", "smoke-batch"},
 		{"down", "worker1", "i-12345678"},
 		{"down", "--group", "smoke-batch"},
 		{"down", "--all"},
@@ -141,12 +131,12 @@ func TestLegacyLaunchAndResumeStillDispatch(t *testing.T) {
 	}
 }
 
-func TestHelpMarksBatchSyntaxReserved(t *testing.T) {
+func TestHelpExplainsBatchLaunchAndRecovery(t *testing.T) {
 	var out, diag bytes.Buffer
 	if code := Run(context.Background(), []string{"--help"}, &out, &diag, doctor.Dependencies{}); code != 0 {
 		t.Fatalf("help failed: %d", code)
 	}
-	for _, expected := range []string{"Reserved batch contract", "operations are not available yet", "up agent [--count N] [--group GROUP] [--name BASE]", "up --retry-missing REQUEST_ID --after ATTEMPT_ID", "down --all [--yes]", "configured maximum default 10"} {
+	for _, expected := range []string{"Batch launch and recovery", "Reserved teardown syntax", "up agent [--count N] [--group GROUP] [--name BASE]", "up --retry-missing REQUEST_ID --after ATTEMPT_ID", "down --all [--yes]", "configured maximum default 10", "one overall deadline", "without allocating"} {
 		if !strings.Contains(out.String(), expected) {
 			t.Fatalf("help omits %q", expected)
 		}
