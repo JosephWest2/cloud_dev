@@ -51,15 +51,16 @@ def main():
                 "ec2:LaunchTemplate": template, "ec2:Subnet": subnet,
                 "ec2:MetadataHttpTokens": "required", "ec2:InstanceMarketType": "spot",
                 "ec2:Encrypted": True, "ec2:VolumeType": "gp3", "ec2:AssociatePublicIpAddress": True}
-    # IAM may report context referenced by unrelated statements on a denial.
-    # Supply those benign values so a negative case cannot pass merely because
-    # its simulator request omitted an unrelated condition key.
-    baseline = {**contexts, "ec2:CreateAction": "CreateFleet", "iam:PassedToService": "ec2.amazonaws.com",
-                "ssm:SessionDocumentAccessCheck": True, "s3:prefix": manifest["results"]["prefix"],
-                "aws:TagKeys": list(tags)}
-    for key in ["ManagedBy", "Owner", "Deployment"]:
-        baseline["ec2:ResourceTag/" + key] = tags[key]
-        baseline["ssm:resourceTag/" + key] = tags[key]
+    # IAM can report keys referenced by unrelated statements on a denial. Do
+    # not fill those keys with a global launch context: that concealed EC2's
+    # preliminary CreateFleet checks, which lack launch tags and properties.
+    known_context_keys = set(contexts) | {
+        "ec2:CreateAction", "iam:PassedToService", "ssm:SessionDocumentAccessCheck",
+        "s3:prefix", "aws:TagKeys",
+    }
+    known_context_keys.update("aws:RequestTag/" + key for key in tags)
+    for prefix in ["ec2:ResourceTag/", "ssm:resourceTag/"]:
+        known_context_keys.update(prefix + key for key in ["ManagedBy", "Owner", "Deployment"])
     cases = []
 
     def launch_case(name, allowed, api="CreateFleet", mutate=None):
@@ -70,13 +71,22 @@ def main():
         ctx.update({"aws:RequestTag/" + key: value for key, value in request_tags.items()})
         ctx["aws:TagKeys"] = list(request_tags)
         dependencies = [f"arn:aws:ec2:{region}::image/{image['ami_id']}", requested_template, requested_subnet]
-        if api == "RunInstances":
-            dependencies.append(f"{ec2}:security-group/{manifest['security_group_id']}")
-        operations = [("ec2:" + api, [instance, volume] + dependencies, ctx)]
+        operations = []
         if api == "CreateFleet":
-            operations.append(("ec2:CreateFleet", [fleet], ctx))
-        else:
-            operations.append(("ec2:RunInstances", [f"{ec2}:network-interface/fixture"], ctx))
+            # The live instant-Fleet dry run authorizes volume/* before it has
+            # template properties or tags. Model all preliminary dependencies
+            # conservatively with region only; the fleet itself has its tags.
+            operations.append(("ec2:CreateFleet", [instance, volume] + dependencies,
+                               {"aws:RequestedRegion": region}))
+            fleet_context = {key: value for key, value in ctx.items()
+                             if key == "aws:RequestedRegion" or key == "aws:TagKeys" or key.startswith("aws:RequestTag/")}
+            operations.append(("ec2:CreateFleet", [fleet], fleet_context))
+        # AWS checks template-contained resources through RunInstances for
+        # Fleet too. Every check must pass, including the actual NIC and volume
+        # constraints; a permissive preliminary check alone cannot launch.
+        dependencies.extend([f"{ec2}:security-group/{manifest['security_group_id']}",
+                             f"{ec2}:network-interface/fixture"])
+        operations.append(("ec2:RunInstances", [instance, volume] + dependencies, ctx))
         tagged = [instance, volume] + ([fleet] if api == "CreateFleet" else [])
         operations.append(("ec2:CreateTags", tagged, {**ctx, "ec2:CreateAction": api}))
         cases.append((name, allowed, operations))
@@ -98,7 +108,11 @@ def main():
     launch_case("reject foreign subnet", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:Subnet": f"{ec2}:subnet/foreign"}) or lt, f"{ec2}:subnet/foreign"))
     launch_case("reject foreign template", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:LaunchTemplate": f"{ec2}:launch-template/foreign"}) or f"{ec2}:launch-template/foreign", sn))
     launch_case("reject unencrypted volume", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:Encrypted": False}) or lt, sn))
+    launch_case("reject non-gp3 volume", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:VolumeType": "gp2"}) or lt, sn))
     launch_case("reject foreign instance profile", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:InstanceProfile": f"arn:aws:iam::{account}:instance-profile/foreign"}) or lt, sn))
+    launch_case("reject missing template during Fleet worker launch", False, mutate=lambda c, t, lt, sn: (c.pop("ec2:LaunchTemplate") and lt, sn))
+    launch_case("reject IMDSv1 Fleet worker launch", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:MetadataHttpTokens": "optional"}) or lt, sn))
+    launch_case("reject private NIC Fleet worker launch", False, mutate=lambda c, t, lt, sn: (c.update({"ec2:AssociatePublicIpAddress": False}) or lt, sn))
     launch_case("reject IMDSv1 RunInstances", False, api="RunInstances", mutate=lambda c, t, lt, sn: (c.update({"ec2:MetadataHttpTokens": "optional"}) or lt, sn))
     launch_case("reject private NIC RunInstances", False, api="RunInstances", mutate=lambda c, t, lt, sn: (c.update({"ec2:AssociatePublicIpAddress": False}) or lt, sn))
     owned = {"aws:RequestedRegion": region, **{"ec2:ResourceTag/" + k: tags[k] for k in ["ManagedBy", "Owner", "Deployment"]}}
@@ -119,11 +133,8 @@ def main():
             decisions = []
             rejected = []
             for action, resources, context in operations:
-                complete_context = {**baseline, **context}
-                if action not in ["ec2:CreateFleet", "ec2:RunInstances", "ec2:CreateTags"]:
-                    complete_context.update({"aws:RequestTag/" + key: value for key, value in tags.items()})
                 entries = []
-                for key, value in complete_context.items():
+                for key, value in context.items():
                     value_type = "boolean" if isinstance(value, bool) else "stringList" if isinstance(value, list) else "string"
                     entries.append({"ContextKeyName": key, "ContextKeyType": value_type,
                                     "ContextKeyValues": value if isinstance(value, list) else [str(value).lower() if isinstance(value, bool) else value]})
@@ -140,7 +151,7 @@ def main():
                 missing = set(evaluations[0].get("MissingContextValues", []))
                 for resource in per_resource:
                     missing.update(resource.get("MissingContextValues", []))
-                intentionally_absent = {"aws:RequestTag/" + key for key in tags if "aws:RequestTag/" + key not in context}
+                intentionally_absent = known_context_keys - set(context)
                 if missing - intentionally_absent or per_resource and len(per_resource) != len(resources):
                     raise RuntimeError("incomplete resource simulation for " + name + ": " + json.dumps(evaluations))
                 decisions.append(evaluations[0]["EvalDecision"] == "allowed")

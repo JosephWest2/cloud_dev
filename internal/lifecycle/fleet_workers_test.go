@@ -298,6 +298,59 @@ func TestVerifyFleetWorkersWaitsForStartupObservations(t *testing.T) {
 	}
 }
 
+func TestVerifyFleetWorkersDistinguishesPendingRootAbsenceFromContradiction(t *testing.T) {
+	for _, mode := range []string{"absent", "absent-fields", "retained-known-root", "wrong-root-name", "wrong-root-type", "running-absent", "wrong-mapping-device", "extra-mapping", "missing-ebs", "wrong-size"} {
+		t.Run(mode, func(t *testing.T) {
+			plan, attempt, known, api := fleetWorkersFixture(t, true)
+			attempt.InstanceIDs, known = attempt.InstanceIDs[:1], known[:1]
+			api.instances[0].out.Reservations[0].Instances = api.instances[0].out.Reservations[0].Instances[:1]
+			api.volumes[0].out.Volumes = api.volumes[0].out.Volumes[:1]
+			i := &api.instances[0].out.Reservations[0].Instances[0]
+			i.State.Name = types.InstanceStateNamePending
+			wantPending := mode == "absent" || mode == "absent-fields" || mode == "retained-known-root"
+			switch mode {
+			case "absent", "absent-fields", "retained-known-root", "wrong-root-name", "wrong-root-type", "running-absent":
+				if mode == "retained-known-root" {
+					known[0].Volumes = record(*i).Volumes
+				}
+				i.BlockDeviceMappings = nil
+				if mode == "absent-fields" {
+					i.RootDeviceName, i.RootDeviceType = nil, ""
+				} else if mode == "wrong-root-name" {
+					i.RootDeviceName = aws.String("/dev/sdb")
+				} else if mode == "wrong-root-type" {
+					i.RootDeviceType = types.DeviceTypeInstanceStore
+				} else if mode == "running-absent" {
+					i.State.Name = types.InstanceStateNameRunning
+				}
+			case "wrong-mapping-device":
+				i.BlockDeviceMappings[0].DeviceName = aws.String("/dev/sdb")
+			case "extra-mapping":
+				i.BlockDeviceMappings = append(i.BlockDeviceMappings, i.BlockDeviceMappings[0])
+			case "missing-ebs":
+				i.BlockDeviceMappings[0].Ebs = nil
+			case "wrong-size":
+				api.volumes[0].out.Volumes[0].Size = aws.Int32(int32(plan.RootDisk.SizeGB + 1))
+			}
+			workers, err := VerifyFleetWorkers(context.Background(), api, plan, attempt, known)
+			wantCode, wantStatus := "launch_identity_mismatch", "identity_mismatch"
+			if wantPending {
+				wantCode, wantStatus = "worker_observation_unavailable", "not_observed"
+			}
+			var f *Failure
+			if !errors.As(err, &f) || f.Code != wantCode || len(workers) != 1 || workers[0].Status != wantStatus {
+				t.Fatalf("absent and contradictory startup roots confused: workers=%+v err=%v", workers, err)
+			}
+			if len(i.BlockDeviceMappings) == 0 && len(api.volumeInputs) != 0 {
+				t.Fatal("missing current mapping authorized root verification")
+			}
+			if mode == "retained-known-root" && !reflect.DeepEqual(workers[0].Volumes, known[0].Volumes) {
+				t.Fatalf("temporary mapping absence erased known root: %+v", workers[0])
+			}
+		})
+	}
+}
+
 func TestVerifyFleetWorkersPaginationAndFailuresPreserveEveryIdentity(t *testing.T) {
 	for _, behavior := range []string{"pagination", "instance-error", "instance-partial-error", "instance-page-error", "instance-missing", "instance-cycle", "instance-duplicate", "instance-unexpected", "volume-error", "volume-partial-error", "volume-missing", "volume-cycle", "volume-duplicate", "volume-unexpected"} {
 		t.Run(behavior, func(t *testing.T) {

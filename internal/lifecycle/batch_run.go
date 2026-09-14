@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
@@ -15,6 +16,8 @@ import (
 // runSelectedUp keeps legacy receipts on their original recovery path. New v5
 // launches and shared recovery use one schema-v2 result, including early errors.
 func runSelectedUp(ctx context.Context, path string, overrides config.Overrides, o Options, deps Dependencies, diagnostics io.Writer) Result {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
 	r := BatchResult{SchemaVersion: 2, Command: "up", BatchOutcome: BatchOutcome{Status: "prepared", Workers: []WorkerOutcome{}, Attempts: []AttemptOutcome{}, Errors: []ResourceError{}}}
 	prefix := "devbox"
 	finish := func(err error, usage bool) Result {
@@ -113,13 +116,33 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 	if !ok {
 		return finish(failure("recovery_unavailable", "exact worker and Fleet inspection is required before batch operations"), false)
 	}
+	startup := &batchStartup{api: inventory, service: service}
 	dispatcher := &AttemptService{API: service.Fleet, Scope: c, Ledger: ledger, Cache: store, VerifyFoundation: service.VerifyFoundation,
 		VerifyWorkers: func(ctx context.Context, plan LaunchPlan, attempt AttemptReceipt, workers []WorkerOutcome) ([]WorkerOutcome, error) {
-			return VerifyFleetWorkers(ctx, inventory, plan, attempt, workers)
+			startup.remember(plan, []AttemptReceipt{attempt})
+			observed, err := VerifyFleetWorkers(ctx, inventory, plan, attempt, workers)
+			if startupObservationUnavailable(err) {
+				startup.retryable = append(startup.retryable, err)
+			}
+			return observed, err
 		}}
 	recovery := &RecoveryService{Scope: c, Ledger: ledger, Cache: store, Dispatcher: dispatcher, CommandPrefix: prefix,
 		Observe: func(ctx context.Context, snapshot LaunchSnapshot) (LaunchObservation, error) {
-			return ReconcileLaunch(ctx, inventory, snapshot)
+			observed, err := ReconcileLaunch(ctx, inventory, snapshot)
+			if !errors.Is(err, ErrLaunchLedgerCorrupt) {
+				startup.remember(observed.Receipt.Plan, observed.Receipt.Attempts)
+				transient := err != nil && len(observed.Errors) > 0
+				for _, problem := range observed.Errors {
+					transient = transient && problem.Code == "worker_observation_unavailable"
+				}
+				for _, worker := range observed.Workers {
+					transient = transient && worker.Status != "identity_mismatch"
+				}
+				if transient && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+					startup.retryable = append(startup.retryable, err)
+				}
+			}
+			return observed, err
 		}}
 	announce := func(receipt BatchReceipt, cachePath string) error {
 		if diagnostics == nil {
@@ -145,9 +168,7 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 	// Readiness cannot change capacity evidence or allocate replacements. Keep
 	// observing independently verified peers even if allocation was partial.
 	if len(r.Workers) > 0 && r.Plan.SchemaVersion == 1 {
-		pinned := config.Manifest{Readiness: r.Plan.Readiness}
-		readyErr := service.WaitBatchReady(ctx, pinned, r.Workers, diagnostics)
-		err = errors.Join(err, readyErr)
+		err = startup.readiness(ctx, recovery, &r.BatchOutcome, err, diagnostics)
 	}
 	return finish(err, false)
 }

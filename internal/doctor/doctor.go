@@ -122,7 +122,7 @@ func Run(ctx context.Context, path string, overrides config.Overrides, deps Depe
 			add("manifest", "skip", "profile_required", "fix the profile before validating its deployment image", 0)
 			add("aws_identity", "skip", "profile_required", "fix the profile before AWS identity verification", 0)
 		} else {
-			add("profile", "pass", "profile_valid", "agent profile is valid; Spot defaults are preserved; initial launches will require explicit --on-demand until Spot support ships", 0)
+			add("profile", "pass", "profile_valid", "agent profile schema, architecture and launch settings are valid", 0)
 			m, manifestErr := config.LoadManifest(c.Manifest, c, p)
 			if err := manifestErr; err != nil {
 				add("manifest", "fail", "manifest_unavailable", err.Error(), ExitPrerequisite)

@@ -1109,7 +1109,11 @@ increase missing count or authorize replacement. #32 observes at most four
 verified workers concurrently under one overall readiness deadline of at most
 five minutes, including document verification and queue time. A shorter caller
 deadline wins. Failed workers do not cancel peers; unverified identities are not
-probed. Batch pins are rechecked on the final exact-ID read before each probe.
+probed. Known workers whose startup settings are still pending wait for exact
+instance and root-volume verification within that same budget. Already verified
+workers enter the queue first. Startup observation never dispatches again;
+readiness cannot supply a missing-capacity bound without validated original
+allocation evidence. Batch pins are rechecked on the final exact-ID read before each probe.
 Advisory progress may be dropped under output backpressure so it cannot delay
 queued workers; the final result retains every known worker and root-volume ID.
 Inventory JSON uses schema 2 with group/base/request/attempt/subnet/AZ fields,

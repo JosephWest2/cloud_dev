@@ -64,8 +64,11 @@ locals {
       Condition = local.tagged_creation_condition
     },
     {
-      Sid       = "FleetInstances", Effect = "Allow", Action = ["ec2:CreateFleet"], Resource = ["${local.ec2}:instance/*"]
-      Condition = merge(local.tagged_creation_condition, { StringEquals = merge(local.tagged_creation_condition.StringEquals, { "ec2:InstanceProfile" = aws_iam_instance_profile.devbox.arn }) })
+      # Fleet first authorizes placeholder resources without the launch tags,
+      # instance profile or volume properties. EC2 then checks resources from
+      # the template through RunInstances, whose grants below require them.
+      Sid       = "FleetResources", Effect = "Allow", Action = ["ec2:CreateFleet"], Resource = ["${local.ec2}:instance/*", "${local.ec2}:volume/*"]
+      Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
     },
     {
       # CreateFleet omits ec2:LaunchTemplate. Every RunInstances request must
@@ -92,7 +95,7 @@ locals {
       })
     },
     {
-      Sid = "EncryptedVolumes", Effect = "Allow", Action = ["ec2:RunInstances", "ec2:CreateFleet"], Resource = ["${local.ec2}:volume/*"]
+      Sid = "EncryptedVolumes", Effect = "Allow", Action = ["ec2:RunInstances"], Resource = ["${local.ec2}:volume/*"]
       Condition = merge(local.tagged_creation_condition, {
         ArnEqualsIfExists = { "ec2:LaunchTemplate" = aws_launch_template.agent.arn }
         StringEquals      = merge(local.tagged_creation_condition.StringEquals, { "ec2:VolumeType" = "gp3" })
