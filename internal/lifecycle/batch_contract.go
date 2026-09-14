@@ -201,6 +201,7 @@ type AttemptOutcome struct {
 	FleetID        string          `json:"fleet_id,omitempty"`
 	Status         string          `json:"status"`
 	RequestedCount int             `json:"requested_count"`
+	FulfilledCount int             `json:"fulfilled_count"`
 	InstanceIDs    []string        `json:"instance_ids"`
 	MissingCount   *int            `json:"missing_count"`
 	Errors         []ResourceError `json:"errors"`
