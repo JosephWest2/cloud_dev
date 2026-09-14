@@ -213,7 +213,7 @@ devbox ssh "$first_worker" --aws-profile devbox-operator
 devbox exec "$first_worker" --aws-profile devbox-operator -- uname -a
 devbox exec "$second_worker" --aws-profile devbox-operator -- /usr/bin/printf 'second worker\n'
 devbox down "$first_worker" --aws-profile devbox-operator --timeout 5m --json
-devbox down "$second_worker" --aws-profile devbox-operator --timeout 5m --json
+devbox down --group smoke-batch --aws-profile devbox-operator --timeout 5m --json
 ```
 
 These examples explicitly select the restricted operator profile, preventing a
@@ -258,13 +258,37 @@ inspection; it is never silently trusted. SSH tunnel contents are not logged by
 [Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-getting-started-enable-ssh-connections.html).
 
 `ls` rediscovers instances from AWS after a restart, without local instance IDs.
-`down` revalidates scope before termination and reports root-volume deletion
-separately. Duplicate friendly names require explicit instance IDs. A repeated
-teardown reports an observed already-terminated instance or `no_managed_match`;
-the latter does not verify any particular termination.
+Teardown accepts one exclusive selector: names/IDs, a group, or all workers in
+the selected account/region/deployment/owner scope:
 
-For a successful first teardown, expect `status=terminated`,
-`ec2_state=terminated`, and `root_volume_deletion=deleted`. If deletion is
+```sh
+devbox down NAME_OR_ID OTHER_NAME_OR_ID --aws-profile devbox-operator --timeout 5m --json
+devbox down --group smoke-batch --aws-profile devbox-operator --timeout 5m --json
+devbox down --all --aws-profile devbox-operator --timeout 5m --json
+# Noninteractive cleanup requires explicit consent; the preview still appears:
+devbox down --all --yes --aws-profile devbox-operator --timeout 5m --json
+```
+
+`--all` previews the exact scope, count and IDs on stderr and asks for a complete
+`y` or `yes` response from a terminal. Decline returns 0 with no terminations;
+EOF or noninteractive input without `--yes` returns 2. Ctrl-C/timeout returns 4.
+Selection, confirmation and cleanup share the command deadline (20s default,
+up to 5m with `--timeout`). IDs are frozen before the prompt, so workers arriving
+during confirmation cannot enter the approved set.
+
+Each exact ID is revalidated for scope and selected name/group immediately
+before termination. Duplicate friendly names require explicit IDs. Independent
+valid targets may be cleaned up while invalid, ambiguous or changed targets
+report errors. Cleanup uses up to four workers concurrently and preserves each
+instance and root-volume result. A repeated teardown observes already-terminated
+workers; `no_managed_match` does not verify any particular deletion.
+
+For complete teardown, expect `status=teardown_complete`, matching
+`selected_count`, `terminated_count` and `cleaned_count`, and per-worker
+`ec2_state=terminated` and `root_volume_deletion=deleted`. Some verified cleanup
+with other failures returns `teardown_partial`, exit 3; no verified cleanup
+returns exit 1. Termination requested/unknown/denied/observed is separate from
+root deletion. Missing root mappings never prove deletion. If deletion is
 `unavailable`, verify the recorded volume ID through EC2 before marking cleanup
 complete. A later repeated teardown can lack volume mappings even when deletion
 was previously verified. Full [manual cleanup](docs/acceptance/01-lifecycle.md#teardown-and-independent-cleanup-verification)

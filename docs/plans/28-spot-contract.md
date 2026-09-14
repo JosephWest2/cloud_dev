@@ -14,7 +14,7 @@ acceptance/cleanup gates pass.
 | #30 | One immutable pinned instant-Fleet attempt; controlled serialized SDK and failure tests | Complete; [verification and fresh reviews](../acceptance/30-fleet-attempt.md) |
 | #31 | Shared dispatch claims, unknown/partial recovery and explicit proven-missing retry; crash/concurrency tests | Complete; [verification and fresh review](../acceptance/31-shared-recovery.md) |
 | #32 | Integrated group launch/inventory/readiness and independent access; CLI checks | Complete; [verification and fresh review](../acceptance/32-group-launch.md) |
-| #33 | Exclusive scoped plural teardown, frozen confirmation set and root-volume evidence | Pending |
+| #33 | Exclusive scoped plural teardown, frozen confirmation set and root-volume evidence | Complete; [verification and fresh reviews](../acceptance/33-plural-teardown.md) |
 | #34 | Fresh two-worker Spot/exec/log/restart/cleanup, explicit On-Demand/decline, full checks and acceptance matrix | Pending |
 
 Normative decisions and examples are in the

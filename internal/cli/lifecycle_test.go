@@ -82,7 +82,7 @@ func TestLifecycleJSONAndTimeoutIdentifiers(t *testing.T) {
 	}
 }
 func TestLifecycleUsageFailsBeforeAWS(t *testing.T) {
-	for _, args := range [][]string{{"up", "agent", "--name", "smoke"}, {"up", "agent", "--spot", "--name", "smoke"}, {"up", "--resume", "0123456789abcdef0123456789abcdef", "--name", "SECRET"}, {"up", "agent", "--on-demand", "--name", "i-12345678"}, {"ls", "--name", "SECRET"}, {"down"}, {"down", "smoke", "extra"}, {"down", "--all"}} {
+	for _, args := range [][]string{{"up", "agent", "--name", "smoke"}, {"up", "agent", "--spot", "--name", "smoke"}, {"up", "--resume", "0123456789abcdef0123456789abcdef", "--name", "SECRET"}, {"up", "agent", "--on-demand", "--name", "i-12345678"}, {"ls", "--name", "SECRET"}, {"down"}} {
 		var out, diag bytes.Buffer
 		args = append(args, "--json", "--config", testutil.Setup(t))
 		code := RunWithLifecycle(context.Background(), args, &out, &diag, doctor.Dependencies{}, lifecycle.Dependencies{New: func(context.Context, config.Config) (*lifecycle.Service, error) {

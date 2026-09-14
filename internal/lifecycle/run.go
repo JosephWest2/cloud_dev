@@ -14,25 +14,31 @@ type Options struct {
 	Command, Target string
 	Selection       *LaunchSelection
 	Group           string
+	DownSelection   *DownSelection
 	UpOptions
 }
 type Dependencies struct {
-	New   func(context.Context, config.Config) (*Service, error)
-	Store *Store
+	New         func(context.Context, config.Config) (*Service, error)
+	Store       *Store
+	ConfirmDown ConfirmDown
 }
 type Result struct {
-	Batch          *BatchResult `json:"-"`
-	RecoveryPrefix string       `json:"-"`
-	SchemaVersion  int          `json:"schema_version"`
-	Command        string       `json:"command"`
-	OK             bool         `json:"ok"`
-	ExitCode       int          `json:"exit_code"`
-	Code           string       `json:"code"`
-	Message        string       `json:"message"`
+	Batch          *BatchResult    `json:"-"`
+	Teardown       *TeardownResult `json:"-"`
+	RecoveryPrefix string          `json:"-"`
+	SchemaVersion  int             `json:"schema_version"`
+	Command        string          `json:"command"`
+	OK             bool            `json:"ok"`
+	ExitCode       int             `json:"exit_code"`
+	Code           string          `json:"code"`
+	Message        string          `json:"message"`
 	Outcome
 }
 
 func Run(ctx context.Context, path string, overrides config.Overrides, o Options, deps Dependencies, diagnostics io.Writer) Result {
+	if o.Command == "down" && o.DownSelection != nil {
+		return runSelectedDown(ctx, path, overrides, *o.DownSelection, deps)
+	}
 	if o.Command == "up" && o.Selection != nil {
 		return runSelectedUp(ctx, path, overrides, o, deps, diagnostics)
 	}
