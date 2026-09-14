@@ -27,17 +27,24 @@ type Config struct {
 	Manifest        string `toml:"manifest"`
 	ProfileFile     string `toml:"profile_file"`
 	SSHIdentityFile string `toml:"ssh_identity_file"`
+	MaxCount        int    `toml:"max_count"`
 }
 
 type Overrides struct{ AWSProfile, Region string }
 
 type Profile struct {
-	SchemaVersion int      `toml:"schema_version"`
-	Name          string   `toml:"name"`
-	Market        string   `toml:"market"`
-	InstanceTypes []string `toml:"instance_types"`
-	Image         string   `toml:"image"`
-	DiskGB        int      `toml:"disk_gb"`
+	SchemaVersion       int      `toml:"schema_version"`
+	Name                string   `toml:"name"`
+	Market              string   `toml:"market"`
+	InstanceTypes       []string `toml:"instance_types"`
+	Image               string   `toml:"image"`
+	DiskGB              int      `toml:"disk_gb"`
+	Architecture        string   `toml:"architecture"`
+	DiskType            string   `toml:"disk_type"`
+	Encrypted           bool     `toml:"encrypted"`
+	DeleteOnTermination bool     `toml:"delete_on_termination"`
+	SubnetIDs           []string `toml:"subnet_ids"`
+	AvailabilityZones   []string `toml:"availability_zones"`
 }
 
 // Manifest is exported by the foundation, never derived from OpenTofu state by the CLI.
@@ -49,6 +56,8 @@ type Manifest struct {
 	Owner              string           `json:"owner"`
 	VPCID              string           `json:"vpc_id"`
 	SubnetIDs          []string         `json:"subnet_ids"`
+	Subnets            []Subnet         `json:"subnets,omitempty"`
+	CompatiblePools    []CompatiblePool `json:"compatible_pools,omitempty"`
 	SecurityGroupID    string           `json:"security_group_id"`
 	InstanceProfileARN string           `json:"instance_profile_arn"`
 	RouteTableID       string           `json:"route_table_id"`
@@ -59,6 +68,7 @@ type Manifest struct {
 	Readiness          Document         `json:"readiness"`
 	Execution          Execution        `json:"execution"`
 	Results            Results          `json:"results"`
+	LaunchLedger       *LaunchLedger    `json:"launch_ledger,omitempty"`
 	Roles              map[string]Role  `json:"roles"`
 	Images             map[string]Image `json:"images"`
 }
@@ -99,14 +109,16 @@ type Role struct {
 }
 
 type Image struct {
-	UbuntuRelease         string `json:"ubuntu_release"`
-	OwnerAccount          string `json:"owner_account"`
-	Name                  string `json:"name"`
-	RootDeviceName        string `json:"root_device_name"`
-	AMIID                 string `json:"ami_id"`
-	Architecture          string `json:"architecture"`
-	LaunchTemplateID      string `json:"launch_template_id"`
-	LaunchTemplateVersion string `json:"launch_template_version"`
+	UbuntuRelease         string    `json:"ubuntu_release"`
+	OwnerAccount          string    `json:"owner_account"`
+	Name                  string    `json:"name"`
+	RootDeviceName        string    `json:"root_device_name"`
+	AMIID                 string    `json:"ami_id"`
+	Architecture          string    `json:"architecture"`
+	LaunchTemplateID      string    `json:"launch_template_id"`
+	LaunchTemplateVersion string    `json:"launch_template_version"`
+	RootDisk              *RootDisk `json:"root_disk,omitempty"`
+	MinimumRootDiskGB     int       `json:"minimum_root_disk_gb,omitempty"`
 }
 
 var (
@@ -134,7 +146,7 @@ func decodeTOML(data []byte, target any) error {
 }
 
 func Load(path string, overrides Overrides) (Config, error) {
-	var c Config
+	c := Config{MaxCount: DefaultMaxCount}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return c, errors.New("configuration missing; copy examples/config.toml to the user configuration directory or pass --config, then set your AWS scope")
@@ -147,6 +159,9 @@ func Load(path string, overrides Overrides) (Config, error) {
 	}
 	if c.SchemaVersion != 1 {
 		return c, errors.New("unsupported configuration schema_version; use version 1")
+	}
+	if err := ValidateMaxCount(c.MaxCount); err != nil {
+		return c, err
 	}
 	if overrides.Region != "" {
 		c.Region = overrides.Region
@@ -202,29 +217,20 @@ func LoadProfile(path string) (Profile, error) {
 	if err := decodeTOML(data, &p); err != nil {
 		return p, err
 	}
-	if p.SchemaVersion != 1 {
-		return p, errors.New("unsupported profile schema_version; use version 1")
-	}
-	if p.Name != "agent" || !labelRE.MatchString(p.Image) {
-		return p, errors.New("profile name must be agent and image must be a manifest image key")
-	}
-	if p.Market != "spot" && p.Market != "on-demand" {
-		return p, errors.New("profile market must be spot or on-demand")
-	}
-	if len(p.InstanceTypes) == 0 {
-		return p, errors.New("profile instance_types must contain at least one instance type")
-	}
-	seen := map[string]bool{}
-	for _, t := range p.InstanceTypes {
-		if !typeRE.MatchString(t) || seen[t] {
-			return p, errors.New("profile instance_types must be valid, distinct EC2 type names")
+	// The version-1 wire format must reject even empty version-2 options;
+	// normalized legacy profiles receive the supported defaults below.
+	if p.SchemaVersion == 1 {
+		var fields map[string]any
+		if err := decodeTOML(data, &fields); err != nil {
+			return p, err
 		}
-		seen[t] = true
+		for _, key := range []string{"architecture", "disk_type", "encrypted", "delete_on_termination", "subnet_ids", "availability_zones"} {
+			if _, exists := fields[key]; exists {
+				return p, errors.New("profile version 1 cannot contain version 2 options; set schema_version = 2")
+			}
+		}
 	}
-	if p.DiskGB < 8 || p.DiskGB > 16384 {
-		return p, errors.New("profile disk_gb must be between 8 and 16384")
-	}
-	return p, nil
+	return NormalizeProfile(p)
 }
 
 func resourceID(value, prefix string) bool {
@@ -248,19 +254,33 @@ func readManifest(path string, c Config) (Manifest, error) {
 	if d.Decode(new(any)) != io.EOF {
 		return m, errors.New("deployment manifest must contain exactly one JSON object")
 	}
-	if m.SchemaVersion != 4 {
-		return m, errors.New("unsupported manifest schema_version; apply and re-export version 4 from the foundation; replace old workers for execution support")
+	return m, validateManifestScope(m, c)
+}
+
+func validateManifestScope(m Manifest, c Config) error {
+	if m.SchemaVersion != 4 && m.SchemaVersion != 5 {
+		return errors.New("unsupported manifest schema_version; use version 4 or apply and re-export version 5 from the foundation")
+	}
+	if m.SchemaVersion == 4 {
+		if m.LaunchLedger != nil || m.Subnets != nil || m.CompatiblePools != nil {
+			return errors.New("manifest version 4 cannot contain version 5 launch options")
+		}
+		for _, img := range m.Images {
+			if img.RootDisk != nil || img.MinimumRootDiskGB != 0 {
+				return errors.New("manifest version 4 cannot contain version 5 root disk options")
+			}
+		}
 	}
 	if m.Account != c.ExpectedAccount || m.Region != c.Region || m.Deployment != c.Deployment || m.Owner != c.Owner {
-		return m, errors.New("deployment manifest scope differs from expected account, region, deployment or owner; select the matching configuration and foundation export")
+		return errors.New("deployment manifest scope differs from expected account, region, deployment or owner; select the matching configuration and foundation export")
 	}
 	if m.Region != "us-east-2" {
-		return m, errors.New("foundation currently supports us-east-2 in commercial AWS only")
+		return errors.New("foundation currently supports us-east-2 in commercial AWS only")
 	}
-	if len(m.Deployment) > 23 || len(m.Owner) > 23 {
-		return m, errors.New("foundation deployment and owner must each fit 23 characters")
+	if !accountRE.MatchString(m.Account) || !labelRE.MatchString(m.Deployment) || !labelRE.MatchString(m.Owner) || len(m.Deployment) > 23 || len(m.Owner) > 23 {
+		return errors.New("foundation requires a 12-digit account and valid deployment and owner labels of at most 23 characters")
 	}
-	return m, nil
+	return nil
 }
 
 // LoadResultManifest validates only trusted storage scope. Completed recovery
@@ -289,11 +309,21 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	if err != nil {
 		return m, err
 	}
+	return validateManifest(m, c, p)
+}
+
+func validateManifest(m Manifest, c Config, p Profile) (Manifest, error) {
+	if err := validateManifestScope(m, c); err != nil {
+		return m, err
+	}
+	if m.SchemaVersion == 4 && (len(p.SubnetIDs) != 0 || len(p.AvailabilityZones) != 0) {
+		return m, errors.New("profile placement restrictions require manifest version 5; apply and re-export the foundation before launching")
+	}
 	if _, err := sshkey.Parse(m.SSHPublicKey); err != nil {
 		return m, errors.New("manifest requires a dedicated Ed25519 ssh_public_key; apply and re-export the foundation")
 	}
-	if len(m.SubnetIDs) != 1 || len(m.Images) != 1 || p.Image != "agent" {
-		return m, errors.New("foundation requires one subnet and the agent image")
+	if len(m.SubnetIDs) == 0 || (m.SchemaVersion == 4 && len(m.SubnetIDs) != 1) || len(m.Images) != 1 || p.Image != "agent" {
+		return m, errors.New("foundation requires permitted subnets and the agent image; version 4 requires one subnet")
 	}
 	if !resourceID(m.RouteTableID, "rtb") || !resourceID(m.InternetGatewayID, "igw") || m.DevelopmentUser != "devbox" || !digestRE.MatchString(m.BootstrapSHA256) {
 		return m, errors.New("manifest requires route table, internet gateway, devbox user and bootstrap digest; re-export the foundation")
@@ -326,10 +356,12 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 	if !resourceID(m.VPCID, "vpc") || !resourceID(m.SecurityGroupID, "sg") || len(m.SubnetIDs) == 0 {
 		return m, errors.New("manifest requires valid vpc_id, security_group_id and subnet_ids; re-export the foundation")
 	}
+	seenSubnets := map[string]bool{}
 	for _, id := range m.SubnetIDs {
-		if !resourceID(id, "subnet") {
-			return m, errors.New("manifest contains an invalid subnet ID")
+		if !resourceID(id, "subnet") || seenSubnets[id] {
+			return m, errors.New("manifest subnet_ids must contain valid, distinct subnet IDs")
 		}
+		seenSubnets[id] = true
 	}
 	arnRE := regexp.MustCompile(`^arn:aws:iam::` + c.ExpectedAccount + `:instance-profile/[A-Za-z0-9+=,.@_/-]+$`)
 	if !arnRE.MatchString(m.InstanceProfileARN) {
@@ -344,6 +376,18 @@ func LoadManifest(path string, c Config, p Profile) (Manifest, error) {
 		}
 		if !labelRE.MatchString(key) || !resourceID(img.AMIID, "ami") || !resourceID(img.LaunchTemplateID, "lt") || !numericVersion(img.LaunchTemplateVersion) || img.Architecture != "x86_64" {
 			return m, errors.New("manifest images require an exact AMI ID, architecture, launch template ID and positive numeric version (not $Latest or $Default)")
+		}
+	}
+	if m.SchemaVersion == 5 {
+		if err := validateManifestV5(m); err != nil {
+			return m, err
+		}
+		// Execution needs foundation pins but intentionally has no launch
+		// profile dependency. A launch profile enables cross-contract checks.
+		if p.SchemaVersion != 0 {
+			if _, err := ValidateProfileManifest(p, m); err != nil {
+				return m, err
+			}
 		}
 	}
 	return m, nil

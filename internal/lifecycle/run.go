@@ -97,6 +97,9 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 			if err != nil {
 				return fail(failure("manifest_invalid", err.Error()), 1)
 			}
+			if m.SchemaVersion == 5 {
+				return fail(failure("feature_unavailable", "new launches with manifest version 5 require the batch allocator and recovery integration; inventory and cleanup remain available"), 2)
+			}
 		}
 	}
 	factory := deps.New

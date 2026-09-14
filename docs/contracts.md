@@ -1,4 +1,10 @@
-# CLI contracts (config/profile/results v1, deployment v4)
+# CLI contracts
+
+The [Spot batch contract](#spot-batch-contract-28) adds profile v2, deployment
+v5 and receipt v2 while retaining config/result-storage v1 and legacy receipt
+recovery. Issue #28 implements validation and shared types; its new command
+forms are reserved and fail before AWS until allocation/recovery integration.
+The single-worker operations below remain the currently executable lifecycle.
 
 ## User configuration and workload profile
 
@@ -16,7 +22,7 @@ schema versions are rejected. This includes credential fields.
 The embedded [agent profile](../profiles/agent.toml) is a separate versioned
 document. An optional user profile_file uses the same contract:
 
-| Field | Version 1 contract |
+| Field | Legacy version 1 contract |
 | --- | --- |
 | `schema_version` | Integer `1` |
 | `name` | `agent`; the only workload name in this slice |
@@ -37,7 +43,8 @@ The foundation exports a non-secret schema-v4 JSON object using
 `tofu output -json deployment_manifest`. Schemas 1–3 are deliberately rejected:
 apply the runner/storage foundation, re-export and replace old workers for new
 execution support. Unknown fields and trailing JSON are
-rejected. User config, workload profiles and result envelopes stay at version 1.
+rejected. User config and existing result envelopes stay at version 1. Version 5
+is also accepted; its additional launch prerequisites are specified below.
 
 | Manifest field | Contract |
 | --- | --- |
@@ -826,3 +833,295 @@ Inventory, down and old launch reconciliation remain available under their
 existing scope-only recovery contract. Logs reads only the trusted result
 descriptor and current identity for completed recovery, regardless of whether
 the original template, document, instance or SSH identity still exists.
+
+## Spot batch contract (#28)
+
+This section is normative for #28–#34. #28 provides pure validation, parser
+coverage and shared Go types; #29 verifies/provisions the foundation, #30 builds
+one immutable allocation attempt, #31 implements shared recovery, #32 enables
+launch/inventory/access, and #33 enables plural teardown. New operational forms
+currently return `feature_unavailable` with exit 2 before AWS. No successful
+parser or plan test is evidence of a Spot launch or live IAM authorization.
+
+### Configuration, profiles and migration
+
+Config remains schema 1. Optional `max_count` defaults to **10**, accepts integers
+1–100, and counts instances. An explicit zero, fractional value or overflow fails
+parsing/validation. TOML overrides the built-in default; neither environment nor
+CLI has a cap override. `--count` defaults to 1 and accepts decimal digits only
+(leading zeros are permitted), with no sign, fraction, exponent or whitespace.
+The parser enforces the hard maximum; resolved planning enforces the configured
+maximum before mutation. Missing-capacity actions also check the original desired
+count against the current cap; lowering a cap never blocks observation/cleanup.
+
+The bundled profile remains Spot by default and becomes schema 2:
+
+| Field | Version 2 contract |
+| --- | --- |
+| `schema_version`, `name`, `image` | `2`, `agent`, `agent` |
+| `market` | `spot` or `on-demand`; every On-Demand launch requires explicit `--on-demand`, even for custom profiles |
+| `instance_types` | Nonempty distinct explicit EC2 types; every selected type needs at least one permitted, compatible offering |
+| `architecture` | Explicit `x86_64`; supported OS remains Canonical Ubuntu 24.04 amd64 in Ohio |
+| `disk_gb`, `disk_type` | 8–16384 GiB, `gp3`; effective size must meet the exact AMI snapshot minimum |
+| `encrypted`, `delete_on_termination` | Explicit `true`; roots are encrypted and disposable |
+| `subnet_ids`, `availability_zones` | Optional distinct lists restricting the foundation's exact subnet/AZ mappings; omission or empty lists mean all permitted choices |
+
+If both restriction lists are supplied, they intersect. Unknown subnets/AZs,
+empty resulting choices, architecture mismatch and types with no remaining
+offering fail. Never invent a cartesian product from independent type/subnet
+lists. Offerings describe capabilities, not available Spot capacity.
+Profile v1 still loads, normalizing architecture/disk defaults to the supported
+values. V2-only TOML fields in v1 fail, including explicit empty/false values.
+Upgrade such a profile's version before adding those fields.
+Placement restrictions also require manifest v5; the legacy single-subnet path
+rejects them rather than ignoring them. New launches with v5 remain gated until
+the batch allocator and recovery are integrated.
+
+Manifest v5 retains all v4 execution, results, IAM, image and network fields and
+adds the following. V4 remains accepted for the existing single-worker path,
+inventory, access, teardown, legacy recovery and completed logs. New batch plans
+require v5. Merely changing `schema_version` is never a migration: #29 must apply
+and re-export the actual resources and preserve the existing subnet address.
+
+| Field | Version 5 addition |
+| --- | --- |
+| `subnets` | Array of `{id, availability_zone}`; every distinct `subnet_ids` entry occurs exactly once, with only one selected subnet per Ohio AZ (a Fleet API constraint) |
+| `compatible_pools` | Array of `{instance_type, architecture, subnet_ids}`; distinct x86_64 types with explicitly approved subnet memberships |
+| `images.agent.root_disk` | Exact template default `{size_gb, type, encrypted, delete_on_termination}` |
+| `images.agent.minimum_root_disk_gb` | Positive exact AMI root snapshot size; template and effective profile size must meet it |
+| `launch_ledger` | `{schema_version:1, bucket, expected_bucket_owner, region, prefix, policy_sha256}`; same bucket/owner/region/policy as results, separate permanent `launches/v2/ACCOUNT/REGION/DEPLOYMENT/OWNER/` prefix |
+
+Completed logs validates its retained storage descriptor independently of these
+new fields. No local profile, launch receipt, launch ledger or live worker is a
+prerequisite for inventory/teardown or completed-log retrieval. Existing workers
+without group/naming tags remain visible by their legacy `Name` and ID.
+
+### Resolved launch plan and pinned SDK mapping
+
+`lifecycle.LaunchPlan` schema 1 freezes scope; random 32-lowercase-hex request ID;
+creation time; profile/base/group/market/original count; sorted approved
+`{instance_type, subnet_id, availability_zone}` choices; exact AMI provenance and
+numeric launch-template version; effective root disk; approved security group
+and instance profile; bootstrap digest; readiness and execution document/runner
+pins; shared ledger descriptor; and creation tags. Its SHA-256 covers canonical
+Go JSON (sorted map keys and deterministic choice order). Once prepared, changes
+to these inputs require a separately authorized new request, never a resume.
+The constructor is pure; #29's deployed-resource verification must succeed
+before any allocator can use a plan. The template must preserve IMDSv2, exactly
+one new primary interface, public IPv4, approved security group, interface/root
+deletion, no ingress, and the pinned SSH/runner bootstrap.
+
+The pinned SDK is `github.com/aws/aws-sdk-go-v2/service/ec2 v1.332.0`:
+
+- Use `CreateFleetInput.Type=instant` explicitly; the API default is `maintain`.
+  Spot uses `SpotOptions.AllocationStrategy=price-capacity-optimized` with the
+  full approved pool. No maintenance, replacement or market fallback exists.
+- On-Demand batches use the same instant-Fleet adapter with explicit
+  `--on-demand`, `OnDemandOptions.AllocationStrategy=lowest-price`, and only the
+  first profile type across its approved subnets. Target capacity belongs solely
+  to the selected market, with total equal to the requested instance count.
+  Leave `WeightedCapacity` unset and omit `TargetCapacityUnitType` (the SDK
+  restricts that field to attribute-based selection); no weights/vCPU semantics.
+- `FleetLaunchTemplateSpecificationRequest` supplies an exact template ID and
+  positive numeric version. Each override supplies an explicit `InstanceType`,
+  `SubnetId`, matching `AvailabilityZone`, exact `ImageId`, and root
+  `BlockDeviceMappings` using `FleetEbsBlockDeviceRequest` size/gp3/encrypted/delete
+  fields. `MetadataOptions.HttpTokens=required` preserves IMDSv2. There are no
+  floating AMI aliases, default template versions or instance requirements.
+- The pinned override type has **no network-interface field**. #29 must remove
+  the template interface's fixed subnet while retaining its security group,
+  public address and deletion settings, then verify Fleet subnet overrides
+  against that effective template. Runtime commands never edit templates.
+- Instant Fleet supports top-level creation `TagSpecifications` for `fleet`,
+  `instance` and `volume`. Apply identical required metadata to all three;
+  tag inherited root volumes at creation. No post-launch rename is required.
+
+See the [CreateFleet API](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_CreateFleet.html),
+[override model](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_FleetLaunchTemplateOverridesRequest.html),
+and [target-capacity model](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_TargetCapacitySpecificationRequest.html).
+#30 must test actual serialized requests against the pinned SDK, not only these
+Go field names. #34 must verify restricted-operator behavior live. Instant Fleet
+does not require `AWSServiceRoleForEC2Fleet`; setup establishes the separate
+Spot service-linked-role prerequisite without granting operator role creation.
+
+### Names, groups and identities
+
+New command forms are:
+
+```sh
+devbox up agent --count 2 --group smoke-batch
+devbox up agent --count 2 --group smoke-batch --name agent
+devbox up agent --on-demand --name smoke
+devbox ls --group smoke-batch
+devbox down NAME_OR_ID [NAME_OR_ID ...]
+devbox down --group smoke-batch
+devbox down --all [--yes]
+```
+
+Base defaults to group when supplied, otherwise `agent`; count defaults to 1.
+Base/group are 1–63 ASCII letters/digits/underscores/hyphens, begin with a letter
+or digit, and cannot resemble an EC2 instance ID. Group is independent of a
+request: several requests may share a group but never share fulfillment counts.
+
+Creation tags are `ManagedBy=devbox`, `Deployment`, `Owner`, `Profile`,
+`Name=BASE`, `BaseName=BASE`, `NamingVersion=1`, `RequestId`, `BatchId` (equal to
+request ID), `AttemptId`, `CreatedAt`, and `Group` when supplied. Fleet-wide tags
+cannot assign ordinal worker names. The public name is instead
+`BASE[:63-len("-"+INSTANCE_ID)] + "-" + INSTANCE_ID`, for example
+`smoke-batch-i-0123456789abcdef0`. This is a deterministic suffix derived from
+cloud identity, not `-01`/`-02` or response ordering. A 63-character base is
+truncated to 43 characters for modern 19-character instance IDs. Names do not
+change when a peer is absent or a later attempt adds a worker. AWS console
+`Name` remains the shared base. Legacy `Name` values remain unchanged.
+
+Discovery obtains these tags from complete paginated scoped AWS inventory,
+deduplicates IDs, validates exact filter matches and sorts by instance ID. Access
+resolves the generated public name; a duplicate legacy friendly name yields
+candidate IDs and requires an explicit ID. Scope tags are not an atomic name
+reservation; concurrent independent requests are allowed to share a base.
+
+### Durable attempts, recovery and explicit retry
+
+The user approved shared immutable S3 launch records on September 13, 2026.
+Schema-v2 `BatchReceipt` caches the request ID, complete plan, plan digest and
+ordered `AttemptReceipt` records. Each attempt stores its ID, parent ID, token,
+requested count, creation timestamp, state, optional Fleet ID, every known
+instance ID and all normalized pool/resource errors. Receipt v1 is read by the
+existing recovery path, never rewritten as a fabricated batch. Unknown versions,
+invalid JSON, changed pins, duplicate identities and invalid lineage fail closed.
+
+The initial attempt ID is the first 16 bytes of SHA-256 of
+`"devbox-attempt-v2\0" + REQUEST_ID + "\0"`. A successor adds its parent's
+32-hex ID after the last separator. A parent has exactly one possible successor,
+regardless of copied state, current time or requested count. The 64-hex client
+token hashes canonical `{plan_sha256, attempt_id, count}` JSON. New parameters
+never reuse a token. Actual SDK transport retries in one dispatch reuse the same
+immutable input and token.
+
+Under `launch_ledger.prefix/REQUEST_ID/`, use immutable `plan.json` plus
+`attempts/ATTEMPT_ID/{prepared,dispatch,response}.json`. Every write uses
+`If-None-Match: *`; the bucket policy enforces that header. Runtime roles cannot
+delete or overwrite ledger objects; workers have no ledger access. Ledger
+records are excluded from command-result expiration and remain until deliberate
+deployment removal. The operator may read/write only its exact scope.
+
+The dispatcher durably saves local preparation and announces request recovery
+before cloud allocation, verifies the shared plan and prepared attempt, persists
+local dispatch intent, then conditionally creates the permanent shared
+`DispatchClaim` containing request/attempt IDs, plan/input digests and token.
+**Only a positively acknowledged conditional-claim winner may send CreateFleet.**
+A failed/ambiguous claim write, an existing claim, a recovered GET or a copied
+local receipt never grants send permission. The claim is never released. A crash
+after claiming but before sending can therefore remain unresolved; avoiding
+duplicate workers takes precedence over automatic retry in that window.
+
+Local process locks serialize a state directory, but shared claims coordinate
+separate cooperating clients. This guarantee assumes the deployment/ledger is
+retained and runtime IAM cannot erase it; it does not cover a setup administrator
+deleting records, bypassing the protocol or direct external allocations.
+
+States are `prepared -> dispatched -> complete|rejected|unknown`; later verified
+complete evidence may resolve `unknown`. A complete instant-Fleet response must
+account for all distinct returned identities, validate its envelope and retain
+every error. HTTP success alone, number of errors, missing fields or duplicated
+IDs cannot establish a missing count. Definitive API rejection with no possible
+allocation is `rejected`; uncertain transport failure remains `unknown`. Store
+the complete normalized shared response before authorizing any successor. A
+failed post-dispatch write preserves all known request/Fleet/instance/root IDs
+in output and does not turn the attempt back into `prepared`.
+
+```sh
+# Observe/reconcile only, including readiness; no batch allocation:
+devbox up --resume REQUEST_ID --json
+# Explicitly authorize only the proven original missing capacity:
+devbox up --retry-missing REQUEST_ID --after ATTEMPT_ID --json
+```
+
+These options reject profile/count/group/name/market overrides. Batch resume
+never dispatches, even for prepared v2 records; report a prepared record with
+no allocation as such. Existing v1 prepared recovery retains its historical
+same-token behavior. For v2, a fresh invocation without recovery syntax creates
+an independent request and is never presented as a safe retry of uncertainty.
+
+Before a retry, verify the shared original plan and complete lineage, reconcile
+known identities and all request/attempt tags, and retain fulfilled identities
+even after interruption, termination or user teardown. Missing means original
+desired count minus cumulative distinct original successes, never desired minus
+currently running workers. One confirmed success of two permits a single-worker
+successor; an uncertain one-or-two success permits none. Repeating the same
+`--after` resumes the existing successor without granting another claim. Another
+retry requires explicit `--after` naming that successor after its own definitive
+partial/zero response. Fully fulfilled requests never allocate replacements.
+
+Revalidate account/scope, tags, template/image/type/subnet/market bindings during
+reconciliation. Do not assume Fleet's client token propagates to each instance's
+`ClientToken`. When a Fleet ID is known, its exact `DescribeFleets` record may
+verify the token. [DescribeFleets](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeFleets.html)
+does not list instant fleets without their IDs, and
+[DescribeFleetInstances](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_DescribeFleetInstances.html)
+does not support instant fleets. Fleet activity `fulfilled`, current Fleet
+capacity or a negative tag scan cannot prove historical allocation. Unbounded
+attempts remain unknown; never infer missing capacity from eventual-consistency
+absence. Losing local receipts still permits cloud inventory/access/cleanup;
+retry requires intact authoritative shared records and scope. Losing those
+records prevents safe retry, not inspection or teardown.
+
+### Output, partial results and teardown
+
+Batch lifecycle JSON uses one schema-v2 envelope on stdout with `command`, `ok`,
+`exit_code`, `code`, `message`, request/status/counts, `plan`, `attempts`,
+`instances`, `errors`, and applicable `resume_command`/`retry_command`.
+`requested_count` is the original desired count; `fulfilled_count` is cumulative
+distinct historical allocation; `ready_count` is currently ready workers;
+`missing_count` is **null** when allocation cannot be bounded. Attempt fields
+include parent/Fleet IDs, requested count, known instance IDs, missing count and
+all pool errors. Worker fields retain legacy instance/root-volume/readiness
+fields plus base/group/attempt/subnet/AZ/status. Errors contain allowlisted codes
+and actionable messages, with resource/type/subnet context; never raw SDK text.
+
+Preview goes to stderr before allocation: profile, region, eligible types and
+subnets/AZs, count, market, group and base. Text results include the same data and
+each known success/error. Progress, prompts and recovery commands stay on stderr
+in JSON mode. Output/persistence failure after allocation cannot erase known IDs.
+
+| Aggregate outcome | Meaning | Exit |
+| --- | --- | --- |
+| `ready` | All original capacity fulfilled and all current workers ready | 0 |
+| `allocated` | Allocation complete; readiness observation still in progress | Progress only |
+| `partial_capacity` | Definitive response fulfilled some original capacity; successes retained | 3 |
+| `no_capacity` | Definitive zero fulfillment; show explicit retry with same pool, or deliberate profile/new-request alternatives | 1 |
+| `allocation_unknown` | Fulfillment cannot be bounded; resume/inspect, never automatic new capacity | 1 |
+| `readiness_failed` | Complete allocation, one or more workers not ready | 3 if some ready, otherwise 1 |
+| `teardown_partial` | Some selected resources cleaned up and others failed/unverified | 3 |
+| `teardown_failed` | No complete verified cleanup; include per-resource outcomes | 1 |
+| `confirmation_declined` | Interactive refusal, zero terminations | 0 |
+| `confirmation_required` | Noninteractive/EOF without affirmative consent, zero terminations | 2 |
+| Invalid config/usage | Before mutation | 2 |
+| Timeout/interruption | Preserve capacity/worker errors and known identities | 4 |
+
+For example, full two-worker output has requested/fulfilled/ready `2/2/2`,
+missing `0`, two generated names and exit 0. A definitive one-of-two result has
+`2/1/1`, missing `1`, `partial_capacity`, exit 3 and a retry command for one
+missing worker. A lost response with one observed ID has requested `2`, known
+fulfilled `1`, missing `null`, `allocation_unknown` and a reconcile-only command.
+An interrupted worker remains historically fulfilled, so its absence does not
+increase missing count or authorize replacement. #32 observes every worker with
+bounded concurrency within one overall readiness deadline.
+
+`down` accepts one selector: explicit names/IDs, one group, or all scoped workers.
+`--yes` applies only to `--all`. Resolve and freeze candidate IDs before its
+preview/prompt; workers arriving during confirmation cannot enter that set.
+Interactive `n` declines successfully with no mutations; EOF fails with exit 2,
+and Ctrl-C exits 4. A piped `devbox down --all` without `--yes` exits 2. Then
+`devbox down --all --yes` performs scoped cleanup without the prompt.
+
+Immediately before termination, fetch exact IDs and revalidate account, region,
+ManagedBy/deployment/owner and selected name/group membership. Ambiguous names
+produce errors with candidate IDs, never permission for every match. Independent
+authorized targets may proceed while invalid/ambiguous/drifted targets report
+per-target errors. Preserve exact root-volume mappings before mutation and report
+termination requested/unknown/denied/observed separately from root deletion
+deleted/retained/unavailable. Absence alone is not proof of cleanup. Repeated
+teardown is harmless; it never deletes result storage, ledger records or unrelated
+volumes. #33 owns operational confirmation/cleanup tests, and #34 records fresh
+live acceptance and exact-volume cleanup before the parent can close.

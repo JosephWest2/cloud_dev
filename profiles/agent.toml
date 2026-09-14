@@ -1,6 +1,13 @@
-schema_version = 1
+schema_version = 2
 name = "agent"
 market = "spot"
 instance_types = ["c7i.2xlarge", "c7a.2xlarge", "c6i.2xlarge", "c6a.2xlarge"]
 image = "agent"
+architecture = "x86_64"
 disk_gb = 100
+disk_type = "gp3"
+encrypted = true
+delete_on_termination = true
+# Optional restrictions; omitted or empty lists allow all compatible foundation choices.
+# subnet_ids = ["subnet-0123456789abcdef0"]
+# availability_zones = ["us-east-2a"]

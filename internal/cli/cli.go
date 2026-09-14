@@ -42,6 +42,24 @@ Options may appear before or after the command:
   --json                One versioned JSON result on stdout
   --help, -h            Show this help
 
+Reserved batch contract (validated syntax; operations are not available yet):
+  up agent [--count N] [--group GROUP] [--name BASE] [--on-demand]
+  up --retry-missing REQUEST_ID --after ATTEMPT_ID
+  ls [--group GROUP]
+  down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
+  down --group GROUP
+  down --all [--yes]
+  Count means instances; default 1, configured maximum default 10, range 1–100.
+  Name defaults to the group, otherwise agent. Name/group labels are 1–63
+  letters, digits, underscores or hyphens, starting with a letter or digit;
+  labels must not look like an instance ID. Request/attempt IDs use 32 lowercase
+  hex digits.
+  Recovery cannot combine with launch parameters. --resume only reconciles
+  batch receipts; --retry-missing explicitly requests proven missing capacity
+  after the named attempt. These are separate from an SDK retry of one input.
+  Down selectors are exclusive. --yes only applies to down --all; its preview
+  is always required, and noninteractive use without --yes must decline.
+
 Exec options (all local options must precede --):
   --cwd PATH               Remote directory (default: /home/devbox)
   --exec-timeout DURATION   Remote runtime (default: 1h; whole seconds, 1s-24h)
@@ -56,7 +74,8 @@ Logs options:
   Default logs prints status; its exit code describes retrieval, not workload exit.
 
 doctor checks local setup and AWS identity without provisioning resources.
-up launches one instance; Spot is unsupported. ls/down use AWS inventory.
+Available up launches one named On-Demand instance; Spot/batch operations are
+reserved until integration. Existing ls/down use AWS inventory.
 up waits for EC2 + SSM + bootstrap readiness. ssh uses real SSH over SSM.
 ssh-config supports editors/scp/sftp; proxy is its transport helper.
 ssh/proxy reject --json. Failed/finished sessions retain workers: run down.
@@ -117,7 +136,11 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		return emit(r, jsonMode, failureOutput, stderr)
 	}
 	var positional []string
+	var launchFlags lifecycle.LaunchFlags
 	var launch lifecycle.UpOptions
+	var group string
+	all, yes := false, false
+	lifecycleOptions := map[string]bool{}
 	var overrides config.Overrides
 	execOptions := execution.RunOptions{ExecTimeout: execution.DefaultExecTimeout, DeliveryTimeout: execution.DefaultDeliveryTimeout, WaitTimeout: execution.DefaultWaitTimeout}
 	execOptionSet, separator := false, false
@@ -132,8 +155,19 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 			execOptions.Argv = append([]string(nil), args[i+1:]...)
 			break
 		}
-		if a == "--on-demand" {
-			launch.OnDemand = true
+		if a == "--on-demand" || a == "--all" || a == "--yes" {
+			if lifecycleOptions[a] {
+				return fail("lifecycle options must not be repeated; run devbox --help")
+			}
+			lifecycleOptions[a] = true
+			switch a {
+			case "--on-demand":
+				launchFlags.OnDemand = true
+			case "--all":
+				all = true
+			case "--yes":
+				yes = true
+			}
 			continue
 		}
 		if a == "--spot" {
@@ -148,7 +182,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 		key, val, hasVal := strings.Cut(a, "=")
 		switch key {
-		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--resume", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout", "--stream", "--stdout-file", "--stderr-file":
+		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--count", "--group", "--resume", "--retry-missing", "--after", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout", "--stream", "--stdout-file", "--stderr-file":
 			if !hasVal {
 				i++
 				if i >= len(args) || strings.HasPrefix(args[i], "--") {
@@ -158,6 +192,13 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 			}
 			if val == "" {
 				return fail("option values must not be empty; run devbox --help")
+			}
+			switch key {
+			case "--name", "--count", "--group", "--resume", "--retry-missing", "--after":
+				if lifecycleOptions[key] {
+					return fail("lifecycle options must not be repeated; run devbox --help")
+				}
+				lifecycleOptions[key] = true
 			}
 			switch key {
 			case "--stream", "--stdout-file", "--stderr-file":
@@ -197,9 +238,17 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 					execOptions.WaitTimeout = duration
 				}
 			case "--name":
-				launch.Name = val
+				launchFlags.Name = val
+			case "--count":
+				launchFlags.Count = val
+			case "--group":
+				group = val
 			case "--resume":
-				launch.Resume = val
+				launchFlags.Resume = val
+			case "--retry-missing":
+				launchFlags.RetryMissing = val
+			case "--after":
+				launchFlags.After = val
 			case "--config":
 				path = val
 			case "--aws-profile":
@@ -249,8 +298,14 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 		return 0
 	}
-	if command != "up" && (launch.OnDemand || launch.Name != "" || launch.Resume != "") {
+	if command != "up" && (launchFlags.OnDemand || launchFlags.Name != "" || launchFlags.Count != "" || launchFlags.Resume != "" || launchFlags.RetryMissing != "" || launchFlags.After != "") {
 		return fail("launch options require up; run devbox --help")
+	}
+	if group != "" && command != "up" && command != "ls" && command != "down" {
+		return fail("--group requires up, ls or down; run devbox --help")
+	}
+	if (all || yes) && command != "down" {
+		return fail("--all and --yes require down; run devbox --help")
 	}
 	isAccess := command == "ssh" || command == "ssh-config" || command == "proxy"
 	if command != "up" && command != "down" && command != "exec" && command != "logs" && !isAccess && len(positional) > 0 {
@@ -267,14 +322,15 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	if command == "exec" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0]) || !separator || len(execOptions.Argv) == 0 || execOptions.Argv[0] == "") {
 		return fail("use exec with one managed name or instance ID, then -- COMMAND [ARGS...]")
 	}
+	stagedFeature := false
 	if command == "up" {
-		if launch.Resume != "" {
-			if !lifecycle.ValidRequest(launch.Resume) || len(positional) > 0 || launch.OnDemand || launch.Name != "" {
-				return fail("use up --resume REQUEST_ID without launch parameters")
-			}
-		} else if len(positional) != 1 || positional[0] != "agent" || !lifecycle.ValidName(launch.Name) {
-			return fail("use up agent --on-demand --name NAME")
+		launchFlags.Group = group
+		selection, err := lifecycle.ResolveLaunchSelection(positional, launchFlags, config.HardMaxCount)
+		if err != nil {
+			return fail(err.Error())
 		}
+		launch = lifecycle.UpOptions{Name: selection.Name, Resume: selection.Resume, OnDemand: selection.OnDemand}
+		stagedFeature = selection.RetryMissing != "" || selection.Resume == "" && (launchFlags.Count != "" || group != "" || !selection.OnDemand || launchFlags.Name == "")
 	}
 	if isAccess && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0])) {
 		return fail("use ssh/ssh-config/proxy with one friendly name or instance ID")
@@ -282,8 +338,20 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	if (command == "ssh" || command == "proxy") && jsonMode {
 		return fail("interactive ssh and proxy reject --json; use ssh-config --json for separate configuration metadata")
 	}
-	if command == "down" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0])) {
-		return fail("use down with one friendly name or instance ID")
+	if command == "down" {
+		if err := lifecycle.ValidateDownSelection(lifecycle.DownSelection{Targets: positional, Group: group, All: all, Yes: yes}); err != nil {
+			return fail(err.Error())
+		}
+		stagedFeature = len(positional) != 1 || group != "" || all
+	}
+	if command == "ls" && group != "" {
+		if !lifecycle.ValidGroup(group) {
+			return fail("--group requires a valid friendly label of 1–63 characters")
+		}
+		stagedFeature = true
+	}
+	if stagedFeature {
+		return emitLifecycle(lifecycle.Result{SchemaVersion: 1, Command: command, OK: false, ExitCode: 2, Code: "feature_unavailable", Message: "this Spot/batch/group/retry selection is reserved until lifecycle integration; currently use up agent --on-demand --name NAME, up --resume REQUEST_ID, ls, or down with one target", Outcome: lifecycle.Outcome{Status: "feature_unavailable", Instances: []lifecycle.Instance{}}}, jsonMode, stdout, stderr)
 	}
 	if command == "version" {
 		if jsonMode {
