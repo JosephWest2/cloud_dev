@@ -9,7 +9,10 @@ Start with installation and identity below, then follow the
 [foundation setup guide](docs/setup.md) for state bootstrap/migration, a dedicated
 SSH key, provisioning and manifest-v4 export. The
 [MVP 1 acceptance runbook and results](docs/acceptance/01-lifecycle.md) connect the
-complete workflow, failure checks and cleanup evidence. Existing deployments
+complete lifecycle workflow, failure checks and cleanup evidence. The
+[MVP 2 acceptance runbook](docs/acceptance/02-exec-logs.md) covers remote checks,
+literal arguments, complete output, detachment and recovery after teardown.
+Existing deployments
 need the runner/bootstrap update and a real manifest-v4 export before new launches
 or access. Scoped inventory and teardown remain available for older workers.
 

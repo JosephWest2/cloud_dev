@@ -296,6 +296,8 @@ opens a session, sends a readiness command, invokes OpenTofu or reads state.
 Follow the [parent acceptance runbook](acceptance/01-lifecycle.md) for the complete
 launch/shell/rediscovery/cleanup gate. Historical foundation and SSH/editor
 results remain in [#7](acceptance/07-foundation.md) and [#9](acceptance/09-readiness-shell.md).
+Follow the [MVP 2 runbook](acceptance/02-exec-logs.md) for fixture checks,
+literal arguments, complete logs, detachment and recovery after worker teardown.
 
 ## Bootstrap and readiness contract
 
