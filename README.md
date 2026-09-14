@@ -122,7 +122,8 @@ Configuration precedence:
 Relative manifest/profile paths resolve against the config file's directory,
 not the current working directory. Paths in TOML do not expand `~` or variables.
 Options can appear before or after the command and accept `--option=value`.
-Empty option values are errors. Repeated value options use the last value.
+Empty option values are errors. Repeated lifecycle options are rejected;
+other repeated value options use the last value.
 
 A selected profile is passed explicitly to the SDK. In the pinned SDK version,
 that profile takes precedence over ambient access-key environment variables;
