@@ -40,7 +40,7 @@ func cliBatchConfig(t *testing.T, maximum int) string {
 	if err = json.Unmarshal([]byte(testutil.Manifest), &m); err != nil {
 		t.Fatal(err)
 	}
-	m.SchemaVersion = 5
+	m.SchemaVersion = 6
 	m.SubnetIDs = []string{"subnet-12345678", "subnet-87654321"}
 	m.Subnets = []config.Subnet{{ID: m.SubnetIDs[0], AvailabilityZone: "us-east-2a"}, {ID: m.SubnetIDs[1], AvailabilityZone: "us-east-2b"}}
 	for _, instanceType := range p.InstanceTypes {
@@ -106,7 +106,7 @@ func TestPublicBatchLaunchSyntaxResolvesBeforeAWS(t *testing.T) {
 			code := RunWithLifecycle(context.Background(), args, &out, &diag, doctor.Dependencies{}, deps)
 			result := decodeCLIBatch(t, out.Bytes())
 			plan := result.Plan
-			if code != 1 || calls != 1 || result.OK || result.ExitCode != code || result.Code != "service_unavailable" || plan.SchemaVersion != 1 || plan.RequestedCount != tc.count || result.RequestedCount != tc.count || plan.Group != tc.group || plan.BaseName != tc.base || plan.Market != tc.market || plan.Profile != "agent" || len(plan.Choices) < 2 || result.RequestID == "" || plan.RequestID != result.RequestID {
+			if code != 1 || calls != 1 || result.OK || result.ExitCode != code || result.Code != "service_unavailable" || plan.SchemaVersion != 2 || plan.RequestedCount != tc.count || result.RequestedCount != tc.count || plan.Group != tc.group || plan.BaseName != tc.base || plan.Market != tc.market || plan.Profile != "agent" || len(plan.Choices) < 2 || result.RequestID == "" || plan.RequestID != result.RequestID {
 				t.Fatalf("unresolved launch selection exit=%d calls=%d result=%+v", code, calls, result)
 			}
 			if strings.Contains(out.String()+diag.String(), "PRIVATE") {

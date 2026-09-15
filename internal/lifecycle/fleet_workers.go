@@ -4,8 +4,10 @@ import (
 	"context"
 	"net/netip"
 	"sort"
+	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -28,7 +30,12 @@ type fleetWorkerObservation struct {
 // observation failure, including mappings learned from partial API responses.
 // This verifies current live settings. Teardown can remove those observations;
 // the immutable original Fleet response must still count historical fulfillment.
-func VerifyFleetWorkers(ctx context.Context, api FleetInventory, plan LaunchPlan, attempt AttemptReceipt, known []WorkerOutcome) ([]WorkerOutcome, error) {
+func VerifyFleetWorkers(ctx context.Context, api FleetInventory, plan LaunchPlan, attempt AttemptReceipt, known []WorkerOutcome, clocks ...expiry.Clock) ([]WorkerOutcome, error) {
+	var clock expiry.Clock
+	if len(clocks) > 0 {
+		clock = clocks[0]
+	}
+	now := clockNow(clock)
 	workers := map[string]*fleetWorkerObservation{}
 	for _, worker := range known {
 		worker.Volumes = append([]Volume{}, worker.Volumes...)
@@ -82,7 +89,7 @@ func VerifyFleetWorkers(ctx context.Context, api FleetInventory, plan LaunchPlan
 							worker.mismatch, invalid = true, true
 						}
 						worker.seen = true
-						observeFleetInstance(worker, plan, attempt, aws.ToString(reservation.OwnerId), instance)
+						observeFleetInstance(worker, plan, attempt, aws.ToString(reservation.OwnerId), instance, now)
 					}
 				}
 			}
@@ -193,7 +200,7 @@ func VerifyFleetWorkers(ctx context.Context, api FleetInventory, plan LaunchPlan
 	return result, nil
 }
 
-func observeFleetInstance(observation *fleetWorkerObservation, plan LaunchPlan, attempt AttemptReceipt, owner string, instance types.Instance) {
+func observeFleetInstance(observation *fleetWorkerObservation, plan LaunchPlan, attempt AttemptReceipt, owner string, instance types.Instance, now time.Time) {
 	w := &observation.worker
 	actual := record(instance)
 	// Keep stable intended pins until the observation passes; the status reports
@@ -209,6 +216,7 @@ func observeFleetInstance(observation *fleetWorkerObservation, plan LaunchPlan, 
 	}
 	w.Volumes = mergeFleetVolumes(w.Volumes, actual.Volumes)
 	w.RootDeletion = actual.RootDeletion
+	inspectInstanceExpiry(&w.Instance, instance.Tags, now)
 	switch actual.State {
 	case "pending", "running", "stopping", "stopped", "shutting-down", "terminated":
 		w.State = actual.State

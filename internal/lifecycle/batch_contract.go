@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 )
 
 // LaunchPlan is the complete immutable input to a batch, before attempt identity
@@ -38,12 +39,29 @@ type LaunchPlan struct {
 	Execution          config.Execution      `json:"execution"`
 	LaunchLedger       config.LaunchLedger   `json:"launch_ledger"`
 	CreationTags       map[string]string     `json:"creation_tags"`
+	ExpiresAt          string                `json:"expires_at,omitempty"`
 }
 
 // BuildLaunchPlan validates a new request without making any cloud calls. The
 // returned choices are only the profile's intersection with the manifest's
 // approved offerings, never a guessed cartesian product or capacity promise.
 func BuildLaunchPlan(c config.Config, m config.Manifest, p config.Profile, s LaunchSelection, requestID, createdAt string) (LaunchPlan, error) {
+	ttl, err := expiry.ResolveTTL(c.DefaultTTL, s.TTL)
+	if err != nil {
+		return LaunchPlan{}, expiryFailure(err)
+	}
+	created, err := expiry.ParseTimestamp(createdAt)
+	if err != nil {
+		return LaunchPlan{}, expiryFailure(err)
+	}
+	window, err := expiry.NewWindow(fixedClock{created}, ttl)
+	if err != nil {
+		return LaunchPlan{}, expiryFailure(err)
+	}
+	return buildLaunchPlan(c, m, p, s, requestID, window.CreatedAt, window.ExpiresAt, expiry.LaunchPlanSchema)
+}
+
+func buildLaunchPlan(c config.Config, m config.Manifest, p config.Profile, s LaunchSelection, requestID, createdAt, expiresAt string, schema int) (LaunchPlan, error) {
 	var plan LaunchPlan
 	var err error
 	p, err = config.NormalizeProfile(p)
@@ -100,7 +118,7 @@ func BuildLaunchPlan(c config.Config, m config.Manifest, p config.Profile, s Lau
 		return choices[i].SubnetID < choices[j].SubnetID
 	})
 	plan = LaunchPlan{
-		SchemaVersion: 1, Account: c.ExpectedAccount, Region: c.Region, Deployment: c.Deployment, Owner: c.Owner,
+		SchemaVersion: schema, ExpiresAt: expiresAt, Account: c.ExpectedAccount, Region: c.Region, Deployment: c.Deployment, Owner: c.Owner,
 		RequestID: requestID, CreatedAt: createdAt, Profile: p.Name, BaseName: s.Name, Group: s.Group,
 		Market: market, RequestedCount: s.Count, Choices: choices, Image: m.Images[p.Image],
 		RootDisk:        config.RootDisk{SizeGB: p.DiskGB, Type: p.DiskType, Encrypted: p.Encrypted, DeleteOnTermination: p.DeleteOnTermination},
@@ -110,6 +128,12 @@ func BuildLaunchPlan(c config.Config, m config.Manifest, p config.Profile, s Lau
 		CreationTags: map[string]string{"ManagedBy": "devbox", "Deployment": c.Deployment, "Owner": c.Owner,
 			"Profile": p.Name, "Name": s.Name, "BaseName": s.Name, "RequestId": requestID,
 			"BatchId": requestID, "CreatedAt": createdAt, "NamingVersion": "1"},
+	}
+	if schema == expiry.LaunchPlanSchema {
+		plan.CreationTags[expiry.TagKey] = expiresAt
+	}
+	if err := expiry.ValidatePlanFields(schema, plan.Window(), plan.CreationTags); err != nil {
+		return LaunchPlan{}, expiryFailure(err)
 	}
 	if s.Group != "" {
 		plan.CreationTags["Group"] = s.Group
@@ -181,6 +205,8 @@ type BatchResult struct {
 // BatchOutcome is separate from allocation completeness: all capacity can be
 // allocated while individual workers fail readiness. Known IDs survive either.
 type BatchOutcome struct {
+	TTL            *string          `json:"ttl"`
+	ExpiresAt      *string          `json:"expires_at"`
 	RequestID      string           `json:"request_id"`
 	Status         string           `json:"status"`
 	RequestedCount int              `json:"requested_count"`
@@ -226,5 +252,5 @@ func (p LaunchPlan) Preview() string {
 	for _, c := range p.Choices {
 		choices = append(choices, c.InstanceType+"/"+c.SubnetID+"/"+c.AvailabilityZone)
 	}
-	return fmt.Sprintf("profile=%s region=%s count=%d market=%s base=%s group=%s eligible=%s", p.Profile, p.Region, p.RequestedCount, p.Market, p.BaseName, p.Group, strings.Join(choices, ","))
+	return fmt.Sprintf("profile=%s region=%s count=%d market=%s base=%s group=%s eligible=%s", p.Profile, p.Region, p.RequestedCount, p.Market, p.BaseName, p.Group, strings.Join(choices, ",")) + " " + p.ExpiryPreview()
 }

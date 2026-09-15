@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 )
 
 // LaunchFlags records command-line intent before defaults are applied. Empty
@@ -13,6 +14,7 @@ type LaunchFlags struct {
 	Count, Name, Group          string
 	Resume, RetryMissing, After string
 	OnDemand                    bool
+	TTL                         *string
 }
 
 // LaunchSelection is a pure, validated selection, not authorization to allocate.
@@ -21,6 +23,7 @@ type LaunchSelection struct {
 	Profile, Name, Group        string
 	Count                       int
 	OnDemand                    bool
+	TTL                         *string
 	Resume, RetryMissing, After string
 }
 
@@ -55,8 +58,8 @@ func ValidGroup(group string) bool { return ValidName(group) }
 func ResolveLaunchSelection(positional []string, flags LaunchFlags, maximum int) (LaunchSelection, error) {
 	var selection LaunchSelection
 	if flags.Resume != "" || flags.RetryMissing != "" {
-		if len(positional) != 0 || flags.Count != "" || flags.Name != "" || flags.Group != "" || flags.OnDemand || flags.Resume != "" && flags.RetryMissing != "" {
-			return selection, errors.New("recovery requires up --resume REQUEST_ID or up --retry-missing REQUEST_ID --after ATTEMPT_ID without launch parameters")
+		if len(positional) != 0 || flags.Count != "" || flags.Name != "" || flags.Group != "" || flags.OnDemand || flags.TTL != nil || flags.Resume != "" && flags.RetryMissing != "" {
+			return selection, failure("replay_override", "recovery rejects all explicit launch overrides, including --ttl; create a new request to change its lifetime")
 		}
 		if flags.Resume != "" {
 			if !ValidRequest(flags.Resume) || flags.After != "" {
@@ -70,6 +73,11 @@ func ResolveLaunchSelection(positional []string, flags LaunchFlags, maximum int)
 		}
 		selection.RetryMissing, selection.After = flags.RetryMissing, flags.After
 		return selection, nil
+	}
+	if flags.TTL != nil {
+		if _, err := expiry.ParseTTL(*flags.TTL); err != nil {
+			return selection, expiryFailure(err)
+		}
 	}
 	if flags.After != "" {
 		return selection, errors.New("--after requires --retry-missing REQUEST_ID")
@@ -94,7 +102,7 @@ func ResolveLaunchSelection(positional []string, flags LaunchFlags, maximum int)
 	if err != nil {
 		return selection, err
 	}
-	return LaunchSelection{Profile: positional[0], Name: name, Group: flags.Group, Count: count, OnDemand: flags.OnDemand}, nil
+	return LaunchSelection{Profile: positional[0], Name: name, Group: flags.Group, Count: count, OnDemand: flags.OnDemand, TTL: flags.TTL}, nil
 }
 
 // DownSelection selects either explicit names/IDs, one group, or the full

@@ -26,7 +26,7 @@ func batchFixture(t *testing.T) (config.Config, config.Manifest, config.Profile,
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.SchemaVersion = 5
+	m.SchemaVersion = 6
 	m.SubnetIDs = []string{"subnet-12345678", "subnet-87654321"}
 	m.Subnets = []config.Subnet{{ID: m.SubnetIDs[0], AvailabilityZone: "us-east-2a"}, {ID: m.SubnetIDs[1], AvailabilityZone: "us-east-2b"}}
 	p.InstanceTypes = []string{"c7i.2xlarge", "c6i.2xlarge"}
@@ -170,7 +170,7 @@ func receiptFixture(t *testing.T) BatchReceipt {
 		t.Fatal(err)
 	}
 	aid, _ := AttemptID(plan.RequestID, "")
-	r := BatchReceipt{SchemaVersion: 2, RequestID: plan.RequestID, Plan: plan, PlanSHA256: plan.Digest()}
+	r := BatchReceipt{SchemaVersion: 3, RequestID: plan.RequestID, Plan: plan, PlanSHA256: plan.Digest()}
 	r.Attempts = []AttemptReceipt{{AttemptID: aid, ClientToken: attemptToken(r.PlanSHA256, aid, 2), RequestedCount: 2, CreatedAt: plan.CreatedAt, State: "complete", FleetID: "fleet-01234567-89ab-cdef-0123-456789abcdef", InstanceIDs: []string{"i-12345678"}, Errors: []ResourceError{{Code: "capacity_unavailable", InstanceType: "c6i.2xlarge"}}}}
 	return r
 }
@@ -284,6 +284,7 @@ func TestCompleteReceiptRequiresExplicitFulfillmentArray(t *testing.T) {
 
 func TestLegacyLaunchCannotBypassV5Integration(t *testing.T) {
 	c, m, _, _ := batchFixture(t)
+	m.SchemaVersion = 5
 	// The bundled profile needs each type in the manifest even though the
 	// legacy allocator would have selected only its first type.
 	p, err := config.LoadProfile("")
@@ -301,7 +302,7 @@ func TestLegacyLaunchCannotBypassV5Integration(t *testing.T) {
 		t.Fatal("version 5 reached legacy allocator")
 		return nil, nil
 	}}, io.Discard)
-	if result.ExitCode != 2 || result.Code != "feature_unavailable" {
+	if result.ExitCode != 2 || result.Code != "manifest_upgrade_required" {
 		t.Fatalf("legacy path bypassed integration: %+v", result)
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
@@ -235,15 +236,15 @@ func TestAttemptPostDispatchPersistenceFailureRetainsAllIdentities(t *testing.T)
 	}
 }
 
-func TestAttemptSDKRejectionAfterUncertainRetryRemainsUnknown(t *testing.T) {
+func TestAttemptSDKDisablesAutomaticRetriesAndPreservesUncertainty(t *testing.T) {
 	for _, retryFirst := range []bool{false, true} {
-		t.Run(map[bool]string{false: "single-denial", true: "uncertain-then-denial"}[retryFirst], func(t *testing.T) {
+		t.Run(map[bool]string{false: "single-denial", true: "lost-response-no-retry"}[retryFirst], func(t *testing.T) {
 			s, m, p, r, _, ledger, _, _ := attemptFixture(t)
-			calls := 0
+			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls++
+				calls.Add(1)
 				_, _ = io.Copy(io.Discard, r.Body)
-				if retryFirst && calls == 1 {
+				if retryFirst && calls.Load() == 1 {
 					conn, _, err := w.(http.Hijacker).Hijack()
 					if err != nil {
 						t.Error(err)
@@ -260,10 +261,10 @@ func TestAttemptSDKRejectionAfterUncertainRetryRemainsUnknown(t *testing.T) {
 			result, err := s.Dispatch(context.Background(), m, p, r, func(BatchReceipt, string) error { return nil })
 			wantState, wantCalls := "rejected", 1
 			if retryFirst {
-				wantState, wantCalls = "unknown", 2
+				wantState, wantCalls = "unknown", 1
 			}
-			if result.Receipt.Attempts[0].State != wantState || ledger.response.Attempt.State != wantState || calls != wantCalls {
-				t.Fatalf("retry evidence lost: state=%s calls=%d err=%v", result.Receipt.Attempts[0].State, calls, err)
+			if result.Receipt.Attempts[0].State != wantState || ledger.response.Attempt.State != wantState || calls.Load() != int32(wantCalls) {
+				t.Fatalf("retry evidence lost: state=%s calls=%d err=%v", result.Receipt.Attempts[0].State, calls.Load(), err)
 			}
 			if retryFirst && err == nil {
 				t.Fatal("uncertain allocation reported successful")

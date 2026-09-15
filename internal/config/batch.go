@@ -202,7 +202,7 @@ func validateManifestV5(m Manifest) error {
 }
 
 // ValidateProfileManifest is pure validation of the complete manifest, profile
-// and their compatible choices. It requires version 5 for a batch launch. It
+// and their compatible choices. It accepts v5/v6 pins for batch validation; allocation separately requires v6. It
 // does not contact AWS: later foundation verification must confirm these pins.
 // The caller must also match the manifest scope to the selected configuration.
 func ValidateProfileManifest(p Profile, m Manifest) ([]LaunchChoice, error) {
@@ -210,7 +210,7 @@ func ValidateProfileManifest(p Profile, m Manifest) ([]LaunchChoice, error) {
 	if err != nil {
 		return nil, err
 	}
-	if m.SchemaVersion != 5 {
+	if m.SchemaVersion != 5 && m.SchemaVersion != 6 {
 		return nil, errors.New("batch launch requires manifest version 5; apply and re-export the foundation")
 	}
 	c := Config{ExpectedAccount: m.Account, Region: m.Region, Deployment: m.Deployment, Owner: m.Owner}

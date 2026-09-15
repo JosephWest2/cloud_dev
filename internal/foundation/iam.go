@@ -91,7 +91,7 @@ func checkIAM(ctx context.Context, api IAM, m config.Manifest) error {
 			return fail
 		}
 	}
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		return checkSpotRole(ctx, api, m.Account)
 	}
 	return nil

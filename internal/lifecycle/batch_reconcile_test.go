@@ -120,7 +120,7 @@ func reconcileFixture(t *testing.T, state string, recorded, observed int) (Launc
 	prepared := PreparedAttempt{SchemaVersion: 1, RequestID: plan.RequestID, PlanSHA256: plan.Digest(), InputSHA256: fleetInputDigest(input), Attempt: preparedAttempt}
 	response := AttemptResponse{SchemaVersion: 1, RequestID: plan.RequestID, PlanSHA256: plan.Digest(), InputSHA256: prepared.InputSHA256, Attempt: attempt, Workers: append([]WorkerOutcome{}, workers[:recorded]...)}
 	snapshot := LaunchSnapshot{
-		Receipt:  BatchReceipt{SchemaVersion: 2, RequestID: plan.RequestID, Plan: plan, PlanSHA256: plan.Digest(), Attempts: []AttemptReceipt{attempt}},
+		Receipt:  BatchReceipt{SchemaVersion: 3, RequestID: plan.RequestID, Plan: plan, PlanSHA256: plan.Digest(), Attempts: []AttemptReceipt{attempt}},
 		Prepared: map[string]PreparedAttempt{attempt.AttemptID: prepared}, Claims: map[string]DispatchClaim{attempt.AttemptID: expectedClaim(prepared)}, Responses: map[string]AttemptResponse{attempt.AttemptID: response},
 	}
 	api := &reconcileInventory{account: plan.Account, instances: map[string]types.Instance{}, exactErrors: map[string]error{}, volumes: map[string]types.Volume{}}

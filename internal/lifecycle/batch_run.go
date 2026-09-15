@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 )
 
-// runSelectedUp keeps legacy receipts on their original recovery path. New v5
+// runSelectedUp keeps legacy receipts on their observation path. New v6
 // launches and shared recovery use one schema-v2 result, including early errors.
 func runSelectedUp(ctx context.Context, path string, overrides config.Overrides, o Options, deps Dependencies, diagnostics io.Writer) Result {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
@@ -33,6 +34,11 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 		if r.ResumeCommand == "" && ValidRequest(r.RequestID) {
 			r.ResumeCommand = prefix + " up --resume " + r.RequestID
 		}
+		setBatchExpiry(&r.BatchOutcome)
+		now := clockNow(deps.Clock)
+		for n := range r.Workers {
+			setExpiryStatus(&r.Workers[n].Instance, now)
+		}
 		completeBatchResult(ctx, &r, err, usage)
 		return Result{Batch: &r, RecoveryPrefix: prefix, SchemaVersion: 2, Command: "up", OK: r.OK, ExitCode: r.ExitCode, Code: r.Code, Message: r.Message}
 	}
@@ -42,6 +48,13 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 	}
 	prefix = config.CommandPrefix(path, c)
 	selection := *o.Selection
+	if selection.Resume != "" || selection.RetryMissing != "" {
+		if selection.TTL != nil || selection.Name != "" || selection.Group != "" || selection.Profile != "" || selection.Count != 0 || selection.OnDemand {
+			return finish(failure("replay_override", "Recovery rejects explicit launch overrides, including --ttl."), true)
+		}
+	} else if _, err := expiry.ResolveTTL(c.DefaultTTL, selection.TTL); err != nil {
+		return finish(expiryFailure(err), true)
+	}
 	for _, id := range []string{selection.Resume, selection.RetryMissing} {
 		if ValidRequest(id) {
 			r.RequestID, r.Status = id, "allocation_unknown"
@@ -83,15 +96,12 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 	if err != nil {
 		return finish(failure("manifest_invalid", err.Error()), false)
 	}
-	if m.SchemaVersion != 5 {
-		if selection.Resume != "" || selection.RetryMissing == "" && selection.OnDemand && selection.Count == 1 && selection.Group == "" {
-			return legacy()
-		}
-		return finish(failure("manifest_upgrade_required", "Spot, batch and shared recovery require the version-5 foundation; apply and re-export it before launching"), true)
+	if m.SchemaVersion == 4 {
+		return finish(failure("manifest_upgrade_required", "Shared recovery requires manifest v5/v6; new allocation requires the expiry-capable v6 foundation. Inventory and down remain available."), true)
 	}
 	var prepared BatchReceipt
 	if selection.Resume == "" && selection.RetryMissing == "" {
-		prepared, err = NewBatchReceipt(c, m, p, selection)
+		prepared, err = NewBatchReceiptWithClock(c, m, p, selection, deps.Clock)
 		if err != nil {
 			return finish(err, true)
 		}
@@ -116,19 +126,22 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 	if !ok {
 		return finish(failure("recovery_unavailable", "exact worker and Fleet inspection is required before batch operations"), false)
 	}
+	serviceCopy := *service
+	service = &serviceCopy
+	service.Clock = deps.Clock
 	startup := &batchStartup{api: inventory, service: service}
-	dispatcher := &AttemptService{API: service.Fleet, Scope: c, Ledger: ledger, Cache: store, VerifyFoundation: service.VerifyFoundation,
+	dispatcher := &AttemptService{Clock: deps.Clock, API: service.Fleet, Scope: c, Ledger: ledger, Cache: store, VerifyFoundation: service.VerifyFoundation,
 		VerifyWorkers: func(ctx context.Context, plan LaunchPlan, attempt AttemptReceipt, workers []WorkerOutcome) ([]WorkerOutcome, error) {
 			startup.remember(plan, []AttemptReceipt{attempt})
-			observed, err := VerifyFleetWorkers(ctx, inventory, plan, attempt, workers)
+			observed, err := VerifyFleetWorkers(ctx, inventory, plan, attempt, workers, deps.Clock)
 			if startupObservationUnavailable(err) {
 				startup.retryable = append(startup.retryable, err)
 			}
 			return observed, err
 		}}
-	recovery := &RecoveryService{Scope: c, Ledger: ledger, Cache: store, Dispatcher: dispatcher, CommandPrefix: prefix,
+	recovery := &RecoveryService{Clock: deps.Clock, Scope: c, Ledger: ledger, Cache: store, Dispatcher: dispatcher, CommandPrefix: prefix,
 		Observe: func(ctx context.Context, snapshot LaunchSnapshot) (LaunchObservation, error) {
-			observed, err := ReconcileLaunch(ctx, inventory, snapshot)
+			observed, err := ReconcileLaunch(ctx, inventory, snapshot, deps.Clock)
 			if !errors.Is(err, ErrLaunchLedgerCorrupt) {
 				startup.remember(observed.Receipt.Plan, observed.Receipt.Attempts)
 				transient := err != nil && len(observed.Errors) > 0
@@ -167,7 +180,7 @@ func runSelectedUp(ctx context.Context, path string, overrides config.Overrides,
 	}
 	// Readiness cannot change capacity evidence or allocate replacements. Keep
 	// observing independently verified peers even if allocation was partial.
-	if len(r.Workers) > 0 && r.Plan.SchemaVersion == 1 {
+	if len(r.Workers) > 0 && supportedPlan(r.Plan.SchemaVersion) {
 		err = startup.readiness(ctx, recovery, &r.BatchOutcome, err, diagnostics)
 	}
 	return finish(err, false)
@@ -193,7 +206,7 @@ func writeLaunchPreview(w io.Writer, receipt BatchReceipt) error {
 	if len(receipt.Attempts) > 0 {
 		count = receipt.Attempts[len(receipt.Attempts)-1].RequestedCount
 	}
-	_, err := fmt.Fprintf(w, "devbox: launch profile=%s region=%s market=%s count=%d original_count=%d base=%q group=%q eligible_types=%s eligible_subnets_azs=%s\n", p.Profile, p.Region, p.Market, count, p.RequestedCount, p.BaseName, p.Group, strings.Join(keys(types), ","), strings.Join(keys(places), ","))
+	_, err := fmt.Fprintf(w, "devbox: launch profile=%s region=%s market=%s count=%d original_count=%d base=%q group=%q eligible_types=%s eligible_subnets_azs=%s %s\n", p.Profile, p.Region, p.Market, count, p.RequestedCount, p.BaseName, p.Group, strings.Join(keys(types), ","), strings.Join(keys(places), ","), p.ExpiryPreview())
 	return err
 }
 
@@ -237,7 +250,7 @@ func completeBatchResult(ctx context.Context, r *BatchResult, err error, usage b
 			code, message = id.Code, id.Message
 		}
 		r.Errors = append(r.Errors, ResourceError{Code: code, Message: message})
-		if r.OK || r.Status == "prepared" || r.Status == "allocation_unknown" || usage {
+		if r.OK || r.Status == "prepared" || r.Status == "allocation_unknown" || usage || code == "request_expired" || code == "legacy_request_no_expiry" || code == "manifest_upgrade_required" || code == "clock_invalid" {
 			r.Code, r.Message, r.OK, r.ExitCode = code, message, false, 1
 		}
 	}

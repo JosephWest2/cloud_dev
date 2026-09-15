@@ -48,7 +48,7 @@ func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p 
 }
 
 func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Profile) []Check {
-	if m.SchemaVersion == 5 && ctx.Err() == nil {
+	if (m.SchemaVersion == 5 || m.SchemaVersion == 6) && ctx.Err() == nil {
 		if _, err := config.ValidateProfileManifest(p, m); err != nil {
 			return []Check{{"foundation_configuration", err}}
 		}
@@ -66,7 +66,7 @@ func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Pr
 		{"foundation_results", func() error { return CheckResults(ctx, clients.S3, m.Results, m.Deployment, m.Owner) }},
 		{"foundation_execution", func() error { return checkExecution(ctx, clients.SSM, clients.S3, m) }},
 	}
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		probes = append(probes, struct {
 			name string
 			run  func() error

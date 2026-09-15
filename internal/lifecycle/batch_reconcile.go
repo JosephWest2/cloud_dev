@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
@@ -28,6 +29,7 @@ type LaunchObservation struct {
 }
 
 type launchReconciler struct {
+	clock      expiry.Clock
 	api        BatchInventory
 	snapshot   LaunchSnapshot
 	out        LaunchObservation
@@ -38,8 +40,12 @@ type launchReconciler struct {
 
 // ReconcileLaunch is observation-only. Even an empty, fully paginated inventory
 // cannot supply the original allocation bound that an immutable response lacks.
-func ReconcileLaunch(ctx context.Context, api BatchInventory, snapshot LaunchSnapshot) (LaunchObservation, error) {
-	r := &launchReconciler{api: api, snapshot: snapshot, out: LaunchObservation{Receipt: cloneBatch(snapshot.Receipt), Workers: []WorkerOutcome{}, Errors: []ResourceError{}, Bounded: true}, attempts: map[string]int{}, workers: map[string]WorkerOutcome{}, historical: map[string]bool{}}
+func ReconcileLaunch(ctx context.Context, api BatchInventory, snapshot LaunchSnapshot, clocks ...expiry.Clock) (LaunchObservation, error) {
+	var clock expiry.Clock
+	if len(clocks) > 0 {
+		clock = clocks[0]
+	}
+	r := &launchReconciler{clock: clock, api: api, snapshot: snapshot, out: LaunchObservation{Receipt: cloneBatch(snapshot.Receipt), Workers: []WorkerOutcome{}, Errors: []ResourceError{}, Bounded: true}, attempts: map[string]int{}, workers: map[string]WorkerOutcome{}, historical: map[string]bool{}}
 	for _, worker := range snapshotWorkers(snapshot) {
 		r.workers[worker.ID] = worker
 	}
@@ -195,6 +201,7 @@ func (r *launchReconciler) retain(attemptID, id string, choice config.LaunchChoi
 }
 
 func (r *launchReconciler) scan(ctx context.Context) {
+	now := clockNow(r.clock)
 	p := r.out.Receipt.Plan
 	input := &ec2.DescribeInstancesInput{Filters: []types.Filter{
 		{Name: aws.String("tag:ManagedBy"), Values: []string{"devbox"}},
@@ -220,7 +227,7 @@ func (r *launchReconciler) scan(ctx context.Context) {
 							valid = valid && historicalInstanceMatches(p, r.out.Receipt.Attempts[n], worker, aws.ToString(reservation.OwnerId), instance)
 						} else {
 							observation := &fleetWorkerObservation{worker: worker}
-							observeFleetInstance(observation, p, r.out.Receipt.Attempts[n], aws.ToString(reservation.OwnerId), instance)
+							observeFleetInstance(observation, p, r.out.Receipt.Attempts[n], aws.ToString(reservation.OwnerId), instance, now)
 							valid = valid && !observation.mismatch
 						}
 					}
@@ -353,7 +360,7 @@ func (r *launchReconciler) verify(ctx context.Context) {
 		attempt := r.out.Receipt.Attempts[n]
 		attempt.InstanceIDs = []string{id}
 		inspection := &historicalFleetInventory{FleetInventory: r.api, r: r, attempt: attempt, known: known, historical: r.historical[id]}
-		workers, err := VerifyFleetWorkers(ctx, inspection, r.out.Receipt.Plan, attempt, []WorkerOutcome{known})
+		workers, err := VerifyFleetWorkers(ctx, inspection, r.out.Receipt.Plan, attempt, []WorkerOutcome{known}, r.clock)
 		if len(workers) != 1 {
 			r.problem(id, "worker_inventory_invalid", "Exact worker inspection returned contradictory identities.")
 			continue

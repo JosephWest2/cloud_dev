@@ -333,7 +333,7 @@ func (l *S3LaunchLedger) Load(ctx context.Context, request string) (LaunchSnapsh
 	if plan.RequestID != request || !l.validPlan(plan) {
 		return s, ErrLaunchLedgerCorrupt
 	}
-	s.Receipt = BatchReceipt{SchemaVersion: 2, RequestID: request, Plan: plan, PlanSHA256: plan.Digest(), Attempts: []AttemptReceipt{}}
+	s.Receipt = BatchReceipt{SchemaVersion: batchVersion(plan.SchemaVersion), RequestID: request, Plan: plan, PlanSHA256: plan.Digest(), Attempts: []AttemptReceipt{}}
 	parent := ""
 	for n := 0; n <= MaxLaunchAttempts; n++ {
 		id, _ := AttemptID(request, parent)

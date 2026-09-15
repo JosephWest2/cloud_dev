@@ -142,7 +142,7 @@ func TestFleetSDKSerializedMarketAndOverrides(t *testing.T) {
 			// resource receives every tag at creation in lexical key order.
 			tags := [][2]string{
 				{"AttemptId", attempt.AttemptID}, {"BaseName", "smoke-batch"}, {"BatchId", strings.Repeat("a", 32)},
-				{"CreatedAt", "2026-09-14T00:00:00Z"}, {"Deployment", "test"}, {"Group", "smoke-batch"},
+				{"CreatedAt", "2026-09-14T00:00:00Z"}, {"Deployment", "test"}, {"ExpiresAt", "2026-09-14T02:00:00Z"}, {"Group", "smoke-batch"},
 				{"ManagedBy", "devbox"}, {"Name", "smoke-batch"}, {"NamingVersion", "1"},
 				{"Owner", "test-owner"}, {"Profile", "agent"}, {"RequestId", strings.Repeat("a", 32)},
 			}
