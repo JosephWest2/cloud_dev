@@ -178,6 +178,15 @@ func (s *Service) exact(ctx context.Context, id string) (record, bool) {
 	}
 	return rs[0], true
 }
+
+// Historical absence is benign only after policy verifies an already-terminal
+// row. Discarded malformed mappings and explicit incompatible root types are
+// errors, not absence. This exception never authorizes deletion observation.
+func historicalMappingsAbsent(r record, reason expiry.Reason) bool {
+	return reason == expiry.AlreadyTerminated && !r.conflict && !r.badMapping &&
+		len(r.volumes) == 0 && (r.rootType == "" || r.rootType == "ebs")
+}
+
 func rootProblem(r record) string {
 	if r.badMapping || r.rootType != "ebs" || r.rootDevice == "" {
 		return "root_volume_unverified"

@@ -106,9 +106,16 @@ non-root failures remain visible even when the root was verified deleted.
 
 If terminal EC2 no longer returns mappings, the service uses the mappings already
 captured in this invocation. If a later invocation has no mapping, it reports the
-root as unavailable: it does not reconstruct authority from guesses or enumerate
-regional volumes. Investigate using the earlier run's retained
-`termination_prepared`/`outcome` events, exact instance and volume IDs, scope,
+root as unavailable. For a verified already-terminated row with no malformed or
+contradictory mapping evidence, this is benign in execution and dry-run: preserve
+the exact ID and `already_terminated` status, leave `cleaned_count` at zero, and do
+not fail the run solely because historical mappings disappeared. Execution still
+requires the complete singular exact-ID recheck; dry-run only evaluates discovery
+and keeps `terminated_count` zero. Live or still-terminating workers with missing
+roots, retained or unverified flags, contradictory mappings and observation errors
+remain failures. The service does not reconstruct authority from guesses or
+enumerate regional volumes. Investigate historical deletion using the earlier
+run's retained `termination_prepared`/`outcome` events, exact instance and volume IDs, scope,
 expiry, flags and timestamps. #47 supplies durable routing and operational recovery
 instructions. The service never deletes volumes, results, ledger or foundation.
 

@@ -189,6 +189,9 @@ func (s *Service) Run(parent context.Context, dryRun bool) (expiry.Result, error
 		o := expiry.Outcome{Decision: cloneDecision(d), Status: "skipped", RootDeletion: "not_observed", Volumes: cloneVolumes(rec.volumes), Errors: []expiry.Problem{}}
 		if d.Reason == expiry.AlreadyTerminated {
 			o.Status = "already_terminated"
+			if historicalMappingsAbsent(rec, d.Reason) {
+				o.RootDeletion = "unavailable"
+			}
 		}
 		if d.Reason == expiry.AlreadyTerminating {
 			o.Status = "already_terminating"
@@ -218,6 +221,9 @@ func (s *Service) Run(parent context.Context, dryRun bool) (expiry.Result, error
 			return
 		}
 		if dryRun {
+			if historicalMappingsAbsent(w.record, w.selected.Reason) {
+				return
+			}
 			if w.selected.Eligible || w.selected.Reason == expiry.AlreadyTerminated || w.selected.Reason == expiry.AlreadyTerminating {
 				if code := rootProblem(w.record); code != "" {
 					addProblem(&w.outcome, code)

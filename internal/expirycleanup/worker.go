@@ -16,8 +16,9 @@ func setRootDiagnostic(o *expiry.Outcome, code string) {
 }
 func (s *Service) prepare(ctx context.Context, runID string, w *worker) {
 	o := &w.outcome
+	historical := historicalMappingsAbsent(w.record, w.selected.Reason)
 	code := rootProblem(w.record)
-	if code != "" {
+	if code != "" && !historical {
 		addProblem(o, code)
 		setRootDiagnostic(o, code)
 		if w.selected.Eligible {
@@ -74,6 +75,15 @@ func (s *Service) prepare(ctx context.Context, runID string, w *worker) {
 	if d.Reason == expiry.AlreadyTerminated {
 		o.Status = "already_terminated"
 		w.terminal = true
+		if historical {
+			// The exact recheck established terminal EC2 state, but this run
+			// captured no volume authority. Keep deletion unavailable without
+			// turning ordinary historical absence into a cleanup failure.
+			if !historicalMappingsAbsent(current, d.Reason) {
+				addProblem(o, "root_volume_unverified")
+			}
+			return
+		}
 		w.active = true
 		return
 	}

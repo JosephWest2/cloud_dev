@@ -216,6 +216,18 @@ successful response is not. Report retained roots as retained and unknown mappin
 as unavailable; do not invent cleaned counts. Never call DeleteVolume, enumerate
 and delete regional volumes, or delete results, launch history, or foundation.
 
+A later scan may find a verified already-terminated instance after its historical
+mappings have disappeared. With no captured mappings or contradictory mapping
+evidence, this is a benign terminal observation in execution and dry-run: retain
+the exact ID and `already_terminated` status, report root deletion as `unavailable`,
+and add nothing to `cleaned_count`. Execution still requires a complete singular
+exact-ID recheck; dry-run uses its verified discovery decision and keeps both
+termination/deletion counts zero. Missing historical evidence alone is not an
+actionable root failure. Missing roots on live or still-terminating workers,
+malformed/conflicting mappings, known retained or unverified root flags, and failed
+observations remain errors. Preserve captured mappings within an invocation for
+exact deletion observation even if EC2 subsequently drops them.
+
 `Sink.Emit(context.Context, Event) error` must honor the bounded context, support
 concurrent workers, and acknowledge an owned immutable event snapshot before
 returning nil. Callers do not hold service locks across sink calls. The off-worker
@@ -277,8 +289,9 @@ verified. Benign future/missing-expiry/terminal skips and a valid expiry change
 on recheck need not produce an error. Malformed/duplicate tags, unrelated scope,
 invalid state/identity, failed rechecks, retained/unverified roots, denied or
 unresolved termination, and sink failures add `Problem` diagnostics and prevent
-`complete=true`. Recheck scope drift is `scope_mismatch`; absent/contradictory
-exact-ID responses are `resource_unverified`. Use stable service error codes
+`complete=true`. The benign historical mapping absence described above is excluded
+from unverified-root failures. Recheck scope drift is `scope_mismatch`;
+absent/contradictory exact-ID responses are `resource_unverified`. Use stable service error codes
 `scan_incomplete`, `identity_unverified`, `termination_denied`,
 `termination_protected`, `termination_unresolved`, `root_volume_unverified`,
 `root_volume_retained`, `volume_unresolved`, `evidence_unavailable`, `interrupted`.

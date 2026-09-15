@@ -761,6 +761,10 @@ func TestTerminalAndNoCandidateOutcomes(t *testing.T) {
 					if !r.OK || r.CleanedCount != 1 {
 						t.Fatal(r)
 					}
+				} else if root == "missing" && state == "terminated" {
+					if !r.OK || !r.Complete || r.CleanedCount != 0 || len(f.volumes) != 0 || r.Instances[0].Status != "already_terminated" || r.Instances[0].RootDeletion != "unavailable" || len(r.Instances[0].Errors) != 0 {
+						t.Fatal(r)
+					}
 				} else if r.OK || r.CleanedCount != 0 || len(f.volumes) != 0 {
 					t.Fatal(r)
 				}
