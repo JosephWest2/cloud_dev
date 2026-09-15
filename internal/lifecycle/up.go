@@ -2,12 +2,10 @@ package lifecycle
 
 import (
 	"context"
-	"errors"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/smithy-go"
 )
 
 type UpOptions struct {
@@ -37,13 +35,7 @@ func (s *Service) Up(ctx context.Context, m config.Manifest, p config.Profile, o
 		}
 		r, err = store.Load(o.Resume)
 	} else {
-		if !o.OnDemand {
-			return result, failure("spot_unsupported", "this launch path requires explicit On-Demand; use devbox up agent --on-demand --name NAME; Spot is unsupported")
-		}
-		if !ValidName(o.Name) {
-			return result, failure("name_invalid", "--name must be 1–63 letters, digits, underscores or hyphens and must not look like an instance ID")
-		}
-		r, err = newReceipt(parameters(s.Scope, m, p, o.Name))
+		return result, failure("legacy_request_no_expiry", "Legacy allocation is retired; create a new request through the expiry-capable Fleet path.")
 	}
 	if err != nil {
 		return result, err
@@ -71,76 +63,19 @@ func (s *Service) Up(ctx context.Context, m config.Manifest, p config.Profile, o
 	if r.State != "prepared" {
 		return s.reconcile(ctx, r, store, result)
 	}
-	if rp != parameters(s.Scope, m, p, rp.Name) {
-		return result, failure("replay_parameters_changed", "current profile or manifest changes this prepared request; restore its original launch parameters; no launch performed")
-	}
-	if s.VerifyFoundation == nil {
-		return result, failure("foundation_unavailable", "deployed-resource verifier unavailable; reinstall devbox")
-	}
-	if err = s.VerifyFoundation(ctx, m, p); err != nil {
-		return result, err
-	}
-	// Even a prepared replay first reconciles the request identity; negative name
-	// scans are a convenience check, never a distributed uniqueness guarantee.
+	// A prepared historical receipt can still expose workers accepted by an old
+	// client. Observe those identities, but never send RunInstances again.
 	found, err := s.requestMatches(ctx, r)
-	if err != nil {
+	if len(found) > 0 {
 		result.Instances = found
+	}
+	if err != nil {
 		return result, err
 	}
 	if len(found) > 0 {
 		return s.finish(ctx, r, store, result, found)
 	}
-	named, err := s.inventory(ctx, "", rp.Name, "")
-	if err != nil {
-		return result, err
-	}
-	if len(active(named)) > 0 {
-		result.Instances = active(named)
-		return result, failure("name_conflict", "a managed instance already uses this name; inspect its ID with ls before choosing another name")
-	}
-	if err = store.Save(r); err != nil {
-		return result, err
-	}
-	if err = announce(r, result.ReceiptPath); err != nil {
-		return result, failure("output_unavailable", "cannot print durable request identity; no launch performed; inspect the request directory")
-	}
-	if err = ctx.Err(); err != nil {
-		return result, err
-	}
-	r.State = "dispatched"
-	if err = store.Save(r); err != nil {
-		return result, err
-	}
-	// Once marked, no future CLI invocation can dispatch this receipt again.
-	if err = ctx.Err(); err != nil {
-		return result, err
-	}
-	out, runErr := s.API.RunInstances(ctx, launchInput(r))
-	if out != nil {
-		for _, i := range out.Instances {
-			if instanceRE.MatchString(aws.ToString(i.InstanceId)) {
-				r.InstanceIDs = append(r.InstanceIDs, aws.ToString(i.InstanceId))
-				result.Instances = append(result.Instances, record(i))
-			}
-		}
-		if len(r.InstanceIDs) > 0 {
-			// Preserve IDs in this result even if the post-mutation disk write fails.
-			if err = store.Save(r); err != nil {
-				return result, err
-			}
-		}
-	}
-	// Keep only recognized service codes, never the raw SDK/provider message.
-	// A service error does not undo dispatch or authorize a later allocation.
-	var apiErr smithy.APIError
-	if errors.As(runErr, &apiErr) && launchFailure(apiErr.ErrorCode()) != nil {
-		r.LaunchErrorCode = apiErr.ErrorCode()
-		if err = store.Save(r); err != nil {
-			return result, err
-		}
-	}
-
-	return s.reconcile(ctx, r, store, result)
+	return result, failure("legacy_request_no_expiry", "Legacy request has no expiry and cannot allocate; create a new request. Inspection and down remain available.")
 }
 func (s *Service) requestMatches(ctx context.Context, r Receipt) ([]Instance, error) {
 	found, err := s.inventory(ctx, "", "", r.RequestID)

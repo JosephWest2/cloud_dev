@@ -69,7 +69,10 @@ func decodeBatchReceipt(data []byte) (BatchReceipt, error) {
 // recovery service must compare every cached record against the shared ledger.
 func (r BatchReceipt) Validate() error {
 	invalid := failure("receipt_invalid", "batch receipt pins, lineage or fulfillment are invalid; reconcile shared launch records before any allocation")
-	if r.SchemaVersion != 2 || !ValidRequest(r.RequestID) || r.Plan.SchemaVersion != 1 || r.Plan.RequestID != r.RequestID || r.PlanSHA256 != r.Plan.Digest() || r.Plan.RequestedCount < 1 || r.Plan.RequestedCount > 100 || len(r.Attempts) == 0 || !ValidName(r.Plan.BaseName) {
+	if !validBatchVersion(r.SchemaVersion, r.Plan.SchemaVersion) || !ValidRequest(r.RequestID) || r.Plan.RequestID != r.RequestID || r.PlanSHA256 != r.Plan.Digest() || r.Plan.RequestedCount < 1 || r.Plan.RequestedCount > 100 || len(r.Attempts) == 0 || !ValidName(r.Plan.BaseName) {
+		return invalid
+	}
+	if err := validatePlanExpiry(r.Plan); err != nil {
 		return invalid
 	}
 	if r.Plan.Market != "spot" && r.Plan.Market != "on-demand" {

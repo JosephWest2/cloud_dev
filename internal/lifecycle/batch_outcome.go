@@ -90,6 +90,10 @@ func (s *RecoveryService) outcome(observation LaunchObservation) BatchOutcome {
 	if out.Workers == nil {
 		out.Workers = []WorkerOutcome{}
 	}
+	now := clockNow(s.Clock)
+	for n := range out.Workers {
+		setExpiryStatus(&out.Workers[n].Instance, now)
+	}
 	current := map[string]WorkerOutcome{}
 	for _, worker := range out.Workers {
 		current[worker.ID] = worker
@@ -121,7 +125,7 @@ func (s *RecoveryService) outcome(observation LaunchObservation) BatchOutcome {
 	}
 	out.Errors = append(out.Errors, observation.Errors...)
 	out.FulfilledCount = len(fulfilled)
-	if (len(r.Attempts) == 0 && r.Plan.SchemaVersion == 1) || (len(r.Attempts) > 0 && r.Attempts[len(r.Attempts)-1].State == "prepared") {
+	if (len(r.Attempts) == 0 && supportedPlan(r.Plan.SchemaVersion)) || (len(r.Attempts) > 0 && r.Attempts[len(r.Attempts)-1].State == "prepared") {
 		out.Status = "prepared"
 	} else if observation.Bounded {
 		missing := r.Plan.RequestedCount - len(fulfilled)
@@ -145,5 +149,6 @@ func (s *RecoveryService) outcome(observation LaunchObservation) BatchOutcome {
 			out.RetryCommand = prefix + " up --retry-missing " + r.RequestID + " --after " + r.Attempts[len(r.Attempts)-1].AttemptID
 		}
 	}
+	setBatchExpiry(&out)
 	return out
 }

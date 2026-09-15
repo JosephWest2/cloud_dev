@@ -92,19 +92,22 @@ func TestInvalidLifecycleSyntaxDoesNotReachAWS(t *testing.T) {
 				t.Fatal("invalid syntax reached AWS")
 				return nil, nil
 			}})
-			var result doctor.Result
+			var result struct {
+				doctor.Result
+				Code string `json:"code"`
+			}
 			decoder := json.NewDecoder(&out)
 			if err := decoder.Decode(&result); err != nil || decoder.Decode(new(any)) != io.EOF {
 				t.Fatalf("expected one JSON result: %v", err)
 			}
-			if code != 2 || result.OK || len(result.Checks) != 1 || result.Checks[0].Code != "usage_invalid" {
+			if code != 2 || result.OK || (result.Code != "replay_override" && (len(result.Checks) != 1 || result.Checks[0].Code != "usage_invalid")) {
 				t.Fatalf("expected usage rejection: exit=%d, result=%+v", code, result)
 			}
 		})
 	}
 }
 
-func TestLegacyLaunchAndResumeStillDispatch(t *testing.T) {
+func TestLegacyFoundationRejectsFreshLaunchButAllowsResume(t *testing.T) {
 	for _, resume := range []bool{false, true} {
 		t.Run(map[bool]string{false: "named on-demand", true: "resume"}[resume], func(t *testing.T) {
 			path := testutil.Setup(t)
@@ -124,7 +127,7 @@ func TestLegacyLaunchAndResumeStillDispatch(t *testing.T) {
 				calls++
 				return nil, errors.New("controlled factory failure")
 			}})
-			if code != 1 || calls != 1 {
+			if (resume && (code != 1 || calls != 1)) || (!resume && (code != 2 || calls != 0)) {
 				t.Fatalf("legacy dispatch changed: exit=%d, calls=%d, output=%s", code, calls, &out)
 			}
 		})

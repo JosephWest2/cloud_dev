@@ -18,7 +18,7 @@ func checkImage(ctx context.Context, api EC2, m config.Manifest, p config.Profil
 	if api == nil || len(p.InstanceTypes) == 0 {
 		return fail
 	}
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		if _, err := config.ValidateProfileManifest(p, m); err != nil {
 			return fail
 		}
@@ -35,7 +35,7 @@ func checkImage(ctx context.Context, api EC2, m config.Manifest, p config.Profil
 	root := 0
 	for _, b := range i.BlockDeviceMappings {
 		if aws.ToString(b.DeviceName) == img.RootDeviceName {
-			if b.Ebs == nil || aws.ToInt32(b.Ebs.VolumeSize) < 1 || int(aws.ToInt32(b.Ebs.VolumeSize)) > p.DiskGB || (m.SchemaVersion == 5 && int(aws.ToInt32(b.Ebs.VolumeSize)) != img.MinimumRootDiskGB) {
+			if b.Ebs == nil || aws.ToInt32(b.Ebs.VolumeSize) < 1 || int(aws.ToInt32(b.Ebs.VolumeSize)) > p.DiskGB || ((m.SchemaVersion == 5 || m.SchemaVersion == 6) && int(aws.ToInt32(b.Ebs.VolumeSize)) != img.MinimumRootDiskGB) {
 				return fail
 			}
 			root++
@@ -45,7 +45,7 @@ func checkImage(ctx context.Context, api EC2, m config.Manifest, p config.Profil
 		return fail
 	}
 	selectedTypes := p.InstanceTypes
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		selectedTypes = make([]string, len(m.CompatiblePools))
 		for n, pool := range m.CompatiblePools {
 			selectedTypes[n] = pool.InstanceType
@@ -81,7 +81,7 @@ func checkImage(ctx context.Context, api EC2, m config.Manifest, p config.Profil
 			if !compatible {
 				return fail
 			}
-			if m.SchemaVersion == 5 && !supportsFleetImage(t, i) {
+			if (m.SchemaVersion == 5 || m.SchemaVersion == 6) && !supportsFleetImage(t, i) {
 				return fail
 			}
 			seen[name] = true
@@ -100,7 +100,7 @@ func checkImage(ctx context.Context, api EC2, m config.Manifest, p config.Profil
 			return fail
 		}
 	}
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		return checkOfferings(ctx, api, m)
 	}
 	return nil
@@ -216,7 +216,7 @@ func checkTemplate(ctx context.Context, api EC2, m config.Manifest, p config.Pro
 	}
 	ni := d.NetworkInterfaces[0]
 	subnet := m.SubnetIDs[0]
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		subnet = ""
 		if ni.DeviceIndex == nil || aws.ToInt32(ni.NetworkCardIndex) != 0 || aws.ToString(ni.PrivateIpAddress) != "" || len(ni.PrivateIpAddresses)+len(ni.Ipv6Addresses)+len(ni.Ipv4Prefixes)+len(ni.Ipv6Prefixes) != 0 || aws.ToInt32(ni.SecondaryPrivateIpAddressCount)+aws.ToInt32(ni.Ipv6AddressCount)+aws.ToInt32(ni.Ipv4PrefixCount)+aws.ToInt32(ni.Ipv6PrefixCount) != 0 || (aws.ToString(ni.InterfaceType) != "" && aws.ToString(ni.InterfaceType) != "interface") || d.Placement != nil || d.InstanceRequirements != nil || aws.ToBool(d.DisableApiTermination) || aws.ToBool(d.DisableApiStop) {
 			return fail
@@ -234,7 +234,7 @@ func checkTemplate(ctx context.Context, api EC2, m config.Manifest, p config.Pro
 	}
 	e := block.Ebs
 	size := 100
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		if img.RootDisk == nil || img.MinimumRootDiskGB < 1 || img.RootDisk.SizeGB < img.MinimumRootDiskGB || img.RootDisk.Type != "gp3" || !img.RootDisk.Encrypted || !img.RootDisk.DeleteOnTermination {
 			return fail
 		}

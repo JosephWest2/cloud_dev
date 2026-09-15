@@ -6,9 +6,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"time"
+	"errors"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/aws/aws-sdk-go-v2/aws/retry"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/smithy-go/middleware"
@@ -59,9 +60,10 @@ type FleetAPI interface {
 	CreateFleet(context.Context, *ec2.CreateFleetInput, ...func(*ec2.Options)) (*ec2.CreateFleetOutput, error)
 }
 
-// AttemptService owns one authorized dispatch. It is deliberately separate
-// from legacy Up and has no public CLI caller until shared recovery is wired.
+// AttemptService owns one permanently claimed, expiry-gated Fleet dispatch.
+// Legacy Up only observes saved single-worker requests.
 type AttemptService struct {
+	Clock            expiry.Clock
 	API              FleetAPI
 	Scope            config.Config
 	VerifyFoundation func(context.Context, config.Manifest, config.Profile) error
@@ -107,16 +109,27 @@ func (r AttemptResult) Outcome() AttemptOutcome {
 
 // NewBatchReceipt resolves a new random request without making cloud calls.
 func NewBatchReceipt(c config.Config, m config.Manifest, p config.Profile, selection LaunchSelection) (BatchReceipt, error) {
+	return NewBatchReceiptWithClock(c, m, p, selection, expiry.SystemClock{})
+}
+
+func NewBatchReceiptWithClock(c config.Config, m config.Manifest, p config.Profile, selection LaunchSelection, clock expiry.Clock) (BatchReceipt, error) {
+	if err := requireExpiryManifest(m); err != nil {
+		return BatchReceipt{}, err
+	}
+	created, err := expiry.Timestamp(clockNow(clock))
+	if err != nil {
+		return BatchReceipt{}, expiryFailure(err)
+	}
 	var random [16]byte
 	if _, err := rand.Read(random[:]); err != nil {
 		return BatchReceipt{}, failure("receipt_unavailable", "cannot generate a launch request identity; no allocation performed")
 	}
-	plan, err := BuildLaunchPlan(c, m, p, selection, hex.EncodeToString(random[:]), time.Now().UTC().Format(time.RFC3339Nano))
+	plan, err := BuildLaunchPlan(c, m, p, selection, hex.EncodeToString(random[:]), created)
 	if err != nil {
 		return BatchReceipt{}, err
 	}
 	id, _ := AttemptID(plan.RequestID, "")
-	r := BatchReceipt{SchemaVersion: 2, RequestID: plan.RequestID, Plan: plan, PlanSHA256: plan.Digest()}
+	r := BatchReceipt{SchemaVersion: 3, RequestID: plan.RequestID, Plan: plan, PlanSHA256: plan.Digest()}
 	r.Attempts = []AttemptReceipt{{AttemptID: id, ClientToken: attemptToken(r.PlanSHA256, id, plan.RequestedCount), RequestedCount: plan.RequestedCount, CreatedAt: plan.CreatedAt, State: "prepared", InstanceIDs: []string{}, Errors: []ResourceError{}}}
 	return r, r.Validate()
 }
@@ -127,10 +140,36 @@ func fleetInputDigest(in *ec2.CreateFleetInput) string {
 	return hex.EncodeToString(h[:])
 }
 
+// Clone in memory without invoking strict wire decoders: invalid input must
+// remain intact for validation and known-ID error reporting, not become zero.
 func cloneBatch(r BatchReceipt) BatchReceipt {
-	b, _ := json.Marshal(r)
-	var copy BatchReceipt
-	_ = json.Unmarshal(b, &copy)
+	copy := r
+	copy.Plan.CreationTags = nil
+	if r.Plan.CreationTags != nil {
+		copy.Plan.CreationTags = make(map[string]string, len(r.Plan.CreationTags))
+		for k, v := range r.Plan.CreationTags {
+			copy.Plan.CreationTags[k] = v
+		}
+	}
+	if r.Plan.Choices != nil {
+		copy.Plan.Choices = append([]config.LaunchChoice{}, r.Plan.Choices...)
+	}
+	if r.Plan.Image.RootDisk != nil {
+		disk := *r.Plan.Image.RootDisk
+		copy.Plan.Image.RootDisk = &disk
+	}
+	if r.Attempts != nil {
+		copy.Attempts = make([]AttemptReceipt, len(r.Attempts))
+		for n, a := range r.Attempts {
+			copy.Attempts[n] = a
+			if a.InstanceIDs != nil {
+				copy.Attempts[n].InstanceIDs = append([]string{}, a.InstanceIDs...)
+			}
+			if a.Errors != nil {
+				copy.Attempts[n].Errors = append([]ResourceError{}, a.Errors...)
+			}
+		}
+	}
 	return copy
 }
 
@@ -149,6 +188,12 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	if err := r.Validate(); err != nil {
 		return result, err
 	}
+	if err := checkAllocation(r.Plan, s.Clock); err != nil {
+		return result, err
+	}
+	if err := requireExpiryManifest(m); err != nil {
+		return result, err
+	}
 	n := len(r.Attempts) - 1
 	a := r.Attempts[n]
 	if a.State != "prepared" {
@@ -156,7 +201,7 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	}
 	// Reconstruct from trusted current config/manifest/profile before any writes
 	// or allocation. Even a valid local receipt is not a trusted launch source.
-	plan, err := BuildLaunchPlan(s.Scope, m, p, LaunchSelection{Profile: r.Plan.Profile, Name: r.Plan.BaseName, Group: r.Plan.Group, Count: r.Plan.RequestedCount, OnDemand: r.Plan.Market == "on-demand"}, r.RequestID, r.Plan.CreatedAt)
+	plan, err := buildLaunchPlan(s.Scope, m, p, LaunchSelection{Profile: r.Plan.Profile, Name: r.Plan.BaseName, Group: r.Plan.Group, Count: r.Plan.RequestedCount, OnDemand: r.Plan.Market == "on-demand"}, r.RequestID, r.Plan.CreatedAt, r.Plan.ExpiresAt, r.Plan.SchemaVersion)
 	if err != nil {
 		return result, err
 	}
@@ -179,6 +224,9 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	if err = s.VerifyFoundation(ctx, m, p); err != nil {
 		return result, err
 	}
+	if err := checkAllocation(r.Plan, s.Clock); err != nil {
+		return result, err
+	}
 	if err = s.Cache.SaveBatch(r); err != nil {
 		return result, err
 	}
@@ -186,6 +234,9 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	// plan or token after validation. Failure stops before any shared mutation.
 	if err = announce(cloneBatch(r), result.ReceiptPath); err != nil {
 		return result, failure("output_unavailable", "cannot announce durable request recovery; no allocation performed")
+	}
+	if err := checkAllocation(r.Plan, s.Clock); err != nil {
+		return result, err
 	}
 	prepared := PreparedAttempt{SchemaVersion: 1, RequestID: r.RequestID, PlanSHA256: r.PlanSHA256, InputSHA256: fleetInputDigest(input), Attempt: a}
 	if err = s.Ledger.Prepare(ctx, cloneBatch(r), prepared); err != nil {
@@ -199,6 +250,9 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	if err = s.Cache.SaveBatch(r); err != nil {
 		return result, err
 	}
+	if err := checkAllocation(r.Plan, s.Clock); err != nil {
+		return result, err
+	}
 	claim := DispatchClaim{SchemaVersion: 1, RequestID: r.RequestID, AttemptID: a.AttemptID, PlanSHA256: r.PlanSHA256, InputSHA256: prepared.InputSHA256, ClientToken: a.ClientToken}
 	won, claimErr := s.Ledger.Claim(ctx, r.Plan.LaunchLedger, claim)
 	if claimErr != nil || !won {
@@ -209,10 +263,22 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
+	if err := checkAllocation(r.Plan, s.Clock); err != nil {
+		return result, err
+	}
 	result.Dispatched = true
 	var sdkAttempts int
 	out, callErr := s.API.CreateFleet(ctx, input, func(o *ec2.Options) {
+		o.Retryer = retry.NewStandard(func(o *retry.StandardOptions) { o.MaxAttempts = 1 })
 		o.APIOptions = append(o.APIOptions, func(stack *middleware.Stack) error {
+			if err := stack.Finalize.Add(middleware.FinalizeMiddlewareFunc("CheckFleetExpiry", func(ctx context.Context, in middleware.FinalizeInput, next middleware.FinalizeHandler) (middleware.FinalizeOutput, middleware.Metadata, error) {
+				if err := checkAllocation(r.Plan, s.Clock); err != nil {
+					return middleware.FinalizeOutput{}, middleware.Metadata{}, err
+				}
+				return next.HandleFinalize(ctx, in)
+			}), middleware.After); err != nil {
+				return err
+			}
 			return stack.Initialize.Add(middleware.InitializeMiddlewareFunc("CaptureFleetAttemptEvidence", func(ctx context.Context, in middleware.InitializeInput, next middleware.InitializeHandler) (middleware.InitializeOutput, middleware.Metadata, error) {
 				out, meta, err := next.HandleInitialize(ctx, in)
 				if attempts, ok := retry.GetAttemptResults(meta); ok {
@@ -251,6 +317,10 @@ func (s *AttemptService) Dispatch(ctx context.Context, m config.Manifest, p conf
 	}
 	if result.ObservationError != nil {
 		return result, result.ObservationError
+	}
+	var expiryErr *Failure
+	if errors.As(callErr, &expiryErr) && (expiryErr.Code == "request_expired" || expiryErr.Code == "clock_invalid") {
+		return result, expiryErr
 	}
 	if observed.State == "unknown" {
 		return result, failure("allocation_unknown", "allocation could not be bounded; resume this request and inspect every known worker before any new allocation")

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/JosephWest2/cloud_dev/internal/foundation"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
@@ -26,6 +27,7 @@ type EC2 interface {
 }
 
 type Service struct {
+	Clock            expiry.Clock
 	API              EC2
 	Fleet            FleetAPI
 	LaunchRecords    S3LaunchAPI

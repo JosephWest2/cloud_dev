@@ -13,3 +13,10 @@ func (w completeOutput) Write(data []byte) (int, error) {
 	}
 	return n, err
 }
+
+func expiryText(value string) string {
+	if value == "" {
+		return "null"
+	}
+	return value
+}

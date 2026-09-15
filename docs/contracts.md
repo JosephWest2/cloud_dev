@@ -1,10 +1,42 @@
 # CLI contracts
 
+## Expiry integration (#43)
+
+[The approved expiry contract](plans/04-expiry-contract.md) governs new launches.
+Config stays v1 with optional `default_ttl`; `up --ttl` wins over config and the
+2h default, up to 168h. One immutable UTC nanosecond window is recorded before
+allocation. Launch plan v2 appends `expires_at,omitempty`; receipt v3 contains
+plan v2. Exact historic receipt-v2/plan-v1 pairs remain readable with unchanged
+bytes, hashes, tokens, permanent v1 attempt envelopes and `launches/v2/` keys.
+Legacy single-worker receipt v1 also remains readable. None can newly allocate
+without a valid future expiry and the v6 foundation capability.
+
+All fresh Spot/On-Demand and single/batch allocations use instant Fleet with
+identical instance/volume/Fleet creation tags. Dispatch checks expiry before
+preparation, before the permanent claim and immediately before send; automatic
+SDK mutation retries are disabled. A claimed-but-unsent request remains claimed.
+Resume observes only. Missing-capacity retry retains the original window and
+counts historic fulfillment, even after worker termination.
+
+Lifecycle envelope versions remain unchanged. Public `ls`/worker projections
+add required nullable `expires_at` and `expiry_status`; batch output adds nullable
+`ttl` and `expires_at`. Permanent response workers only add omitted-zero fields,
+so old response-v1 bytes stay stable. Raw malformed expiry is never printed.
+Expiry diagnostics are separate from strict scope-tag checks and explicit down.
+
+The v6 manifest uses all existing v5 fields/pins, plus reserved top-level
+`cleanup` (opaque JSON at this reader boundary). Top-level `roles` remains exactly
+instance/operator. #46 defines/validates the nested cleanup descriptor and
+exports v6 only with the required creation-tag IAM authorization. Existing
+launch pin/IAM hash verification applies to v6. Inventory/manual down/saved logs
+do not require cleanup health. This reader alone proves no live scheduled support.
+
+
 The [Spot batch contract](#spot-batch-contract-28) adds profile v2, deployment
 v5 and receipt v2 while retaining config/result-storage v1 and legacy receipt
 recovery. Group launch, discovery and shared recovery are integrated in #32.
-The legacy single-worker contracts below continue to apply to v4 launches and
-v1 receipts. Scoped plural/group teardown is integrated in #33 and works with
+The legacy single-worker contracts below describe historic v4 launches and
+v1 receipts; fresh RunInstances allocation is retired by #43. Scoped plural/group teardown is integrated in #33 and works with
 both old names and generated batch names or explicit instance IDs.
 
 ## User configuration and workload profile
@@ -32,9 +64,8 @@ document. An optional user profile_file uses the same contract:
 | `image` | Manifest image key, with the same character/length rules as deployment |
 | `disk_gb` | Integer 8–16384; actual image size and volume constraints checked later |
 
-The v5 launch path defaults to the profile's Spot market. On-Demand always
-requires explicit `--on-demand`, including an On-Demand profile. The legacy v4
-path supports only explicit single-worker On-Demand. `--on-demand` is a launch
+The v6 launch path defaults to the profile's Spot market. On-Demand always
+requires explicit `--on-demand`, including an On-Demand profile. Manifest v4/v5 permits observation and cleanup; new allocation requires v6. `--on-demand` is a launch
 override, not a doctor option. There is no automatic market fallback.
 
 ## Deployment manifest
@@ -1173,8 +1204,7 @@ exact-ID revalidation, eligible states, scope, errors, volume evidence, and shar
 text/JSON/exit contracts. Pure APIs and fixtures live in `internal/expiry`; pinned
 historical bytes are under `internal/lifecycle/testdata/expiry-legacy`.
 
-This is a staged contract: #42 does not enable TTL flags/configuration, replace
-existing allocation behavior, or provision a scheduler. #43–#48 own integration,
+This is a staged rollout: #43 implements TTL flags/configuration, immutable
+expiry and allocation gates as described above. #44–#48 own cleanup service,
 cloud deployment and live evidence. Until those gates pass, use explicit `down`
-for cleanup. Target configuration/command examples in the linked contract are
-marked with their availability rather than advertised as working enforcement.
+for cleanup; the current v5 foundation cannot authorize this client's new launches.
