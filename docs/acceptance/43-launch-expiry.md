@@ -242,3 +242,53 @@ Changes remain in recovery/observation and tests. CLI/manifest interfaces, perma
 serialization, fulfillment and allocation authority are unchanged. The exact v6
 handoff and all TTL/send gates remain intact. Parent publication and fresh review
 of the final head are pending; live acceptance was not performed.
+
+## Review D: legacy reads and mixed exact-ID observation order
+
+Reproduced both P2 findings against `090b382` with the original review-D probes.
+Read and compared the separate diagnostic-only correction overlay before making
+the local changes; its probes passed as a control.
+
+- Legacy single-receipt resume copies matching-ID expiry diagnostics from the
+  name inventory before error handling. Its readiness lookup now retains expiry
+  before partial-read errors or terminal filtering, using the existing helper.
+  Name/scope checks, state handling, and the observation-only legacy rule remain
+  unchanged. An unrelated row or a read with no matching row cannot replace the
+  retained diagnostic.
+- Exact-ID batch inspection records the last matching row's expiry before
+  filtering terminal rows. It applies that diagnostic after verification, keeping
+  terminal/live row order across responses and pagination. Historical state
+  handling still uses its separate terminal observation. Duplicate/conflict
+  errors, worker verification, fulfillment and allocation denial are unchanged.
+
+Permanent public regressions cover missing, malformed, empty, nil, noncanonical,
+duplicate and valid expiry controls. Legacy tests cover partial/successful name
+checks, unrelated and out-of-scope rows, empty/error/NotFound reads, stopped,
+stopping, shutting-down, terminated and partial/running readiness reads. They
+assert existing error codes, no launches or probes, exact legacy receipt bytes,
+and unchanged historical launch serialization/token.
+
+Batch tests resume after local receipt loss and alternate live rows with both
+terminal states in two- and three-row sequences, on one page or multiple pages,
+including partial responses. They assert the latest public nullable diagnostic,
+duplicate errors, stable peers and fulfillment, unchanged request deadline/digest
+and permanent record bytes, and no new allocation. Changes are limited to
+diagnostic propagation; CLI/manifest interfaces, schemas and TTL gates are intact.
+
+Final verification passed:
+
+```sh
+go test -count=1 ./internal/lifecycle -run '^TestExpiry(LegacyResumeLaterEvidence|PublicMixedExactObservationOrder)$'
+go test -count=1 -overlay=/tmp/issue43-review43d/overlay.json ./internal/lifecycle -run '^TestReviewD'
+go test -count=1 -overlay=/tmp/issue43-review-7d25txin/overlay.json ./internal/lifecycle -run '^TestReview'
+go test -count=1 -overlay=/tmp/issue43-final-review-045v18w6/overlay.json ./internal/lifecycle -run '^TestFinalReview'
+go test -count=1 -overlay=/tmp/issue43-astra-review-k7w3b3ua/overlay.json ./internal/lifecycle -run '^TestAstraPublicRefreshExpiryEvidence$'
+go test -count=1 ./internal/lifecycle ./internal/cli ./internal/config ./internal/foundation ./internal/expiry
+make check
+make build
+go test -race -count=1 ./internal/lifecycle ./internal/cli
+git diff --check
+```
+
+The parent coordinates publication and final-head recheck by reviewer 43d. No
+GitHub/AWS writes were made; live acceptance remains pending.

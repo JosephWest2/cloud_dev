@@ -149,6 +149,13 @@ func (s *Service) finish(ctx context.Context, r Receipt, store Store, result Out
 		return result, failure("launch_identity_mismatch", "allocated instance does not expose the exact requested image/type/market/template; inspect the returned instance ID and clean up with down if necessary")
 	}
 	named, err := s.inventory(ctx, "", p.Name, "")
+	// Name checks are newer inventory evidence, even when the read is partial.
+	// Retain only matching-ID diagnostics; selection and launch pins stay intact.
+	for _, observed := range named {
+		for n := range result.Instances {
+			copyObservedExpiry(&result.Instances[n], observed)
+		}
+	}
 	if err != nil {
 		return result, err
 	}
