@@ -27,6 +27,7 @@ const help = `Usage: devbox [options] doctor
        devbox [options] down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
        devbox [options] down --group GROUP
        devbox [options] down --all [--yes]
+       devbox [options] cleanup [--dry-run]
        devbox [options] ssh NAME_OR_INSTANCE_ID
        devbox [options] ssh-config NAME_OR_INSTANCE_ID
        devbox [options] proxy INSTANCE_ID
@@ -39,7 +40,7 @@ Options may appear before or after the command:
                         or ~/.config/devbox/config.toml)
   --aws-profile NAME    AWS profile (overrides AWS_PROFILE and user TOML)
   --region REGION       Explicit region (overrides user TOML)
-  --timeout DURATION    Setup deadline (up/access/exec: 5m; others: 20s; max: 5m)
+  --timeout DURATION    Deadline (up/access/exec: 5m; cleanup: 165s; others: 20s; max: 5m)
   --name BASE           Base for stable names ending in each instance ID
   --count N             Instance count within configured max_count (default 10)
   --group GROUP         Launch group or exact inventory filter
@@ -71,8 +72,12 @@ Expiry:
   One deadline per request; active work and retries never extend it.
   Use unsigned Go durations (1h30m, 36h, 168h); no zero or unlimited.
   All launch overrides are rejected on resume/retry. Legacy requests cannot allocate.
-  Cleanup is planned every 5m; its command and deployment ship separately.
-  Continue using down for manual cleanup until scheduled cleanup is verified.
+  Scheduled cleanup is planned every 5m; deployment is verified separately.
+  cleanup --dry-run previews expiry decisions; cleanup runs scoped expiry removal.
+  Cleanup requires only trusted scope and AWS credentials (default deadline 165s).
+  Missing/future expiry is skipped; malformed expiry is diagnosed. Use ls and
+  explicit down for deliberate legacy teardown. Run cleanup --help for details.
+  Scheduled deployment and laptop-offline acceptance remain separate gates.
 
 Scoped teardown:
   down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
@@ -130,6 +135,9 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies, runExec execRunner, runLogs logsRunner) int {
+	if IsCleanupCommand(args) {
+		return runCleanupCommand(ctx, args, stdout, stderr, nil)
+	}
 	jsonMode := false
 	streamIntent := false
 	// The first separator ends all local interpretation, including the early
@@ -406,7 +414,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		return 0
 	}
 	if command != "doctor" && command != "up" && command != "ls" && command != "down" && command != "exec" && command != "logs" && !isAccess {
-		return fail("unknown or missing command; available commands: doctor, up, ls, down, ssh, ssh-config, proxy, exec, logs, version; run devbox --help")
+		return fail("unknown or missing command; available commands: doctor, up, ls, down, cleanup, ssh, ssh-config, proxy, exec, logs, version; run devbox --help")
 	}
 	if path == "" {
 		var err error
@@ -521,7 +529,7 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 		}
 		fmt.Fprintf(stderr, "devbox: %s: %s\n", r.Code, r.Message)
 		for _, i := range r.Instances {
-			fmt.Fprintf(stderr, "devbox: retained instance %s; inspect: %s ls --json; cleanup: %s down %s --timeout 5m (manual cleanup until TTL ships)\n", i.ID, prefix, prefix, i.ID)
+			fmt.Fprintf(stderr, "devbox: retained instance %s; inspect: %s ls --json; cleanup: %s down %s --timeout 5m\n", i.ID, prefix, prefix, i.ID)
 		}
 		if r.RequestID != "" {
 			if lifecycle.ValidRequest(r.RequestID) {
