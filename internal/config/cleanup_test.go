@@ -19,6 +19,7 @@ manifest="missing.json"
 profile_file="missing.toml"
 ssh_identity_file="missing"
 max_count=-1
+default_ttl="not-a-duration"
 `
 	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 		t.Fatal(err)

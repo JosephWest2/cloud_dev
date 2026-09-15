@@ -18,7 +18,8 @@ the expiry-capable manifest v6 from #46 for all new launches**, including explic
 On-Demand and count one. The current foundation source still exports v5; do not
 change the version number by hand. Scoped inventory, teardown, saved logs and
 legacy receipt observation remain available. Scheduled expiry deployment and
-live acceptance are pending; continue manual `down`.
+live acceptance are pending. Use `cleanup --dry-run` to inspect expiry and
+`cleanup` for manual expiry removal; use explicit `down` for deliberate teardown.
 
 The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
 Ubuntu 24.04 LTS x86-64, approved public subnets across selected AZs with public IPv4, outbound TCP 80/443,
@@ -128,7 +129,8 @@ Relative manifest/profile paths resolve against the config file's directory,
 not the current working directory. Paths in TOML do not expand `~` or variables.
 Options can appear before or after the command and accept `--option=value`.
 Empty option values are errors. Repeated lifecycle options are rejected;
-other repeated value options use the last value.
+other repeated value options use the last value. `cleanup` rejects every repeated
+option, including global options.
 
 A selected profile is passed explicitly to the SDK. In the pinned SDK version,
 that profile takes precedence over ambient access-key environment variables;
@@ -241,12 +243,50 @@ and cannot allocate more workers; they remain inspectable and removable.
 
 Cleanup is planned every five minutes. Expiry is an eligibility boundary, not
 an exact termination guarantee; scheduling, throttling and AWS completion add
-delay. **This slice does not deploy cleanup or pass live acceptance.** The v6
+delay. **Manual cleanup is available; scheduled deployment and live acceptance
+remain pending.** The v6
 reader reserves the `cleanup` descriptor for #46; cleanup health/failure evidence
 is verified separately. Do not infer unattended readiness from a version number.
 S3 results keep their independent retention; permanent `launches/v2/` records
 and dispatch claims are retained. See the [expiry contract](docs/plans/04-expiry-contract.md)
 and [offline verification notes](docs/acceptance/43-launch-expiry.md).
+
+## Inspect and run expiry cleanup
+
+```sh
+devbox --config ./my-config.toml cleanup --dry-run --aws-profile devbox-operator --json
+devbox --config ./my-config.toml cleanup --aws-profile devbox-operator --json
+```
+
+`cleanup --dry-run` reads the configured account, region, deployment and exact
+owner and shows candidate IDs, deadlines and skip reasons. It performs no writes.
+`cleanup` authorizes expiry-based removal without another prompt; it rescans and
+rechecks each exact ID immediately before termination. Both commands need only
+valid config scope and AWS credentials. A missing manifest, launch profile, SSH
+key/tool, receipt, OpenTofu, SSM or healthy scheduler does not prevent cleanup;
+an invalid launch-only `default_ttl` does not prevent it either.
+
+The deadline defaults to 165 seconds. `--timeout` accepts a positive duration up
+to five minutes, while the shared service retains its 165-second ceiling. Cleanup
+accepts global config/profile/region flags, `--dry-run`, `--json` and `--timeout`;
+it rejects targets, group/all selectors, `--yes`, TTL flags and repeated options.
+
+Future deadlines and missing expiry on legacy workers are skipped. Malformed or
+duplicate expiry produces a diagnostic and no termination for that worker. Use
+`ls --json` to inspect `expires_at` and `expiry_status`; deliberate legacy teardown
+uses `down INSTANCE_ID`. A clean empty selection succeeds without asserting that
+any worker or disk was removed. Mixed outcomes retain every known instance and
+root-volume ID. Termination and observed root deletion are separate fields;
+missing historical root mappings never prove deletion.
+
+Exit codes are **0** complete/no candidates, **1** failed, **2** invalid arguments
+or configuration, **3** partial completion, and **4** interrupted/timed out. Rerun
+cleanup safely after checking errors: every run discovers current state and
+observes prior/concurrent termination. Failed scans authorize no candidates.
+With `--json`, stdout has one schema-1 result; stderr preserves structured scope,
+instance and root-volume evidence before mutation. Retain both when investigating
+incomplete removal. See [manual cleanup recovery](docs/acceptance/45-manual-cleanup.md).
+This command does not establish scheduled deployment or laptop-offline acceptance.
 
 ## Launch, rediscover and use a group
 
@@ -343,7 +383,9 @@ complete. A later repeated teardown can lack volume mappings even when deletion
 was previously verified. Full [manual cleanup](docs/acceptance/01-lifecycle.md#teardown-and-independent-cleanup-verification)
 includes independent EC2/EBS inventory. Workers remain billable after shell exit,
 timeout or connection failure; remove them even when acceptance fails. There is
-no automatic TTL cleanup until MVP 4. Worker teardown retains networking, IAM,
+no claim of unattended TTL cleanup until the MVP 4 live gate passes. Manual
+`cleanup` removes expired workers; explicit `down` deliberately removes selected
+workers. Worker teardown retains networking, IAM,
 the launch template, readiness document and the S3 backend; [full durable teardown](docs/setup.md#recovery-and-teardown)
 is a separate explicit operation.
 

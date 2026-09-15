@@ -244,6 +244,18 @@ func cleanupExplanation(code, fallback string) string {
 		return "The root is retained; automatic cleanup skips it. Inspect with ls and use explicit down deliberately."
 	case "root_volume_unverified":
 		return "Root deletion is unverified; inspect the captured exact instance and volume IDs."
+	case "identity_unverified":
+		return "Cannot verify the selected AWS identity; refresh its credentials and check expected_account before retrying."
+	case "scan_incomplete":
+		return "Discovery was incomplete; no candidate set authorizes termination. Retain known IDs and rerun cleanup."
+	case "termination_denied", "termination_protected":
+		return "Termination was denied or protected; inspect scoped permissions and instance protection before retrying."
+	case "termination_unknown", "termination_unresolved":
+		return "Termination is unverified; retain exact IDs and rerun cleanup to observe current state."
+	case "resource_unverified", "resource_invalid", "resource_changed":
+		return "Exact resource evidence is missing, invalid or changed; no new termination is authorized for this observation."
+	case "expiry_changed":
+		return "The deadline changed after discovery; this run skips the worker and a later cleanup evaluates it afresh."
 	case "evidence_unavailable":
 		return "Cleanup evidence could not be acknowledged; inspect retained IDs and restore diagnostic output before rerunning."
 	}

@@ -1206,5 +1206,65 @@ historical bytes are under `internal/lifecycle/testdata/expiry-legacy`.
 
 This is a staged rollout: #43 implements TTL flags/configuration, immutable
 expiry and allocation gates as described above. #44–#48 own cleanup service,
-cloud deployment and live evidence. Until those gates pass, use explicit `down`
-for cleanup; the current v5 foundation cannot authorize this client's new launches.
+cloud deployment and live evidence. #45 supplies manual `cleanup` and its
+no-write dry-run; explicit `down` remains available for deliberate teardown.
+The current v5 foundation cannot authorize this client's new launches.
+
+## Manual expiry cleanup (#45)
+
+`devbox cleanup [--dry-run] [--json] [--timeout DURATION]` calls the shared
+`internal/expirycleanup` service described in the
+[service contract](plans/04-expiry-cleanup-service.md). Explicit invocation
+provides consent for the scoped expiry policy. The separate `down` selectors and
+confirmation rules are unchanged. Cleanup accepts global config/AWS-profile/
+region options before or after the command; every duplicate option and any
+selector, positional target, `--yes`, launch/TTL flag or exec/log flag fails with
+`cleanup_invalid`, exit 2, before loading credentials or constructing a service.
+
+`config.LoadCleanup` reads only schema 1, expected account, explicit region,
+deployment, exact configured owner and credential profile. It rejects unknown
+configuration fields but deliberately ignores known launch-only settings,
+including invalid `default_ttl` or `max_count`. It never reads the manifest,
+workload profile, SSH identity or receipts, and requires no access tools, SSM,
+OpenTofu or scheduler health. Profile and region overrides keep their documented
+precedence. Credential loading and STS/EC2 share a bounded context and selected
+region. The service verifies expected account before discovery or mutation.
+
+The outer timeout defaults to 165s and accepts positive durations through 5m.
+The adapter bounds credential setup and service work to at most 165s; an earlier
+caller deadline wins. NewAWS uses the shared 15s request and four-worker limits.
+Dry-run bypasses the evidence sink and every mutation API, and returns only an
+advisory snapshot. No stale dry-run result grants later termination authority.
+
+JSON stdout is one unchanged schema-1 `expiry.Result` envelope, including partial
+or interrupted outcomes. Empty arrays are emitted even for early failures. Text
+shows the same scope, times, flags, counts, IDs, expiry/skip codes, termination
+status and exact root-volume outcomes, with allowlisted explanations. Exit codes
+follow the [shared table](plans/04-expiry-contract.md).
+An output write failure returns 1 and attempts to preserve the complete result
+JSON on stderr; a failed/truncated stdout stream itself cannot be repaired.
+
+Actual cleanup emits newline-delimited schema-1 `expiry.Event` evidence on stderr.
+The concurrent-safe sink acknowledges the full write before dispatch; short,
+failed or canceled writes cannot authorize termination. Evidence includes trusted
+scope, run/time/instance identity, expiry and exact root/device mappings with
+DeleteOnTermination flags. The sink serializes writes under a context-aware gate,
+permits at most one underlying write in flight and never closes caller-owned
+stderr. An arbitrary blocking Go `io.Writer` cannot be canceled; acknowledgment
+and queue waiting remain bounded by context, and a blocked write cannot start
+additional writer goroutines or authorize mutation. Final diagnostic writes use
+a separate one-second cap per write through that same gate. Retain stderr when
+investigating incomplete root deletion; it is not a new launch-ledger record.
+
+Missing expiry is a benign legacy skip; future expiry is a benign skip; malformed
+or duplicate expiry is a per-resource diagnostic. `ls` remains available and
+explicit `down INSTANCE_ID` provides deliberate teardown. Incomplete discovery
+has zero authorized candidates. Partial failures retain known IDs and can be
+safely rerun with fresh checks. Already-terminated instances without historical
+root mappings may be benign, but never count as verified root deletion.
+
+Controlled API/CLI fixtures cover the shared decision contract, no-write dry-run,
+account/profile scope, absent launch prerequisites, invalid syntax, malformed and
+mixed outcomes, uncertain roots, interruption/timeout, evidence failure and
+stdout failure. See the [manual recovery runbook](acceptance/45-manual-cleanup.md).
+These checks do not deploy a scheduler or replace #48's live/manual/offline gate.

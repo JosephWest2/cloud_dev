@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/doctor"
 	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/JosephWest2/cloud_dev/internal/expirycleanup"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -40,14 +41,15 @@ func (s cleanupSTS) GetCallerIdentity(context.Context, *sts.GetCallerIdentityInp
 }
 
 type cleanupFakeAPI struct {
-	mu            sync.Mutex
-	rows          []types.Instance
-	writes        int
-	reads         int
-	volumeReads   int
-	deny          string
-	uncertainRoot bool
-	cancel        context.CancelFunc
+	mu             sync.Mutex
+	rows           []types.Instance
+	writes         int
+	reads          int
+	volumeReads    int
+	deny           string
+	uncertainRoot  bool
+	blockAfterScan bool
+	cancel         context.CancelFunc
 }
 
 func (*cleanupFakeAPI) Options() ec2.Options { return ec2.Options{Region: cleanupScope.Region} }
@@ -55,6 +57,10 @@ func (a *cleanupFakeAPI) DescribeInstances(ctx context.Context, in *ec2.Describe
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.reads++
+	if a.blockAfterScan && a.reads > 1 {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 	var rows []types.Instance
 	for _, r := range a.rows {
 		if len(in.InstanceIds) == 0 || in.InstanceIds[0] == aws.ToString(r.InstanceId) {
@@ -64,7 +70,11 @@ func (a *cleanupFakeAPI) DescribeInstances(ctx context.Context, in *ec2.Describe
 	if len(rows) == 0 {
 		return &ec2.DescribeInstancesOutput{}, nil
 	}
-	return &ec2.DescribeInstancesOutput{Reservations: []types.Reservation{{OwnerId: aws.String(cleanupScope.Account), Instances: rows}}}, nil
+	out := &ec2.DescribeInstancesOutput{Reservations: []types.Reservation{{OwnerId: aws.String(cleanupScope.Account), Instances: rows}}}
+	if a.blockAfterScan {
+		out.NextToken = aws.String("next")
+	}
+	return out, nil
 }
 func (a *cleanupFakeAPI) TerminateInstances(ctx context.Context, in *ec2.TerminateInstancesInput, _ ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error) {
 	a.mu.Lock()
@@ -109,6 +119,7 @@ manifest="missing.json"
 profile_file="missing.toml"
 ssh_identity_file="missing-key"
 max_count=-1
+default_ttl="not-a-duration"
 `), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -421,5 +432,58 @@ func TestCleanupDispatchGlobalsDeadlinesAndHelp(t *testing.T) {
 		return expiry.Result{}
 	}); code != 0 || !strings.Contains(stdout.String(), "No launch manifest") {
 		t.Fatal(code, stdout.String())
+	}
+}
+
+func TestPublicCleanupRoutingNeedsNoLifecycle(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	// A missing config must produce the cleanup envelope without invoking doctor
+	// or lifecycle dependencies (or contacting AWS).
+	code := Run(context.Background(), []string{"--config", filepath.Join(t.TempDir(), "missing"), "cleanup", "--json"}, &stdout, &stderr, doctor.Dependencies{})
+	r := cleanupDecode(t, stdout.Bytes())
+	if code != 2 || r.Code != "cleanup_invalid" {
+		t.Fatal(code, r)
+	}
+}
+
+func TestCleanupDeadlineKeepsIncompleteDiscoveryIDs(t *testing.T) {
+	a := &cleanupFakeAPI{rows: []types.Instance{cleanupRow(1, cleanupEpoch.Format(time.RFC3339Nano))}, blockAfterScan: true}
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Millisecond)
+	defer cancel()
+	r := runCleanup(ctx, cleanupConfig(t), config.Overrides{}, false, io.Discard, cleanupDeps(t, a, cleanupScope.Account))
+	var stdout, stderr bytes.Buffer
+	if code := emitCleanup(r, true, &stdout, &stderr); code != 4 {
+		t.Fatal(code, r)
+	}
+	got := cleanupDecode(t, stdout.Bytes())
+	if got.ScanComplete || got.CandidateCount != 0 || len(got.Instances) != 1 || a.writes != 0 || got.Instances[0].InstanceID != "i-00000001" {
+		t.Fatalf("%+v writes=%d", got, a.writes)
+	}
+}
+
+type cleanupWriterFunc func([]byte) (int, error)
+
+func (f cleanupWriterFunc) Write(p []byte) (int, error) { return f(p) }
+func TestCleanupPreparedEvidenceMustBeAcknowledged(t *testing.T) {
+	a := &cleanupFakeAPI{rows: []types.Instance{cleanupRow(1, cleanupEpoch.Format(time.RFC3339Nano))}}
+	prepared := false
+	writer := cleanupWriterFunc(func(data []byte) (int, error) {
+		var event expiry.Event
+		if err := json.Unmarshal(data, &event); err != nil {
+			t.Error(err)
+			return 0, err
+		}
+		if event.Kind == "termination_prepared" {
+			prepared = true
+			if event.Scope != cleanupScope || event.Instance == nil || event.Instance.InstanceID != "i-00000001" || len(event.Instance.Volumes) != 1 || event.Instance.Volumes[0].ID != "vol-00000001" || event.Instance.Volumes[0].DeleteOnTermination == nil || !*event.Instance.Volumes[0].DeleteOnTermination || event.Instance.ExpiresAt == nil {
+				t.Errorf("bad preservation: %+v", event)
+			}
+			return 0, io.ErrClosedPipe
+		}
+		return len(data), nil
+	})
+	r := runCleanup(context.Background(), cleanupConfig(t), config.Overrides{}, false, writer, cleanupDeps(t, a, cleanupScope.Account))
+	if !prepared || r.OK || a.writes != 0 {
+		t.Fatalf("prepared=%t result=%+v writes=%d", prepared, r, a.writes)
 	}
 }
