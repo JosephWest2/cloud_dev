@@ -47,7 +47,10 @@ type Instance struct {
 	HostKey          string   `json:"-"`
 	ExpiresAt        string   `json:"expires_at,omitempty"`
 	ExpiryStatus     string   `json:"expiry_status,omitempty"`
-	clientToken      string
+	// expiryObserved is same-run diagnostic provenance, never ledger authority.
+	// A missing tag on an observed row differs from an unobserved plan fallback.
+	expiryObserved bool
+	clientToken    string
 }
 
 func tagsOf(i types.Instance) map[string]string {
@@ -267,6 +270,7 @@ func (s *Service) inventorySelection(ctx context.Context, id, name, request, gro
 					}
 					if n, exists := seen[r.ID]; exists {
 						found[n].Volumes = mergeFleetVolumes(found[n].Volumes, r.Volumes)
+						copyObservedExpiry(&found[n], r)
 						continue
 					}
 					seen[r.ID] = len(found)

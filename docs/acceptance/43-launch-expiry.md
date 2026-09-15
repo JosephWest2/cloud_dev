@@ -190,3 +190,55 @@ equality and 1ns before expiry. Full affected package suites and race checks cov
 this observation-only correction; the repository-wide check was not repeated.
 Fresh review of the final commit is pending with the parent. No live acceptance
 was performed.
+
+## Follow-up review: expiry provenance through readiness refresh
+
+Reproduced the P2 finding against `ea56190` with the Astra review overlay.
+Instance observations now carry a private, in-memory `expiryObserved` marker.
+Only inspecting an AWS row sets it, including a row with no expiry tag. Immutable
+deadline defaults and JSON-decoded records do not assert observation provenance.
+Outcome clones preserve the marker; it adds no serialized field or schema change.
+
+The full public resume path was traced through reconciliation, startup polling,
+worker readiness, the final pre-probe lookup, and automatic recovery refresh:
+
+- A newer scan or exact-ID row supplies the current diagnostic, even on a partial
+  read. An error, empty result or NotFound without a row retains prior evidence.
+- Readiness retains diagnostics before live-target filtering or error handling
+  discards a returned row. This includes a terminal row followed by an empty
+  terminal fallback read. Existing scope, identity and probe checks still apply.
+- Refresh merges only observed expiry for the same request plan and worker ID;
+  immutable defaults cannot replace previously observed missing/invalid/duplicate
+  or changed-valid expiry. Repeated empty refreshes preserve that provenance.
+- The replacement after a retry preparation conflict uses the same merge rule.
+  Repeated inventory rows retain the newer diagnostic while existing conflicting
+  inventory errors still prohibit authority. Other worker map retention, value
+  copies and final projections preserve the marker without changing launch pins.
+
+Permanent public regressions exercise startup, terminal and live resolution, and
+terminal and live pre-probe observations followed by readiness-triggered refresh.
+They cover all existing expiry diagnostic cases, newer scan/exact evidence,
+partial responses, scan/exact errors, empty results and NotFound. Assertions check
+public nullable expiry, original request digest/deadline, stable worker IDs,
+historical fulfillment, allocation bounds, no new launches and unchanged ledger
+bytes. Additional tests check unobserved defaults, serialization excluding the
+marker, repeated refresh, cross-plan isolation, retry conflicts and repeated rows.
+
+Verification passed:
+
+```sh
+go test -count=1 -overlay=/tmp/issue43-review-7d25txin/overlay.json ./internal/lifecycle -run '^TestReview'
+go test -count=1 -overlay=/tmp/issue43-final-review-045v18w6/overlay.json ./internal/lifecycle -run '^TestFinalReview'
+go test -count=1 -overlay=/tmp/issue43-astra-review-k7w3b3ua/overlay.json ./internal/lifecycle -run '^TestAstraPublicRefreshExpiryEvidence$'
+go test -count=1 ./internal/lifecycle ./internal/cli ./internal/config ./internal/foundation ./internal/expiry
+make check
+make build
+go test -race -count=1 ./internal/lifecycle ./internal/cli
+go test -race -count=1 ./internal/lifecycle -run '^TestExpiryInventoryRetainsLatestConflictingRow$'
+git diff --check
+```
+
+Changes remain in recovery/observation and tests. CLI/manifest interfaces, permanent
+serialization, fulfillment and allocation authority are unchanged. The exact v6
+handoff and all TTL/send gates remain intact. Parent publication and fresh review
+of the final head are pending; live acceptance was not performed.

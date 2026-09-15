@@ -89,6 +89,7 @@ func (s *batchStartup) mayRefresh(err error) bool {
 // Preserve the observations already obtained by independent readiness workers,
 // but only carry ready status onto a currently verified identical live worker.
 func refreshBatchStartup(previous, current BatchOutcome, preserveErrors bool) BatchOutcome {
+	retainBatchExpiry(&current, previous)
 	known := map[string]WorkerOutcome{}
 	for _, worker := range previous.Workers {
 		known[worker.ID] = worker

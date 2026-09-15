@@ -111,6 +111,7 @@ func (p *LaunchPlan) UnmarshalJSON(data []byte) error {
 }
 
 func inspectInstanceExpiry(i *Instance, tags []types.Tag, now time.Time) {
+	i.expiryObserved = true
 	raw := make([]expiry.Tag, 0, len(tags))
 	for _, tag := range tags {
 		raw = append(raw, expiry.Tag{Key: tag.Key, Value: tag.Value})
@@ -129,6 +130,36 @@ func inspectInstanceExpiry(i *Instance, tags []types.Tag, now time.Time) {
 		setExpiryStatus(i, now)
 	}
 }
+
+// copyObservedExpiry copies only diagnostics for an already retained ID. Callers
+// supply newer evidence, or an older fallback only when the current value was
+// never observed. Neither plan defaults nor JSON-decoded records are observations.
+func copyObservedExpiry(dst *Instance, observed Instance) {
+	if dst.ID == observed.ID && observed.expiryObserved {
+		dst.ExpiresAt, dst.ExpiryStatus = observed.ExpiresAt, observed.ExpiryStatus
+		dst.expiryObserved = true
+	}
+}
+
+func retainObservedExpiry(current *Instance, previous Instance) {
+	if !current.expiryObserved {
+		copyObservedExpiry(current, previous)
+	}
+}
+
+func retainBatchExpiry(current *BatchOutcome, previous BatchOutcome) {
+	if !supportedPlan(current.Plan.SchemaVersion) || current.Plan.Digest() != previous.Plan.Digest() {
+		return
+	}
+	known := make(map[string]Instance, len(previous.Workers))
+	for _, worker := range previous.Workers {
+		known[worker.ID] = worker.Instance
+	}
+	for n := range current.Workers {
+		retainObservedExpiry(&current.Workers[n].Instance, known[current.Workers[n].ID])
+	}
+}
+
 func setExpiryStatus(i *Instance, now time.Time) {
 	if i.ExpiresAt == "" {
 		if i.ExpiryStatus == "" {
