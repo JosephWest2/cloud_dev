@@ -1155,3 +1155,26 @@ up to five minutes). Individual AWS requests have a 15-second cap, and inventory
 reads have a 128-page bound. Incomplete group/all discovery authorizes no target;
 an incomplete explicit lookup cannot authorize its candidates, while independently
 verified selectors may proceed. Preview/output failures never grant consent.
+
+## Expiry policy and shared cleanup contract (#42)
+
+The approved release policy is a configurable two-hour default (`default_ttl`),
+explicit fresh-launch `up --ttl` precedence, a positive maximum of `168h` and a
+five-minute cleanup schedule. TTL is elapsed wall time, including active SSH/exec,
+boot failure and detached work. Each immutable request has one canonical UTC
+`ExpiresAt` creation tag / `expires_at` field; equality (`now >= expires_at`)
+means expired. Retries never refresh the deadline. Legacy requests will remain
+inspectable/removable while fresh allocation requires a new expiry-aware request.
+
+The normative [expiry contract](plans/04-expiry-contract.md) specifies exact
+Go-duration/timestamp grammar, clock behavior, v2 plans/v3 batch receipts/v6
+manifest migration, historical digest compatibility, frozen cleanup selection,
+exact-ID revalidation, eligible states, scope, errors, volume evidence, and shared
+text/JSON/exit contracts. Pure APIs and fixtures live in `internal/expiry`; pinned
+historical bytes are under `internal/lifecycle/testdata/expiry-legacy`.
+
+This is a staged contract: #42 does not enable TTL flags/configuration, replace
+existing allocation behavior, or provision a scheduler. #43–#48 own integration,
+cloud deployment and live evidence. Until those gates pass, use explicit `down`
+for cleanup. Target configuration/command examples in the linked contract are
+marked with their availability rather than advertised as working enforcement.
