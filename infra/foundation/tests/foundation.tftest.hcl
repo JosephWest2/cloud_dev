@@ -330,3 +330,16 @@ run "retention_fractional" {
   variables { result_retention_days = 2.5 }
   expect_failures = [var.result_retention_days]
 }
+
+override_resource {
+  target = aws_iam_role.cleanup
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-cleanup" }
+}
+override_resource {
+  target = aws_iam_role.cleanup_scheduler
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-schedule" }
+}
+override_resource {
+  target = aws_lambda_function.cleanup
+  values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
+}

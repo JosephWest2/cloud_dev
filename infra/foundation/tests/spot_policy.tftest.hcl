@@ -79,8 +79,8 @@ run "spot_policy_boundary" {
       s.Condition.StringEquals["aws:RequestedRegion"] == "us-east-2" && s.Condition.StringEquals["aws:RequestTag/ManagedBy"] == "devbox" &&
       s.Condition.StringEquals["aws:RequestTag/Deployment"] == "test" && s.Condition.StringEquals["aws:RequestTag/Owner"] == "test-owner" &&
       s.Condition.StringEquals["aws:RequestTag/Profile"] == "agent" && s.Condition.StringEquals["aws:RequestTag/NamingVersion"] == "1" &&
-      toset(s.Condition["ForAllValues:StringEquals"]["aws:TagKeys"]) == toset(["ManagedBy", "Deployment", "Owner", "Profile", "Name", "BaseName", "NamingVersion", "RequestId", "BatchId", "AttemptId", "CreatedAt", "Group"]) &&
-      alltrue([for key in ["Name", "BaseName", "RequestId", "BatchId", "AttemptId", "CreatedAt"] : s.Condition.StringLike["aws:RequestTag/${key}"] == "?*"])
+      toset(s.Condition["ForAllValues:StringEquals"]["aws:TagKeys"]) == toset(["ManagedBy", "Deployment", "Owner", "Profile", "Name", "BaseName", "NamingVersion", "RequestId", "BatchId", "AttemptId", "CreatedAt", "ExpiresAt", "Group"]) &&
+      alltrue([for key in ["Name", "BaseName", "RequestId", "BatchId", "AttemptId", "CreatedAt", "ExpiresAt"] : s.Condition.StringLike["aws:RequestTag/${key}"] == "?*"])
     ]) == 1)
     error_message = "Dependent Fleet tag authorization must enforce all scope and batch identity tags while allowing optional Group."
   }
@@ -251,4 +251,17 @@ run "oversized_policy_rejected" {
     owner      = "ooooooooooooooooooooooo"
   }
   expect_failures = [aws_iam_role_policy.operator]
+}
+
+override_resource {
+  target = aws_iam_role.cleanup
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-cleanup" }
+}
+override_resource {
+  target = aws_iam_role.cleanup_scheduler
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-schedule" }
+}
+override_resource {
+  target = aws_lambda_function.cleanup
+  values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
 }
