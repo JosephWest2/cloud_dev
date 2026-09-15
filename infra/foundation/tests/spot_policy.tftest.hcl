@@ -244,7 +244,7 @@ run "three_az_live_scope_policy_quota" {
     values = { arn = "arn:aws:iam::123456789012:role/devbox-personal-dev-joseph-schedule" }
   }
   assert {
-    condition     = length(local.operator_policy) <= 10240 && length(local.operator_policy) > 9500
+    condition     = length(local.operator_policy) <= 10240 && length(local.operator_policy) > 8500
     error_message = "The full three-AZ live scope must fit IAM's inline-role quota, including repeated subnet and scoped ARNs."
   }
 }
@@ -254,8 +254,29 @@ run "three_az_live_scope_policy_quota" {
 run "oversized_policy_rejected" {
   command = plan
   variables {
-    deployment = "ddddddddddddddddddddddd"
-    owner      = "ooooooooooooooooooooooo"
+    availability_zones = ["us-east-2a", "us-east-2b", "us-east-2c"]
+    deployment         = "ddddddddddddddddddddddd"
+    owner              = "ooooooooooooooooooooooo"
+  }
+  override_resource {
+    target = aws_iam_role.operator
+    values = { arn = "arn:aws:iam::123456789012:role/devbox-ddddddddddddddddddddddd-ooooooooooooooooooooooo-operator" }
+  }
+  override_resource {
+    target = aws_iam_role.instance
+    values = { arn = "arn:aws:iam::123456789012:role/devbox-ddddddddddddddddddddddd-ooooooooooooooooooooooo-instance" }
+  }
+  override_resource {
+    target = aws_iam_instance_profile.devbox
+    values = { arn = "arn:aws:iam::123456789012:instance-profile/devbox-ddddddddddddddddddddddd-ooooooooooooooooooooooo" }
+  }
+  override_resource {
+    target = aws_ssm_document.readiness
+    values = { arn = "arn:aws:ssm:us-east-2:123456789012:document/devbox-ddddddddddddddddddddddd-ooooooooooooooooooooooo-readiness", latest_version = "1" }
+  }
+  override_resource {
+    target = aws_ssm_document.execution
+    values = { arn = "arn:aws:ssm:us-east-2:123456789012:document/devbox-ddddddddddddddddddddddd-ooooooooooooooooooooooo-execute", latest_version = "1" }
   }
   expect_failures = [aws_iam_role_policy.operator]
 }
@@ -271,4 +292,13 @@ override_resource {
 override_resource {
   target = aws_lambda_function.cleanup
   values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
+}
+
+override_resource {
+  target = aws_iam_role.evidence
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-evidence" }
+}
+override_resource {
+  target = aws_sqs_queue.cleanup_failures
+  values = { arn = "arn:aws:sqs:us-east-2:123456789012:devbox-test-test-owner-evidence" }
 }

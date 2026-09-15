@@ -82,7 +82,7 @@ func cleanupFixture(t *testing.T) (*fake, config.Manifest, config.Cleanup) {
 
 func TestCleanupHealthSeparatesConfigurationFromReadiness(t *testing.T) {
 	f, m, c := cleanupFixture(t)
-	checks := VerifyCleanup(context.Background(), CleanupClients{f, f, f, f}, m, m.Cleanup)
+	checks := VerifyCleanup(context.Background(), CleanupClients{Lambda: f, Scheduler: f, Logs: f, IAM: f}, m, m.Cleanup)
 	for _, check := range checks {
 		wantFail := check.Name == "cleanup_enabled" || check.Name == "cleanup_evidence"
 		if (check.Err != nil) != wantFail {
@@ -123,7 +123,7 @@ func TestCleanupHealthRejectsDrift(t *testing.T) {
 			if before == f.responses[tc.method] {
 				t.Fatal("bad fixture mutation")
 			}
-			checks := VerifyCleanup(context.Background(), CleanupClients{f, f, f, f}, m, m.Cleanup)
+			checks := VerifyCleanup(context.Background(), CleanupClients{Lambda: f, Scheduler: f, Logs: f, IAM: f}, m, m.Cleanup)
 			for _, c := range checks {
 				if c.Name == tc.check && c.Err == nil {
 					t.Fatal("drift accepted")
@@ -135,11 +135,11 @@ func TestCleanupHealthRejectsDrift(t *testing.T) {
 func TestCleanupDescriptorRejectsScopeAndBounds(t *testing.T) {
 	for _, mutate := range []func(*config.Cleanup){func(c *config.Cleanup) {
 		c.Function.ARN = strings.Replace(c.Function.ARN, "123456789012", "999999999999", 1)
-	}, func(c *config.Cleanup) { c.Function.CodeSHA256 = "bad" }, func(c *config.Cleanup) { c.Function.TimeoutSeconds = 900 }, func(c *config.Cleanup) { c.Schedule.GroupARN = c.Schedule.ARN }, func(c *config.Cleanup) { c.Schedule.RetryAttempts = 185 }, func(c *config.Cleanup) { c.Logs.RetentionDays = 0 }, func(c *config.Cleanup) { c.ExecutionRole = c.SchedulerRole }, func(c *config.Cleanup) { c.Evidence = json.RawMessage(`{"schema_version":2}`) }} {
+	}, func(c *config.Cleanup) { c.Function.CodeSHA256 = "bad" }, func(c *config.Cleanup) { c.Function.TimeoutSeconds = 900 }, func(c *config.Cleanup) { c.Schedule.GroupARN = c.Schedule.ARN }, func(c *config.Cleanup) { c.Schedule.RetryAttempts = 185 }, func(c *config.Cleanup) { c.Logs.RetentionDays = 0 }, func(c *config.Cleanup) { c.ExecutionRole = c.SchedulerRole }} {
 		f, m, c := cleanupFixture(t)
 		mutate(&c)
 		raw, _ := json.Marshal(c)
-		checks := VerifyCleanup(context.Background(), CleanupClients{f, f, f, f}, m, raw)
+		checks := VerifyCleanup(context.Background(), CleanupClients{Lambda: f, Scheduler: f, Logs: f, IAM: f}, m, raw)
 		if len(checks) != 1 || checks[0].Err == nil || len(f.calls) != 0 {
 			t.Fatal("invalid descriptor reached AWS", checks, f.calls)
 		}

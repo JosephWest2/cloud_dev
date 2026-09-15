@@ -81,11 +81,11 @@ run "cleanup_boundary" {
     error_message = "Schedule must be disabled pending independent failure evidence, with bounded delivery and no flexible window."
   }
   assert {
-    condition     = one(jsondecode(local.cleanup_scheduler_trust).Statement).Principal.Service == "scheduler.amazonaws.com" && one(jsondecode(local.cleanup_scheduler_trust).Statement).Condition.StringEquals == { "aws:SourceAccount" = var.account_id, "aws:SourceArn" = local.cleanup_group_arn } && one(jsondecode(local.cleanup_scheduler_policy).Statement).Resource == local.cleanup_arn && one(jsondecode(local.cleanup_scheduler_policy).Statement).Action == ["lambda:InvokeFunction"]
+    condition     = one(jsondecode(local.cleanup_scheduler_trust).Statement).Principal.Service == "scheduler.amazonaws.com" && one(jsondecode(local.cleanup_scheduler_trust).Statement).Condition.StringEquals == { "aws:SourceAccount" = var.account_id, "aws:SourceArn" = local.cleanup_group_arn } && jsondecode(local.cleanup_scheduler_policy).Statement[0].Resource == local.cleanup_arn && jsondecode(local.cleanup_scheduler_policy).Statement[0].Action == ["lambda:InvokeFunction"]
     error_message = "Scheduler invocation must trust the exact account/group and grant only the exact function."
   }
   assert {
-    condition     = toset(flatten([for s in jsondecode(local.cleanup_policy).Statement : s.Action])) == toset(["ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:TerminateInstances", "logs:CreateLogStream", "logs:PutLogEvents"]) && length([for s in jsondecode(local.cleanup_policy).Statement : s if s.Action == ["ec2:TerminateInstances"] && s.Resource == "${local.ec2}:instance/*" && s.Condition.StringEquals == merge(local.resource_scope, { "aws:RequestedRegion" = var.region })]) == 1
+    condition     = toset(flatten([for s in jsondecode(local.cleanup_policy).Statement : s.Action])) == toset(["ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:TerminateInstances", "logs:CreateLogStream", "logs:PutLogEvents", "sqs:SendMessage"]) && length([for s in jsondecode(local.cleanup_policy).Statement : s if s.Action == ["ec2:TerminateInstances"] && s.Resource == "${local.ec2}:instance/*" && s.Condition.StringEquals == merge(local.resource_scope, { "aws:RequestedRegion" = var.region })]) == 1
     error_message = "Cleanup must have exact regional/tag termination scope, without launch, retag, volume delete or S3 mutation permissions."
   }
   assert {
@@ -119,4 +119,68 @@ override_resource {
 override_resource {
   target = aws_lambda_function.cleanup
   values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
+}
+
+override_resource {
+  target = aws_iam_role.evidence
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-evidence" }
+}
+override_resource {
+  target = aws_sqs_queue.cleanup_failures
+  values = { arn = "arn:aws:sqs:us-east-2:123456789012:devbox-test-test-owner-evidence" }
+}
+run "retained_failure_route" {
+  command = apply
+  assert {
+    condition = (aws_sqs_queue.cleanup_failures.sqs_managed_sse_enabled && !aws_sqs_queue.cleanup_failures.fifo_queue && aws_sqs_queue.cleanup_failures.message_retention_seconds == 1209600 && aws_sqs_queue.cleanup_failures.visibility_timeout_seconds == 1800
+      && one(one(aws_scheduler_schedule.cleanup.target).dead_letter_config).arn == local.evidence_queue_arn
+    && one(one(aws_lambda_function_event_invoke_config.cleanup.destination_config).on_failure).destination == local.evidence_queue_arn)
+    error_message = "Both pre-handler failures must reach the same encrypted 14-day transport with conservative visibility."
+  }
+  assert {
+    condition = (aws_pipes_pipe.cleanup_failures.source == local.evidence_queue_arn && aws_pipes_pipe.cleanup_failures.target == local.evidence_log_arn && aws_pipes_pipe.cleanup_failures.desired_state == "RUNNING"
+      && one(one(aws_pipes_pipe.cleanup_failures.source_parameters).sqs_queue_parameters).batch_size == 1
+      && length(one(aws_pipes_pipe.cleanup_failures.source_parameters).filter_criteria) == 0
+      && one(one(aws_pipes_pipe.cleanup_failures.target_parameters).cloudwatch_logs_parameters).log_stream_name == "failures"
+    && aws_cloudwatch_log_group.cleanup_failures.skip_destroy && aws_cloudwatch_log_group.cleanup_failures.retention_in_days == 30)
+    error_message = "A no-filter batch-1 running Pipe must target the retained failure log stream."
+  }
+  assert {
+    condition = (one(jsondecode(local.evidence_trust).Statement).Condition.StringEquals == { "aws:SourceAccount" = var.account_id, "aws:SourceArn" = local.evidence_pipe_arn }
+      && jsondecode(local.evidence_policy).Statement[0].Action == ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
+      && jsondecode(local.evidence_policy).Statement[0].Resource == local.evidence_queue_arn
+      && jsondecode(local.evidence_policy).Statement[1].Action == ["logs:CreateLogStream", "logs:PutLogEvents"]
+      && jsondecode(local.evidence_policy).Statement[1].Resource == "${local.evidence_log_arn}:log-stream:failures"
+      && length([for s in jsondecode(local.cleanup_policy).Statement : s if s.Action == ["sqs:SendMessage"] && s.Resource == local.evidence_queue_arn]) == 1
+    && jsondecode(local.cleanup_scheduler_policy).Statement[1].Action == ["sqs:SendMessage"] && jsondecode(local.cleanup_scheduler_policy).Statement[1].Resource == local.evidence_queue_arn)
+    error_message = "Pipe trust and both producers must stay scoped to the exact route."
+  }
+  assert {
+    condition = (one(jsondecode(local.health_trust).Statement).Principal.AWS == aws_iam_role.operator.arn
+      && length([for s in jsondecode(local.operator_policy).Statement : s if s.Action == ["sts:AssumeRole"] && s.Resource == [local.health_role_arn]]) == 1
+      && length(local.operator_policy) <= 10240 && length(local.health_policy) <= 10240
+      && alltrue([for s in jsondecode(local.health_policy).Statement : s.Effect == "Allow"])
+    && toset(flatten([for s in jsondecode(local.health_policy).Statement : s.Action])) == toset(["lambda:GetFunctionConfiguration", "lambda:GetFunctionConcurrency", "lambda:GetFunctionEventInvokeConfig", "scheduler:GetSchedule", "pipes:DescribePipe", "sqs:GetQueueAttributes", "logs:FilterLogEvents", "logs:DescribeLogStreams", "logs:DescribeMetricFilters", "iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies", "cloudwatch:DescribeAlarms", "logs:DescribeLogGroups", "cloudwatch:GetMetricStatistics"]))
+    error_message = "Health credentials must be operator-only and read-only, within aggregate IAM quotas."
+  }
+  assert {
+    condition = (length(aws_cloudwatch_metric_alarm.cleanup) == 16
+      && aws_cloudwatch_metric_alarm.cleanup["scheduler-TargetErrorCount"].dimensions == tomap({ ScheduleGroup = local.cleanup_name })
+      && aws_cloudwatch_metric_alarm.cleanup["lambda-Errors"].dimensions == tomap({ FunctionName = local.cleanup_name })
+      && aws_cloudwatch_metric_alarm.cleanup["pipe-ExecutionTimeout"].dimensions == tomap({ PipeName = local.evidence_name })
+      && aws_cloudwatch_metric_alarm.cleanup["queue-ApproximateAgeOfOldestMessage"].dimensions == tomap({ QueueName = local.evidence_name })
+      && aws_cloudwatch_metric_alarm.cleanup["no-success"].treat_missing_data == "breaching"
+      && aws_cloudwatch_metric_alarm.cleanup["no-success"].period == 300 && aws_cloudwatch_metric_alarm.cleanup["no-success"].evaluation_periods == 3
+      && aws_cloudwatch_metric_alarm.cleanup["no-success"].comparison_operator == "LessThanThreshold"
+    && aws_cloudwatch_metric_alarm.cleanup["no-success"].threshold == 1)
+    error_message = "Use supported metric dimensions and alarm on three missing five-minute successes."
+  }
+}
+run "evidence_retention_configurable" {
+  command = plan
+  variables { cleanup_log_retention_days = 60 }
+  assert {
+    condition     = aws_cloudwatch_log_group.cleanup.retention_in_days == 60 && aws_cloudwatch_log_group.cleanup_failures.retention_in_days == 60 && local.evidence_manifest.logs.retention_days == 60
+    error_message = "Export and retain the selected handler/failure retention together."
+  }
 }

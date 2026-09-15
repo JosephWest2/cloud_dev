@@ -13,12 +13,9 @@ import (
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
-	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
-	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
-	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
@@ -49,7 +46,7 @@ func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p 
 	}
 	checks := Verify(ctx, Clients{EC2: ec2.NewFromConfig(a), IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p)
 	if m.SchemaVersion == 6 {
-		checks = append(checks, VerifyCleanup(ctx, CleanupClients{Lambda: lambda.NewFromConfig(a), Scheduler: scheduler.NewFromConfig(a), Logs: cloudwatchlogs.NewFromConfig(a), IAM: iam.NewFromConfig(a)}, m, m.Cleanup)...)
+		checks = append(checks, checkCleanupDeployment(ctx, a, m)...)
 	}
 	return checks
 }
