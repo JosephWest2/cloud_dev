@@ -13,6 +13,10 @@ Track the interactive release in [#5](https://github.com/JosephWest2/cloud_dev/i
 3. [#3 — Launch and manage groups of Spot devboxes](https://github.com/JosephWest2/cloud_dev/issues/3)
 4. [#4 — Expire devboxes automatically while the local client is offline](https://github.com/JosephWest2/cloud_dev/issues/4)
 
+Agent follow-on work for chunks 5–6:
+
+- [#56 — tmux sessions, live observation and input-required notifications](https://github.com/JosephWest2/cloud_dev/issues/56)
+
 ## Decisions to settle
 
 | Decision | Proposed starting point | Needed before |
@@ -27,12 +31,13 @@ Track the interactive release in [#5](https://github.com/JosephWest2/cloud_dev/i
 | Base OS | **Confirmed:** Ubuntu LTS | Decided |
 | Image and architecture | Propose x86-64; select the Ubuntu LTS release and pin the actual AMI ID with provenance | Chunk 1 |
 | Spend controls | Explicit On-Demand opt-in, configurable instance count limit, proposed 2-hour default TTL once cleanup ships | Chunks 1–4 |
+| Interactive agent sessions | **Confirmed:** baseline tmux with `watch`/`attach` through SSH over SSM, durable logs, explicit agent state and input-required notifications | Image/manual workflow in chunk 5; managed integration in chunk 6 |
 | Agent contract | Select one agent, repository, authentication method, and representative issue | Chunk 5 |
 | Agent authority | Proposed: push a dedicated branch and open a draft PR; no merge; clarify checkpoint contents and failure retention | Chunk 6 |
 | GitHub identity | Select GitHub App or limited token; separate agent and runner credentials | Chunks 5 and 9 |
 | CI trust and trigger | Trusted repository jobs first; decide whether fork PRs are supported; hosted launcher workflow before webhook autoscaling | Chunk 9 |
 
-The first-release priority, Go + OpenTofu + TOML stack, Ubuntu LTS base OS, personal account scope, Linux/Arch local target, and SSH-over-SSM editor/file-transfer access are confirmed. Other entries remain proposals. The user has no existing VPC or authentication constraints and requested an explanation of networking tradeoffs before choosing. See [decision notes](design-decisions.md) for confirmed decisions and network comparisons.
+The first-release priority, Go + OpenTofu + TOML stack, Ubuntu LTS base OS, personal account scope, Linux/Arch local target, SSH-over-SSM editor/file-transfer access, and baseline tmux agent workflow are confirmed. The older infrastructure proposals in this table are superseded by the current selections in [decision notes](design-decisions.md), which also records the tmux decision and its implementation boundaries.
 
 ## Shared implementation contracts
 
@@ -102,6 +107,11 @@ Deliver `--ttl`, visible expiry timestamps, `cleanup --dry-run`, and manual clea
 
 Deliver one Packer image with pinned tool versions, an image manifest, and the selected repository bootstrap. Add runtime Secrets Manager access limited to the workload, non-secret Parameter Store configuration where useful, and a defined credential renewal strategy. Store only secret references in configuration and infrastructure state. Create/update secret values out of band.
 
+Include tmux in this first agent image and document a named manual agent session
+under `devbox`, reached through the existing SSH-over-SSM connection. Verify the
+same session remains usable after disconnect/reconnect. Managed session commands
+and agent status arrive with chunk 6; tmux availability need not wait for them.
+
 Build an image once, reference its exact AMI ID, and launch through the existing workflow. Keep a previous manifest for rollback. Record image and bootstrap revisions on the machine; failures remain inspectable within TTL. Set a useful boot-readiness target after measuring this representative workload.
 
 **Human acceptance test:** Launch, connect, and run the actual repository's smallest useful build/test. Terminate and recreate it; verify the same image/tool versions and successful bootstrap. Rotate a test credential without rebuilding the AMI and confirm a new machine uses it. Roll back to the previous image manifest.
@@ -112,11 +122,32 @@ Build an image once, reference its exact AMI ID, and launch through the existing
 
 **User outcome:** `devbox agent 142` starts a real issue on an isolated machine and leaves reviewable work in GitHub.
 
-Deliver one selected agent adapter, repository/issue lookup, a unique branch, runtime authentication, a supervised job, status/log retrieval, durable result metadata, and draft-PR creation. `agent` returns a durable job ID; status remains retrievable after the machine terminates. Implement explicit completion/failure/timeout states.
+Deliver one selected agent adapter, repository/issue lookup, a unique branch, runtime authentication, a supervised job in a named detached tmux session, status/log retrieval, durable result metadata, and draft-PR creation. `agent` returns a durable job ID; status remains retrievable after the machine terminates. Implement explicit working/input-wait/completion/failure/timeout/interruption states, timestamps and unknown/stale observations.
+
+Add read-only `devbox watch NAME_OR_ID` and interactive `devbox attach NAME_OR_ID`
+through the existing SSH-over-SSM scope/authentication/host-trust path. Bind each
+session to its job/attempt and retain exited panes for inspection within TTL.
+Extend `devbox logs` for durable agent job IDs while preserving existing command-ID
+retrieval. Publish terminal output with an explicit stream format and completeness
+status; persist agent events/transcripts where supported. Show agent state and
+waiting duration separately from machine readiness in `ls`.
+
+Use structured adapter events for questions; retain pending-question metadata and
+send an input-required notification through a documented configurable channel even
+when no terminal is attached. Answer through `attach` initially. Notification
+failure must remain observable, and neither waiting nor active attachment extends
+worker expiry. Follow the [selected tmux design](design-decisions.md#interactive-agent-sessions-and-observability-september-14-2026).
 
 Apply the agreed checkpoint and publishing policy. Terminate after verified persistence on success; proposed failure behavior is to retain the machine for inspection until its TTL. Do not assume that a local commit or an agent process exit means a successful GitHub push. Put independent concurrency limits around agent launches.
 
 **Human acceptance test:** Create a small issue in a test repository; launch it; monitor status; inspect the pushed branch and draft PR; verify logs/results survive machine teardown. Then start two issues and confirm separate machines, branches, and result records.
+
+Also watch a run read-only, disconnect and reattach to the same agent process.
+Trigger a real agent question, observe `waiting_for_input` and a notification with
+no terminal attached, then answer interactively and observe work continue. Verify
+exit status and diagnostics for a failed agent, durable output after teardown,
+and unchanged expiry throughout. Instance loss must report an interrupted/unknown
+attempt accurately; tmux alone does not establish recoverable progress.
 
 **Failure test:** Reject a missing issue before allocating a machine. Exercise invalid agent credentials, a failing agent command, and a failed push; none may be reported as successful completion. Repeating an issue launch must not overwrite another active branch/job.
 
