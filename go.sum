@@ -16,6 +16,8 @@ github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.3 h1:MUaM4f+kj1ZIBPZfUS8
 github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.8.3/go.mod h1:6YmVmEVRI5ZZzRjCSsb9SryKH0hAlMRdgA7kG9aDvBU=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.3 h1:fuSCw4Z2qfRCztMPO3GXJNSiEp6Wee+WOLwrHHUMy9c=
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.5.3/go.mod h1:6SxcHheD1pPR5+kWm1wGvjlL/YqUsh267sAfEmN4K7A=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.72.0 h1:BAVXU2PW/FQZUWdTZ9VQZPpbCF711hEQ0l6bW8FKl1I=
+github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.72.0/go.mod h1:4ZX78yzuIXJ78KT4eiKxQ7bUUm/Oe5xWvKzWFoL6x+g=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.87.0 h1:qn5nw6rYGLIBnxbOexypxG2eOaMzV389mG4WdUXp0/k=
 github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.87.0/go.mod h1:wsz6uFaBRCfqWjNLeBH0jutf0ek8CQGVCO/QSTWZl54=
 github.com/aws/aws-sdk-go-v2/service/ec2 v1.332.0 h1:T9rFYUxhZEBmnIgrzKZjd/0xMsWRF+brY/Gpgf5rc40=
@@ -32,12 +34,16 @@ github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.3 h1:L8vIOxylma91Tc
 github.com/aws/aws-sdk-go-v2/service/internal/s3shared v1.20.3/go.mod h1:fmPIZQzTExYuBNWFyi1P7IoDjvskgphXqK1yObMzusM=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.108.0 h1:iIjgs1MWp6quM8QyDUorxEjIZEpXV4UgqEp6wbFAz5U=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.108.0/go.mod h1:KYgalOoMYV+Dm9vz0ydRM+SQ3RtFcqGHR/rl36YD6oY=
+github.com/aws/aws-sdk-go-v2/service/pipes v1.32.0 h1:VCHtzSfgGNEBtfnce6uhfqk5XI0ZIkdFDSHNgGTb49E=
+github.com/aws/aws-sdk-go-v2/service/pipes v1.32.0/go.mod h1:LksALlaQ+SCcQmNM7NAga9oHzCNZ6kImgg81fYB3ON4=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1 h1:cFHmwLxZPvtoAlo79MboURL2+7b0TMHycnrcf5VZNXk=
 github.com/aws/aws-sdk-go-v2/service/s3 v1.113.1/go.mod h1:/uA+2Qj4jd5qBWagVC1AyzzDFXVK997E7U04w7Kw0wI=
 github.com/aws/aws-sdk-go-v2/service/scheduler v1.25.0 h1:nh3cKZXkjO2KJdzY2ZbkRXaR8BjLHo+t14wFFumhtYw=
 github.com/aws/aws-sdk-go-v2/service/scheduler v1.25.0/go.mod h1:3qyGHkZGVDDKAtbHZkjg2/8QejooBfRn9V2nnjjEggo=
 github.com/aws/aws-sdk-go-v2/service/signin v1.10.0 h1:ZD5qFpWcaOKdTuhBi431pIDkCgrMkMlMT6jlpSPoIRI=
 github.com/aws/aws-sdk-go-v2/service/signin v1.10.0/go.mod h1:8Nuuf+tR346PjJ3MvZPh9pekbLiLQFWJhzMXfwy7alA=
+github.com/aws/aws-sdk-go-v2/service/sqs v1.52.0 h1:39EpbrAPFSOPYc9FVr2ki84cLB/9C5nC03aL7ope2rU=
+github.com/aws/aws-sdk-go-v2/service/sqs v1.52.0/go.mod h1:yErwLsJkArgQLSGWtLjjwlpvlLK4+c9h0jDZZVN02hw=
 github.com/aws/aws-sdk-go-v2/service/ssm v1.78.0 h1:+a7gfPhZYdFvMxKwbC51PljAo4L/cdzg2tmtMusRkDE=
 github.com/aws/aws-sdk-go-v2/service/ssm v1.78.0/go.mod h1:sCtehdCzGR2L4tFbPq6qnfqX1A86h2Hna8fU10VuTaA=
 github.com/aws/aws-sdk-go-v2/service/sso v1.38.0 h1:JGeeBcMlhg1xtOXYpeCaTQBZObtXMPQCUqBcmr65NRA=

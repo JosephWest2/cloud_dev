@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/expiry"
@@ -12,6 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
+	"github.com/aws/smithy-go/logging"
 )
 
 type Logs interface {
@@ -23,12 +25,34 @@ type AWSJournal struct {
 	Scope                    expiry.Scope
 	Input                    expiry.ScheduledInput
 	Clock                    expiry.Clock
+	once                     sync.Once
+	slots                    chan struct{}
 }
 
 func (j *AWSJournal) Emit(ctx context.Context, e expiry.Event) error {
-	return j.Record(ctx, Record{SchemaVersion: 1, Kind: e.Kind, RequestID: j.RequestID, Scope: j.Scope, Correlation: j.Input, EmittedAt: e.EmittedAt, Event: &e})
+	r := Record{SchemaVersion: 1, Kind: e.Kind, RunID: j.RequestID, RequestID: j.RequestID, Scope: j.Scope, Correlation: j.Input, EmittedAt: e.EmittedAt, Event: &e}
+	if e.Summary != nil {
+		r.Code = e.Summary.Code
+		r.OK = e.Summary.OK && e.Summary.Complete && e.Summary.ScanComplete && e.Summary.ExitCode == 0
+		r.Complete = e.Summary.Complete
+		r.Partial = !e.Summary.Complete
+		r.Deadline = e.Summary.ExitCode == 4
+	}
+	return j.Record(ctx, r)
 }
 func (j *AWSJournal) Record(ctx context.Context, r Record) error {
+	if j.Client == nil || j.Clock == nil {
+		return errors.New("cleanup_evidence_unavailable")
+	}
+	request, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	j.once.Do(func() { j.slots = make(chan struct{}, 4) })
+	select {
+	case j.slots <- struct{}{}:
+		defer func() { <-j.slots }()
+	case <-request.Done():
+		return errors.New("cleanup_evidence_unavailable")
+	}
 	data, err := json.Marshal(r)
 	if err != nil {
 		return errors.New("cleanup_evidence_unavailable")
@@ -37,8 +61,6 @@ func (j *AWSJournal) Record(ctx context.Context, r Record) error {
 	if len(data) > 1000000 {
 		return errors.New("cleanup_evidence_too_large")
 	}
-	request, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
 	out, err := j.Client.PutLogEvents(request, &cloudwatchlogs.PutLogEventsInput{LogGroupName: aws.String(j.Group), LogStreamName: aws.String(j.Stream), LogEvents: []types.InputLogEvent{{Message: aws.String(string(data)), Timestamp: aws.Int64(j.Clock.Now().UnixMilli())}}})
 	if err != nil || request.Err() != nil || out == nil || out.RejectedLogEventsInfo != nil || out.RejectedEntityInfo != nil {
 		return errors.New("cleanup_evidence_unavailable")
@@ -47,7 +69,7 @@ func (j *AWSJournal) Record(ctx context.Context, r Record) error {
 }
 
 func AWSFactory(ctx context.Context, s Settings, requestID string, input expiry.ScheduledInput) (Runner, Journal, error) {
-	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(s.Scope.Region), config.WithRetryMaxAttempts(3))
+	cfg, err := config.LoadDefaultConfig(ctx, config.WithRegion(s.Scope.Region), config.WithRetryMaxAttempts(3), config.WithLogger(logging.Nop{}), config.WithClientLogMode(0))
 	if err != nil {
 		return nil, nil, err
 	}

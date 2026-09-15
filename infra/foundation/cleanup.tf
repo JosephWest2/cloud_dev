@@ -48,11 +48,12 @@ locals {
       Effect    = "Allow", Action = ["ec2:TerminateInstances"], Resource = "${local.ec2}:instance/*"
       Condition = { StringEquals = merge(local.resource_scope, { "aws:RequestedRegion" = var.region }) }
     },
-    { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${local.cleanup_log_arn}:log-stream:*" }
+    { Effect = "Allow", Action = ["logs:CreateLogStream", "logs:PutLogEvents"], Resource = "${local.cleanup_log_arn}:log-stream:*" },
+    { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = local.evidence_queue_arn }
   ] })
   cleanup_scheduler_policy = jsonencode({ Version = "2012-10-17", Statement = [{
     Effect = "Allow", Action = ["lambda:InvokeFunction"], Resource = local.cleanup_arn
-  }] })
+  }, { Effect = "Allow", Action = ["sqs:SendMessage"], Resource = local.evidence_queue_arn }] })
   cleanup_manifest = {
     schema_version = 1
     function = {
@@ -76,7 +77,7 @@ locals {
       arn         = aws_iam_role.cleanup_scheduler.arn, trust_sha256 = sha256(local.cleanup_scheduler_trust)
       policy_name = aws_iam_role_policy.cleanup_scheduler.name, policy_sha256 = sha256(local.cleanup_scheduler_policy)
     }
-    # Optional schema-1 evidence descriptor is added by #47; absence is not healthy unattended cleanup.
+    evidence = local.evidence_manifest
   }
 }
 resource "aws_cloudwatch_log_group" "cleanup" {
@@ -124,6 +125,9 @@ resource "aws_lambda_function_event_invoke_config" "cleanup" {
   function_name                = aws_lambda_function.cleanup.function_name
   maximum_event_age_in_seconds = 300
   maximum_retry_attempts       = 0
+  destination_config {
+    on_failure { destination = aws_sqs_queue.cleanup_failures.arn }
+  }
 }
 resource "aws_scheduler_schedule_group" "cleanup" {
   name = local.cleanup_name
@@ -139,6 +143,7 @@ resource "aws_scheduler_schedule" "cleanup" {
     arn      = aws_lambda_function.cleanup.arn
     role_arn = aws_iam_role.cleanup_scheduler.arn
     input    = local.cleanup_input
+    dead_letter_config { arn = aws_sqs_queue.cleanup_failures.arn }
     retry_policy {
       maximum_event_age_in_seconds = 300
       maximum_retry_attempts       = 2

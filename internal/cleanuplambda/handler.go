@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log"
+	"os"
 	"regexp"
 	"time"
 
@@ -23,6 +25,9 @@ type Settings struct {
 }
 
 func Environment(get func(string) string) (Settings, error) {
+	if get == nil {
+		return Settings{}, errors.New("cleanup_configuration_invalid")
+	}
 	s := Settings{Scope: expiry.Scope{Account: get("DEVBOX_ACCOUNT"), Region: get("DEVBOX_REGION"), Deployment: get("DEVBOX_DEPLOYMENT"), Owner: get("DEVBOX_OWNER")}, LogGroup: get("DEVBOX_LOG_GROUP")}
 	if s.Scope.Validate() != nil || s.Scope.Region != get("AWS_REGION") || s.LogGroup != "/aws/lambda/devbox-"+s.Scope.Deployment+"-"+s.Scope.Owner+"-cleanup" {
 		return Settings{}, errors.New("cleanup_configuration_invalid")
@@ -114,11 +119,14 @@ type Handler struct {
 	Getenv  func(string) string
 	Factory Factory
 	Clock   expiry.Clock
+	// Bootstrap records sanitized failures when the AWS journal cannot initialize.
+	Bootstrap func(Record)
 }
 
 type Record struct {
 	SchemaVersion int                   `json:"schema_version"`
 	Kind          string                `json:"kind"`
+	RunID         string                `json:"run_id"`
 	RequestID     string                `json:"request_id"`
 	Scope         expiry.Scope          `json:"scope"`
 	Correlation   expiry.ScheduledInput `json:"correlation"`
@@ -126,51 +134,100 @@ type Record struct {
 	Code          string                `json:"code,omitempty"`
 	OK            bool                  `json:"ok"`
 	Complete      bool                  `json:"complete"`
+	Partial       bool                  `json:"partial"`
+	Deadline      bool                  `json:"deadline"`
+	Result        *expiry.Result        `json:"result,omitempty"`
 	Event         *expiry.Event         `json:"event,omitempty"`
 }
 
-func (h Handler) Handle(ctx context.Context, raw json.RawMessage) (expiry.Result, error) {
-	var result expiry.Result
+// Handle returns only stable codes to the Lambda runtime and its asynchronous
+// failure destination. Raw payloads, configuration and SDK errors are never logged.
+func (h Handler) Handle(ctx context.Context, raw json.RawMessage) (result expiry.Result, retErr error) {
+	record := Record{SchemaVersion: 1, Kind: "invocation_start"}
+	if lc, ok := lambdacontext.FromContext(ctx); ok && regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`).MatchString(lc.AwsRequestID) {
+		record.RequestID, record.RunID = lc.AwsRequestID, lc.AwsRequestID
+	}
+	if h.Clock == nil {
+		h.Clock = expiry.SystemClock{}
+	}
+	record.EmittedAt, _ = expiry.Timestamp(h.Clock.Now())
+	var journal Journal
+	started := false
+	defer func() {
+		emit := func(r Record) error {
+			if journal != nil {
+				bounded, cancel := context.WithTimeout(ctx, 5*time.Second)
+				defer cancel()
+				return journal.Record(bounded, r)
+			}
+			if h.Bootstrap != nil {
+				h.Bootstrap(r)
+			} else {
+				data, _ := json.Marshal(r)
+				log.New(os.Stderr, "", 0).Print(string(data))
+			}
+			return nil
+		}
+		if !started {
+			_ = emit(record)
+		}
+		record.Kind = "invocation_end"
+		record.EmittedAt, _ = expiry.Timestamp(h.Clock.Now())
+		record.Code = result.Code
+		record.OK = retErr == nil && result.OK && result.Complete && result.ScanComplete && result.ExitCode == 0
+		record.Complete = record.OK
+		record.Partial = result.ExitCode == 3 || !result.Complete
+		record.Deadline = result.ExitCode == 4 || ctx.Err() != nil
+		if result.SchemaVersion != 0 {
+			record.Result = &result
+		}
+		if retErr != nil && record.Code == "" {
+			record.Code = retErr.Error()
+		}
+		if result.SchemaVersion == 0 {
+			summary := record
+			summary.Kind = "summary"
+			_ = emit(summary)
+		}
+		if emit(record) != nil {
+			retErr = errors.New("cleanup_evidence_unavailable")
+		}
+	}()
 	s, err := Environment(h.Getenv)
 	if err != nil {
 		return result, err
 	}
+	record.Scope = s.Scope
 	input, err := Decode(raw)
 	if err != nil {
 		return result, err
 	}
-	lc, ok := lambdacontext.FromContext(ctx)
-	if !ok || !regexp.MustCompile(`^[A-Za-z0-9-]{1,128}$`).MatchString(lc.AwsRequestID) {
+	record.Correlation = input
+	if record.RequestID == "" {
 		return result, errors.New("cleanup_invocation_invalid")
 	}
-	// The outer context retains time for the terminal event after service timeout.
+	if record.EmittedAt == "" {
+		return result, errors.New("cleanup_clock_invalid")
+	}
 	run, stop := context.WithTimeout(ctx, InvocationTimeout)
 	defer stop()
 	setup, cancel := context.WithTimeout(run, 15*time.Second)
-	runner, journal, err := h.Factory(setup, s, lc.AwsRequestID, input)
-	cancel()
-	if err != nil {
+	if h.Factory == nil {
+		cancel()
 		return result, errors.New("cleanup_setup_failed")
 	}
-	record := Record{SchemaVersion: 1, Kind: "invocation_start", RequestID: lc.AwsRequestID, Scope: s.Scope, Correlation: input}
-	record.EmittedAt, err = expiry.Timestamp(h.Clock.Now())
-	if err != nil {
-		return result, errors.New("cleanup_clock_invalid")
+	runner, j, err := h.Factory(setup, s, record.RequestID, input)
+	cancel()
+	journal = j
+	if err != nil || runner == nil || journal == nil {
+		return result, errors.New("cleanup_setup_failed")
 	}
 	if err = journal.Record(run, record); err != nil {
 		return result, errors.New("cleanup_evidence_unavailable")
 	}
+	started = true
 	result, err = runner.Run(run, false)
-	stop()
-	record.Kind = "invocation_end"
-	record.Code = result.Code
-	record.OK = result.OK && err == nil
-	record.Complete = result.Complete
-	record.EmittedAt, _ = expiry.Timestamp(h.Clock.Now())
-	if journal.Record(ctx, record) != nil {
-		return result, errors.New("cleanup_evidence_unavailable")
-	}
-	if err != nil || !result.OK || !result.Complete {
+	if err != nil || !result.OK || !result.Complete || !result.ScanComplete || result.ExitCode != 0 {
 		return result, errors.New("cleanup_incomplete")
 	}
 	return result, nil

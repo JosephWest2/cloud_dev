@@ -343,3 +343,12 @@ override_resource {
   target = aws_lambda_function.cleanup
   values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
 }
+
+override_resource {
+  target = aws_iam_role.evidence
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-evidence" }
+}
+override_resource {
+  target = aws_sqs_queue.cleanup_failures
+  values = { arn = "arn:aws:sqs:us-east-2:123456789012:devbox-test-test-owner-evidence" }
+}

@@ -55,15 +55,9 @@ locals {
     {
       Sid      = "ReadRoles", Effect = "Allow"
       Action   = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"]
-      Resource = [aws_iam_role.instance.arn, aws_iam_role.operator.arn, aws_iam_role.cleanup.arn, aws_iam_role.cleanup_scheduler.arn]
+      Resource = [aws_iam_role.instance.arn, aws_iam_role.operator.arn, local.health_role_arn]
     },
-    {
-      # These service-specific actions accept only their matching ARN types;
-      # grouping exact read destinations avoids repeated policy overhead.
-      Sid      = "ReadCleanup", Effect = "Allow"
-      Action   = ["lambda:GetFunctionConfiguration", "lambda:GetFunctionConcurrency", "lambda:GetFunctionEventInvokeConfig", "scheduler:GetSchedule", "logs:FilterLogEvents", "logs:DescribeLogStreams"]
-      Resource = [local.cleanup_arn, local.cleanup_manifest.schedule.arn, "${local.cleanup_log_arn}:*"]
-    },
+    { Sid = "ReadCleanup", Effect = "Allow", Action = ["sts:AssumeRole"], Resource = [local.health_role_arn] },
     { Sid = "ReadProfile", Effect = "Allow", Action = ["iam:GetInstanceProfile"], Resource = [aws_iam_instance_profile.devbox.arn] },
     { Sid = "ReadSpotRole", Effect = "Allow", Action = ["iam:GetRole"], Resource = ["arn:aws:iam::${var.account_id}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"] },
     {

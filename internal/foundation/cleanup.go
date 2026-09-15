@@ -28,10 +28,15 @@ type CleanupLogs interface {
 	DescribeLogGroups(context.Context, *cloudwatchlogs.DescribeLogGroupsInput, ...func(*cloudwatchlogs.Options)) (*cloudwatchlogs.DescribeLogGroupsOutput, error)
 }
 type CleanupClients struct {
-	Lambda    CleanupLambda
-	Scheduler CleanupScheduler
-	Logs      CleanupLogs
-	IAM       IAM
+	Lambda       CleanupLambda
+	Scheduler    CleanupScheduler
+	Logs         CleanupLogs
+	IAM          IAM
+	Pipe         EvidencePipe
+	Queue        EvidenceQueue
+	CloudWatch   EvidenceCloudWatch
+	EvidenceLogs EvidenceLogs
+	Now          func() time.Time
 }
 
 // VerifyCleanup is a dedicated read-only doctor capability, never a prerequisite
@@ -63,7 +68,7 @@ func VerifyCleanup(ctx context.Context, clients CleanupClients, m config.Manifes
 	if c.Schedule.State != "ENABLED" {
 		checks = append(checks, Check{"cleanup_enabled", errors.New("cleanup schedule disabled")})
 	}
-	checks = append(checks, Check{"cleanup_evidence", errors.New("independent failure evidence and recent successful completion require issue #47")})
+	checks = append(checks, verifyEvidence(ctx, clients, m, c)...)
 	return checks
 }
 func checkCleanupFunction(ctx context.Context, api CleanupLambda, m config.Manifest, c config.Cleanup) error {
@@ -90,6 +95,11 @@ func checkCleanupFunction(ctx context.Context, api CleanupLambda, m config.Manif
 	if err != nil || async == nil || int(aws.ToInt32(async.MaximumEventAgeInSeconds)) != f.AsyncMaxAgeSeconds || async.MaximumRetryAttempts == nil || int(*async.MaximumRetryAttempts) != f.AsyncRetryAttempts {
 		return fail
 	}
+	if e, err := config.DecodeEvidence(c.Evidence, m, c); err == nil {
+		if async.DestinationConfig == nil || async.DestinationConfig.OnFailure == nil || aws.ToString(async.DestinationConfig.OnFailure.Destination) != e.Queue.ARN || async.DestinationConfig.OnSuccess != nil && aws.ToString(async.DestinationConfig.OnSuccess.Destination) != "" {
+			return fail
+		}
+	}
 	return nil
 }
 func checkCleanupSchedule(ctx context.Context, api CleanupScheduler, c config.Cleanup) error {
@@ -106,6 +116,12 @@ func checkCleanupSchedule(ctx context.Context, api CleanupScheduler, c config.Cl
 	hash, err := jsonDigest(aws.ToString(t.Input))
 	if err != nil || hash != s.InputSHA256 || aws.ToString(t.Arn) != c.Function.ARN || aws.ToString(t.RoleArn) != c.SchedulerRole.ARN || t.RetryPolicy == nil || int(aws.ToInt32(t.RetryPolicy.MaximumEventAgeInSeconds)) != s.MaxAgeSeconds || t.RetryPolicy.MaximumRetryAttempts == nil || int(*t.RetryPolicy.MaximumRetryAttempts) != s.RetryAttempts {
 		return fail
+	}
+	var e config.CleanupEvidence
+	if json.Unmarshal(c.Evidence, &e) == nil && e.SchemaVersion == 1 && e.Queue.ARN != "" {
+		if t.DeadLetterConfig == nil || aws.ToString(t.DeadLetterConfig.Arn) != e.Queue.ARN {
+			return fail
+		}
 	}
 	return nil
 }
