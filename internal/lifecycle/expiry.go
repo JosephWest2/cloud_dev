@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
@@ -89,8 +90,13 @@ func (p *LaunchPlan) UnmarshalJSON(data []byte) error {
 		return errors.New("invalid launch plan JSON")
 	}
 	if value.SchemaVersion == 1 {
-		if _, present := fields["expires_at"]; present {
-			return errors.New("legacy launch plan cannot contain expires_at")
+		// encoding/json matches field names with Unicode case folding too.
+		// Reject presence even when an empty/null value would disappear through
+		// omitempty and leave the historical digest apparently unchanged.
+		for key := range fields {
+			if strings.EqualFold(key, "expires_at") {
+				return errors.New("legacy launch plan cannot contain expires_at")
+			}
 		}
 	}
 	// Zero plans are used in incomplete public outcomes, but never validate as

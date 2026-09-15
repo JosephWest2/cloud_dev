@@ -118,3 +118,40 @@ recovery, startup/readiness and CLI integration. It exposed a request-counter
 race in the controlled lost-response test; the counter now uses atomic access,
 and the complete lifecycle/CLI race run passes. Historical fixture bytes,
 `infra/`, `go.mod` and `go.sum` are unchanged. Live acceptance remains pending.
+
+## PR #51 review corrections
+
+Reproduced both P2 findings against `0b06e84` using the supplied review overlay.
+The overlay tests now pass after these corrections:
+
+- Historical `shutting-down` and `terminated` rows retain AWS-observed expiry
+  diagnostics before being filtered from live-setting verification. Public
+  `up --resume` output preserves missing/invalid/duplicate expiry, including
+  partial reads, while request deadline, identities and fulfillment stay intact.
+  Existing scope/naming/pin validation remains strict; diagnostics do not grant
+  observation or allocation authority. Immutable worker ledger records are unchanged.
+- Legacy plan-v1 decoding rejects every Unicode-case-folded spelling of
+  `expires_at`, including empty/null values and escaped long-s variants accepted
+  by Go's struct decoder. Nested receipt and permanent-ledger tests cover the
+  rejection, true historical records, valid plan-v2 aliases and unknown fields.
+
+Public recovery tests use the real orchestration/shared-ledger paths after local
+cache loss and compare permanent record bytes before/after observation. They
+cover both terminal states, valid original/future expiry controls, missing,
+malformed, empty, nil, noncanonical and duplicate tags, plus scope/name mismatches
+and partial exact-ID responses with an independently preserved peer.
+
+Verification passed:
+
+```sh
+go test -count=1 -overlay=/tmp/issue43-review-7d25txin/overlay.json ./internal/lifecycle -run '^TestReview' -v
+go test -count=1 ./internal/lifecycle ./internal/cli ./internal/expiry
+go test -race -count=1 ./internal/lifecycle ./internal/cli
+go vet ./internal/lifecycle ./internal/cli
+git diff --check
+```
+
+These corrections are confined to recovery diagnostics and plan decoding; the
+complete affected package suites cover their callers without repeating the full
+repository check. The v6 handoff and all TTL/send gates remain unchanged. No AWS
+or GitHub writes were made; live acceptance remains pending.
