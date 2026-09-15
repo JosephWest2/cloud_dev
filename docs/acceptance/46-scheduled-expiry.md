@@ -190,3 +190,23 @@ health reader role with exact AssumeRole authority and explicit verifier support
 Adding another inline policy would not evade the aggregate role quota.
 
 No live acceptance evidence belongs to this slice.
+
+## Scheduler transport substitution regression
+
+Scheduler target input preserves the four literal `<aws.scheduler.…>` keywords.
+`jsonencode` escapes angle brackets, so the transport restores them after JSON
+encoding. The separately retained canonical JSON still supplies `input_sha256`,
+matching doctor's canonicalization of fetched schedule input. [Scheduler keywords](https://docs.aws.amazon.com/scheduler/latest/UserGuide/managing-schedule-context-attributes.html), [JSON escaping](https://developer.hashicorp.com/terraform/language/functions/jsonencode)
+
+The original review reproduction failed against the original rendered target:
+zero literal keywords remained and the adapter rejected delivery; restoring
+brackets made its positive control pass. The permanent OpenTofu export bridge
+now exercises actual rendered input, literal substitution of all four keywords,
+and the real Lambda decoder, with escaped-negative/restored-positive controls.
+It verifies that canonical digest equality alone cannot prove substitution.
+
+After correction, the rendered target has four literal keywords. The review's
+delivery, AWSFactory loopback and service-deadline evidence probes all pass.
+Focused Go suites/race checks and full pinned `make infra-check` also pass
+(bootstrap 1, foundation 26, packaging checks and expanded export bridge).
+The fix changes no permissions, runtime policy, manifest shape or live schedule.

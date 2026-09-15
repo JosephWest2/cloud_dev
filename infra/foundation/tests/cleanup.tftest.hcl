@@ -62,6 +62,13 @@ variables {
 run "cleanup_boundary" {
   command = apply
   assert {
+    condition = (alltrue([for keyword in ["schedule-arn", "scheduled-time", "execution-id", "attempt-number"] :
+      strcontains(one(aws_scheduler_schedule.cleanup.target).input, "<aws.scheduler.${keyword}>")
+      ]) && sha256(jsonencode(jsondecode(one(aws_scheduler_schedule.cleanup.target).input))) == local.cleanup_manifest.schedule.input_sha256
+    )
+    error_message = "Scheduler transport must contain literal substitution keywords while the manifest hashes canonical JSON."
+  }
+  assert {
     condition     = aws_lambda_function.cleanup.runtime == "provided.al2023" && one(aws_lambda_function.cleanup.architectures) == "x86_64" && aws_lambda_function.cleanup.handler == "bootstrap" && aws_lambda_function.cleanup.source_code_hash == filebase64sha256(local.cleanup_zip)
     error_message = "The executable ZIP architecture/runtime and update digest must agree."
   }

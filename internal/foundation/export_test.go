@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JosephWest2/cloud_dev/internal/cleanuplambda"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/testutil"
 )
@@ -133,6 +134,7 @@ func TestOpenTofuExport(t *testing.T) {
 		if err != nil || inputHash != cleanup.Schedule.InputSHA256 {
 			t.Fatal("cleanup schedule input digest mismatch")
 		}
+		verifySchedulerDelivery(t, targets[0].Input, cleanup)
 		verifyPlacementExport(t, m, resources)
 		expected := map[string]map[string]string{
 			"aws_iam_role.cleanup":                  {"assume_role_policy": cleanup.ExecutionRole.TrustSHA256},
@@ -182,6 +184,49 @@ func TestOpenTofuExport(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no mock-applied manifest in OpenTofu test output")
+	}
+}
+
+// This crosses the provisioned string boundary: JSON equivalence alone cannot
+// prove that Scheduler finds its literal context keywords before delivery.
+func verifySchedulerDelivery(t *testing.T, input string, cleanup config.Cleanup) {
+	t.Helper()
+	values := []string{
+		"<aws.scheduler.schedule-arn>", cleanup.Schedule.ARN,
+		"<aws.scheduler.scheduled-time>", "2026-09-14T12:00:00Z",
+		"<aws.scheduler.execution-id>", "d32c5kddcf5bb8c3",
+		"<aws.scheduler.attempt-number>", "1",
+	}
+	for i := 0; i < len(values); i += 2 {
+		if strings.Count(input, values[i]) != 1 {
+			t.Fatalf("rendered Scheduler input must contain exactly one literal %s", values[i])
+		}
+	}
+	substitute := strings.NewReplacer(values...).Replace
+	delivered, err := cleanuplambda.Decode([]byte(substitute(input)))
+	if err != nil || delivered.SchemaVersion != 1 || delivered.ScheduleARN != values[1] || delivered.ScheduledTime != values[3] || delivered.ExecutionID != values[5] || delivered.AttemptNumber != values[7] {
+		t.Fatalf("rendered Scheduler input failed real adapter decoding after substitution: %+v %v", delivered, err)
+	}
+	// Recreate the original broken transport as a negative control. Its canonical
+	// digest still matches, demonstrating why the digest bridge alone missed it.
+	var object map[string]any
+	if err := json.Unmarshal([]byte(input), &object); err != nil {
+		t.Fatal(err)
+	}
+	escaped, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest(escaped) != cleanup.Schedule.InputSHA256 || digest([]byte(input)) == cleanup.Schedule.InputSHA256 {
+		t.Fatal("manifest must retain the canonical digest, separate from literal transport bytes")
+	}
+	if _, err := cleanuplambda.Decode([]byte(substitute(string(escaped)))); err == nil {
+		t.Fatal("escaped-keyword negative control unexpectedly delivered valid correlation")
+	}
+	restored := strings.NewReplacer(`\u003c`, "<", `\u003e`, ">").Replace(string(escaped))
+	positive, err := cleanuplambda.Decode([]byte(substitute(restored)))
+	if err != nil || positive != delivered {
+		t.Fatalf("restored-keyword positive control: %+v %v", positive, err)
 	}
 }
 

@@ -23,11 +23,14 @@ locals {
     DEVBOX_DEPLOYMENT = var.deployment, DEVBOX_OWNER = var.owner,
     DEVBOX_LOG_GROUP  = local.cleanup_log_name
   }
-  cleanup_input = jsonencode({
+  cleanup_input_canonical = jsonencode({
     schema_version = 1, scheduled_time = "<aws.scheduler.scheduled-time>",
     schedule_arn   = "<aws.scheduler.schedule-arn>", execution_id = "<aws.scheduler.execution-id>",
     attempt_number = "<aws.scheduler.attempt-number>"
   })
+  # Scheduler substitutes literal keywords in the transport string. jsonencode
+  # escapes angle brackets; retain that canonical form only for digest checks.
+  cleanup_input = replace(replace(local.cleanup_input_canonical, "\\u003c", "<"), "\\u003e", ">")
   cleanup_trust = jsonencode({ Version = "2012-10-17", Statement = [{
     Effect = "Allow", Principal = { Service = "lambda.amazonaws.com" }, Action = "sts:AssumeRole"
   }] })
@@ -62,7 +65,7 @@ locals {
       arn             = "arn:aws:scheduler:${var.region}:${var.account_id}:schedule/${local.cleanup_name}/${local.cleanup_name}"
       name            = local.cleanup_name, group_name = local.cleanup_name, group_arn = local.cleanup_group_arn
       state           = var.cleanup_schedule_enabled ? "ENABLED" : "DISABLED", expression = "rate(5 minutes)", flexible_window = "OFF"
-      max_age_seconds = 300, retry_attempts = 2, input_sha256 = sha256(local.cleanup_input)
+      max_age_seconds = 300, retry_attempts = 2, input_sha256 = sha256(local.cleanup_input_canonical)
     }
     logs = { name = local.cleanup_log_name, arn = local.cleanup_log_arn, retention_days = var.cleanup_log_retention_days }
     execution_role = {
