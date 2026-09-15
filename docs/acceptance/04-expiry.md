@@ -1,17 +1,46 @@
 # Issue #4 expiry acceptance and recovery (#48)
 
-**Preparation only: live acceptance is pending.** No AWS authentication, API
-observation, migration, launch, scheduled cleanup, or laptop-offline result is
-claimed by this record. #42–#47 are merged and independently reviewed; final #47 at `14bb326` is
+**Live acceptance is in progress; the initial preparation ledger below remains
+historical.** The September 15 discovery note records subsequent live evidence;
+the original pending rows await the final evidence reconciliation. #42–#47 are merged and independently reviewed; final #47 at `14bb326` is
 integrated into this acceptance branch. All required local/build/infra/race checks
 passed on `30ab076`; subsequent protocol lifecycle checks are recorded separately
-below. The reviewed live campaign remains pending. Keep #48 and parent #4 open until every live gate
+below. The live campaign remains incomplete. Keep #48 and parent #4 open until every live gate
 below has actual evidence. Interactive release #5 is a separate gate.
 
 This document is an executable protocol plus an evidence ledger. Commands under
-**Planned live protocol** are unrun, not historical results. Controlled fixtures
+**Planned live protocol** are the execution recipe; completed outcomes need
+separate captured evidence as in the discovery note below. Controlled fixtures
 prove code behavior; they do not prove restricted-role AWS authorization,
 scheduler delivery, or cleanup while a laptop is offline.
+
+## September 15 live discovery: empty Pipe enrichment parameters
+
+The authorized disabled installation, real worker-free async failure canary,
+restoration, and separately reviewed schedule enablement completed. Genuine
+scheduled completion and alarm checks passed, but doctor reported
+`cleanup_evidence_route` failure. Fresh exact Pipe/queue/stream captures showed
+the expected running route, empty queue and retained failure stream: AWS returned
+`EnrichmentParameters: {}` without an enrichment ARN. The pinned Pipes SDK
+materializes that empty object as a nonnil struct, which doctor incorrectly
+treated as configured enrichment.
+
+The narrow CLI correction accepts an empty parameter object or a removed (empty)
+input template. It still rejects an enrichment ARN, nonempty input template and
+any HTTP parameter block. `TestEvidenceRoutePipeSDKEnrichmentWireShapes` exercises
+the actual pinned SDK HTTP decoder and these drift cases; the empty-object case
+fails before the correction. Raw discovery evidence is retained privately under
+`commands/h1-route-installed-{pipe,queue,failure-streams}/`.
+
+The ten SDK wire cases, `make check` and the foundation race suite passed for
+this correction, captured under `commands/pipe-empty-enrichment-*`. These local
+checks do not substitute for the pending live doctor rerun.
+
+The corrected CLI requires independent review, a separately pinned artifact and
+an actual doctor rerun before full H1 health is claimed. Earlier build hashes
+remain historical; Lambda, runner and infrastructure are unchanged by this fix.
+The three-worker/offline, retry-exhaustion, Pipe-outage, exact-root-cleanup and
+final-review gates remain pending. This discovery does not close #48 or #4.
 
 ## Current preparation record
 
