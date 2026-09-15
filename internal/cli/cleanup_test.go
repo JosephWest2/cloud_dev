@@ -372,7 +372,7 @@ func TestCleanupSyntaxRejectsBeforeFactory(t *testing.T) {
 				calls++
 				return expiry.Result{}
 			}
-			if !isCleanupCommand(args) {
+			if !IsCleanupCommand(args) {
 				t.Fatal("cleanup not recognized")
 			}
 			code := runCleanupCommand(context.Background(), args, &stdout, &stderr, runner)
@@ -389,7 +389,7 @@ func TestCleanupSyntaxRejectsBeforeFactory(t *testing.T) {
 		})
 	}
 	for _, args := range [][]string{{"--config", "cleanup", "doctor"}, {"exec", "i-12345678", "--", "cleanup"}, {"up", "agent", "--name", "cleanup"}} {
-		if isCleanupCommand(args) {
+		if IsCleanupCommand(args) {
 			t.Fatal("misidentified command", args)
 		}
 	}

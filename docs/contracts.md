@@ -1243,6 +1243,10 @@ status and exact root-volume outcomes, with allowlisted explanations. Exit codes
 follow the [shared table](plans/04-expiry-contract.md).
 An output write failure returns 1 and attempts to preserve the complete result
 JSON on stderr; a failed/truncated stdout stream itself cannot be repaired.
+For cleanup only, both the supervisor and worker ignore SIGPIPE so closed
+inherited stdout/stderr descriptors return write errors instead of terminating
+the process before evidence/fallback handling. Other commands retain their
+existing process and signal behavior.
 
 Actual cleanup emits newline-delimited schema-1 `expiry.Event` evidence on stderr.
 The concurrent-safe sink acknowledges the full write before dispatch; short,

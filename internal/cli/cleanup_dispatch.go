@@ -12,10 +12,12 @@ import (
 	"github.com/JosephWest2/cloud_dev/internal/expiry"
 )
 
-// Recognize the command while skipping option values. This also selects the
+// IsCleanupCommand recognizes the command while skipping option values. Process
+// entry uses the same classification to handle cleanup output errors without
+// changing other commands' signal behavior. This also selects the
 // cleanup error envelope when an earlier global option has an invalid value.
 // The first positional command and exec's separator stop the scan.
-func isCleanupCommand(args []string) bool {
+func IsCleanupCommand(args []string) bool {
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		if a == "--" {

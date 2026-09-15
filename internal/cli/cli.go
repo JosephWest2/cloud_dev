@@ -135,7 +135,7 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies, runExec execRunner, runLogs logsRunner) int {
-	if isCleanupCommand(args) {
+	if IsCleanupCommand(args) {
 		return runCleanupCommand(ctx, args, stdout, stderr, nil)
 	}
 	jsonMode := false

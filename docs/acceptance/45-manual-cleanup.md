@@ -80,12 +80,18 @@ parseable, and failures of both output destinations cannot preserve new evidence
   stays bounded with at most one underlying writer call.
 - Output tests parse one result on mixed/timeout outcomes and recover every known
   instance/root ID from stderr after failed or short stdout writes.
+- Real-binary subprocess tests use closed inherited pipe descriptors and loopback
+  STS/EC2 fixtures. Closed stdout retains the fallback result and exact IDs on
+  stderr, including after completed cleanup; closed stderr denies termination
+  and returns the failure result on stdout. Closing both streams still returns
+  an ordinary failure without authorizing termination. Non-cleanup workers keep
+  their existing SIGPIPE behavior.
 
 Run:
 
 ```sh
 go test ./internal/cli ./internal/config ./internal/expirycleanup
-go test -race ./internal/cli ./internal/config ./internal/expirycleanup
+go test -race ./cmd/devbox ./internal/cli ./internal/config ./internal/expirycleanup
 make check
 make build
 git diff --check
