@@ -11,10 +11,23 @@ import (
 )
 
 func main() {
-	if len(os.Args) > 1 && os.Args[1] == "__devbox_worker" {
-		os.Exit(runCLI(os.Args[2:]))
+	args := os.Args[1:]
+	worker := len(args) > 0 && args[0] == "__devbox_worker"
+	if worker {
+		args = args[1:]
 	}
-	os.Exit(supervise(os.Args[1:]))
+	if cli.IsCleanupCommand(args) {
+		// Go normally exits on SIGPIPE when inherited stdout/stderr is closed.
+		// Cleanup must instead receive EPIPE so a failed evidence write denies
+		// dispatch and a failed result write preserves the fallback envelope.
+		// Install this in both supervisor and worker through their one-command
+		// process lifetime; other commands retain their existing pipe behavior.
+		signal.Ignore(syscall.SIGPIPE)
+	}
+	if worker {
+		os.Exit(runCLI(args))
+	}
+	os.Exit(supervise(args))
 }
 
 func runCLI(args []string) int {
