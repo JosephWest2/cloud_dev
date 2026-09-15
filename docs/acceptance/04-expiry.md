@@ -356,8 +356,10 @@ short workers left to lose. Bind its exact schedule/function/queue/Pipe/role
 identities from the applied v6 manifest; capture complete before/after settings.
 A temporary InvokeFunction permission denial can prove a failed delivery but
 must not be called retry exhaustion without actual retryable-error/exhaustion
-fields. Final precise commands and evidence predicates are pending the verified
-failure preflight and #47 interface; this gate is not waived.
+fields. The [failure-route protocol](04-expiry-failures.md) supplies concrete commands,
+finite observation windows, full-setting restoration requirements and separate
+pass predicates. Final #47 manifest/API verification and concrete saved recovery
+artifacts still precede its live use; this gate is not waived.
 
 Required cases are Scheduler retry exhaustion without handler startup, a new
 Lambda async event sent directly to OnFailure with reserved concurrency zero,
@@ -366,6 +368,10 @@ same records arriving after repair. Restore concurrency, schedule target/input,
 DLQ/retries, Pipe state and all other modified settings before declaring success.
 Drain intentional failures and capture a later genuine successful scheduled run.
 No extra worker launch is required for these infrastructure failure cases.
+For a simpler recovery boundary, complete exact teardown of all three campaign
+workers first, then run failure injection with an empty eligible scope. If keeping
+the long worker during the failure campaign, its original deadline must remain
+future throughout; otherwise explicitly remove it before introducing drift.
 
 ### F. Harmless rerun, exact cleanup and retained infrastructure
 
