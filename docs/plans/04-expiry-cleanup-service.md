@@ -70,6 +70,12 @@ unknown, false is retained. A verified disposable root is required to send a
 termination request. Missing or contradictory mappings and retained roots are
 reported per instance; independently valid peers proceed.
 
+Supplied EBS attachment status on a live worker must be `attached`, and a supplied
+volume owner must match the trusted account. Missing optional fields remain
+compatible. Terminal observations may retain known transitional attachment states,
+but unknown states and contradictory ownership remain unverified. These fields
+follow the [EC2 EBS mapping reference](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_EbsInstanceBlockDevice.html).
+
 For an eligible worker, the service acknowledges `termination_prepared` with the
 captured mappings **before** the final exact-ID read. That read must be complete,
 singular and unchanged in scope, expiry and mappings. The clock is sampled after
@@ -87,6 +93,13 @@ Already-shutting-down or terminated workers receive observation only. A malforme
 or lost termination acknowledgement stays unknown until an exact terminal
 observation resolves it. An absent instance is never terminal proof.
 
+Discovery, rechecks, observations and termination acknowledgements use the same
+state validator. Supplied codes must agree with the state name using the low byte
+of EC2's unsigned 16-bit state code; the high byte is ignored. Omitted codes remain
+compatible. A contradictory acknowledgement stays `termination_unknown` until
+independent observation resolves it. See the
+[EC2 state reference](https://docs.aws.amazon.com/AWSEC2/latest/APIReference/API_InstanceState.html).
+
 Dispatch work has four slots per invocation. Observation proceeds in rounds across
 all active workers, with at most one exact-volume request per worker per round,
 rotating among its captured volumes. This lets other workers and other volumes
@@ -99,14 +112,19 @@ they may both request termination of the same expired exact ID harmlessly.
 Deletion evidence is independent of EC2 termination. Only trusted, captured exact
 volume IDs with explicit disposable flags are queried after terminal EC2 evidence.
 An exact `deleted` response must have no contradictory owner, region, ARN,
-pagination, identity or attachment evidence. `InvalidVolume.NotFound` is accepted
+pagination, identity or attachment evidence. Every supplied attachment volume ID
+must match the requested exact ID, even for a detached attachment; an omitted
+attachment ID remains compatible. `InvalidVolume.NotFound` is accepted
 only with nil output. Empty successful responses and contradictory NotFound
 responses are unresolved. Retained or unknown volumes are never treated as deleted;
 non-root failures remain visible even when the root was verified deleted.
 
 If terminal EC2 no longer returns mappings, the service uses the mappings already
-captured in this invocation. If a later invocation has no mapping, it reports the
-root as unavailable. For a verified already-terminated row with no malformed or
+captured in this invocation only when supplied root metadata remains compatible.
+Omitted root type/name is allowed; a conflicting nonempty type or device name is
+not deletion evidence and leaves root deletion unavailable. This check applies to
+both the final recheck and post-dispatch observation. If a later invocation has no
+mapping, it reports the root as unavailable. For a verified already-terminated row with no malformed or
 contradictory mapping evidence, this is benign in execution and dry-run: preserve
 the exact ID and `already_terminated` status, leave `cleaned_count` at zero, and do
 not fail the run solely because historical mappings disappeared. Execution still

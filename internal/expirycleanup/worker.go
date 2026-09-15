@@ -62,15 +62,11 @@ func (s *Service) prepare(ctx context.Context, runID string, w *worker) {
 		o.Status = "already_terminated"
 		w.terminal = true
 	}
-	if !sameMappings(w.record, current) {
-		// A terminal instance may have lost all mappings. Only mappings captured in
-		// this invocation remain authority; a different nonempty mapping is drift.
-		if d.Reason != expiry.AlreadyTerminated || len(current.volumes) > 0 || current.badMapping {
-			o.Volumes = mergeMappings(o.Volumes, current.volumes)
-			addProblem(o, "root_volume_unverified")
-			o.RootDeletion = "unavailable"
-			return
-		}
+	if !consistentMappings(w.record, current) {
+		o.Volumes = mergeMappings(o.Volumes, current.volumes)
+		addProblem(o, "root_volume_unverified")
+		o.RootDeletion = "unavailable"
+		return
 	}
 	if d.Reason == expiry.AlreadyTerminated {
 		o.Status = "already_terminated"
@@ -128,12 +124,7 @@ func exactAcknowledgement(out *ec2.TerminateInstancesOutput, id string) bool {
 		return false
 	}
 	change := out.TerminatingInstances[0]
-	if aws.ToString(change.InstanceId) != id || change.CurrentState == nil || change.PreviousState == nil {
-		return false
-	}
-	switch change.PreviousState.Name {
-	case "pending", "running", "stopping", "stopped", "shutting-down", "terminated":
-	default:
+	if aws.ToString(change.InstanceId) != id || !validInstanceState(change.CurrentState) || !validInstanceState(change.PreviousState) {
 		return false
 	}
 	return change.CurrentState.Name == "shutting-down" || change.CurrentState.Name == "terminated"
@@ -155,7 +146,7 @@ func (s *Service) observe(ctx context.Context, w *worker) {
 		if d.ExpiresAt == nil || w.selected.ExpiresAt == nil || *d.ExpiresAt != *w.selected.ExpiresAt {
 			return
 		}
-		if !sameMappings(w.record, current) && (len(current.volumes) > 0 || current.badMapping) {
+		if !consistentMappings(w.record, current) {
 			o.Volumes = mergeMappings(o.Volumes, current.volumes)
 			addProblem(o, "root_volume_unverified")
 			o.RootDeletion = "unavailable"

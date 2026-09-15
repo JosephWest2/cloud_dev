@@ -105,11 +105,12 @@ func (s *Service) exactVolume(out *ec2.DescribeVolumesOutput, id string) bool {
 			return false
 		}
 	}
-	if v.State == "deleted" {
-		for _, a := range v.Attachments {
-			if a.State != "detached" {
-				return false
-			}
+	for _, a := range v.Attachments {
+		if a.VolumeId != nil && *a.VolumeId != id {
+			return false
+		}
+		if v.State == "deleted" && a.State != "detached" {
+			return false
 		}
 	}
 	return true

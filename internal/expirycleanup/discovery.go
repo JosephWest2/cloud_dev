@@ -37,17 +37,8 @@ func (s *Service) record(owner *string, i types.Instance) record {
 	if !instanceID.MatchString(r.resource.ID) {
 		r.resource.ID = ""
 	}
-	if i.State != nil {
-		switch i.State.Name {
-		case "pending", "running", "stopping", "stopped", "shutting-down", "terminated":
-			r.resource.State = string(i.State.Name)
-		}
-	}
-	if i.State != nil && i.State.Code != nil {
-		expected := map[string]int32{"pending": 0, "running": 16, "shutting-down": 32, "terminated": 48, "stopping": 64, "stopped": 80}
-		if code, ok := expected[r.resource.State]; !ok || (*i.State.Code&255) != code {
-			r.resource.State = "unknown"
-		}
+	if validInstanceState(i.State) {
+		r.resource.State = string(i.State.Name)
 	}
 	// The regional client supplies region evidence; placement, when present,
 	// must not contradict it. Terminal EC2 records may omit placement entirely.
@@ -70,6 +61,9 @@ func (s *Service) record(owner *string, i types.Instance) record {
 		if b.Ebs == nil {
 			r.badMapping = true
 			continue
+		}
+		if !s.validAttachment(b.Ebs, r.resource.State) {
+			r.badMapping = true
 		}
 		id := aws.ToString(b.Ebs.VolumeId)
 		if !volumeID.MatchString(id) {
@@ -210,6 +204,50 @@ func rootProblem(r record) string {
 func sameMappings(a, b record) bool {
 	return a.rootDevice == b.rootDevice && a.rootType == b.rootType && a.badMapping == b.badMapping && reflect.DeepEqual(a.volumes, b.volumes)
 }
+
+// Terminal EC2 may omit old mappings and root metadata, but supplied metadata
+// must remain compatible with captured evidence. No live record gets this
+// exception. Recheck and post-dispatch observation share the same rule.
+func consistentMappings(captured, current record) bool {
+	if current.badMapping {
+		return false
+	}
+	if sameMappings(captured, current) {
+		return true
+	}
+	return current.resource.State == "terminated" && historicalMappingsAbsent(current, expiry.AlreadyTerminated) &&
+		(current.rootType == "" || captured.rootType == "" || current.rootType == captured.rootType) &&
+		(current.rootDevice == "" || captured.rootDevice == "" || current.rootDevice == captured.rootDevice)
+}
+
+// Supplied live attachment evidence must establish an attached, scoped volume.
+// Missing optional fields remain compatible. Terminal records may retain
+// transitional attachment states while EC2 finishes detaching/deleting volumes.
+func (s *Service) validAttachment(b *types.EbsInstanceBlockDevice, state string) bool {
+	if b.VolumeOwnerId != nil && *b.VolumeOwnerId != s.scope.Account {
+		return false
+	}
+	switch b.Status {
+	case "", "attached":
+		return true
+	case "attaching", "detaching", "detached":
+		return state == "shutting-down" || state == "terminated"
+	default:
+		return false
+	}
+}
+
+// EC2 state codes are unsigned 16-bit values; only the low byte names the state.
+// An omitted optional code is compatible, but a supplied contradiction is not.
+func validInstanceState(state *types.InstanceState) bool {
+	if state == nil {
+		return false
+	}
+	expected := map[types.InstanceStateName]int32{"pending": 0, "running": 16, "shutting-down": 32, "terminated": 48, "stopping": 64, "stopped": 80}
+	code, known := expected[state.Name]
+	return known && (state.Code == nil || (*state.Code >= 0 && *state.Code <= 65535 && *state.Code&255 == code))
+}
+
 func mergeMappings(a, b []expiry.Volume) []expiry.Volume {
 	out := cloneVolumes(a)
 	for _, v := range b {
