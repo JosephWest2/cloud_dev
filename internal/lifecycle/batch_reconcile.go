@@ -378,7 +378,7 @@ func (r *launchReconciler) verify(ctx context.Context) {
 			// Terminal rows bypass live-setting verification, but their observed
 			// expiry diagnostics still belong in public output, even on a partial
 			// read or pin mismatch. Never copy them into the immutable plan/ledger.
-			worker.ExpiresAt, worker.ExpiryStatus = terminal.ExpiresAt, terminal.ExpiryStatus
+			copyObservedExpiry(&worker.Instance, *terminal)
 		}
 		var inspectionFailure *Failure
 		onlyGone := err == nil || (errors.As(err, &inspectionFailure) && inspectionFailure.Code == "worker_observation_unavailable")
