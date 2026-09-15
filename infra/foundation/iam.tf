@@ -58,12 +58,12 @@ locals {
       Resource = [aws_iam_role.instance.arn, aws_iam_role.operator.arn, aws_iam_role.cleanup.arn, aws_iam_role.cleanup_scheduler.arn]
     },
     {
-      Sid      = "ReadCleanupFunction", Effect = "Allow"
-      Action   = ["lambda:GetFunctionConfiguration", "lambda:GetFunctionConcurrency", "lambda:GetFunctionEventInvokeConfig"]
-      Resource = [local.cleanup_arn]
+      # These service-specific actions accept only their matching ARN types;
+      # grouping exact read destinations avoids repeated policy overhead.
+      Sid      = "ReadCleanup", Effect = "Allow"
+      Action   = ["lambda:GetFunctionConfiguration", "lambda:GetFunctionConcurrency", "lambda:GetFunctionEventInvokeConfig", "scheduler:GetSchedule", "logs:FilterLogEvents", "logs:DescribeLogStreams"]
+      Resource = [local.cleanup_arn, local.cleanup_manifest.schedule.arn, "${local.cleanup_log_arn}:*"]
     },
-    { Sid = "ReadCleanupSchedule", Effect = "Allow", Action = ["scheduler:GetSchedule"], Resource = [local.cleanup_manifest.schedule.arn] },
-    { Sid = "ReadCleanupLogs", Effect = "Allow", Action = ["logs:FilterLogEvents", "logs:DescribeLogStreams"], Resource = ["${local.cleanup_log_arn}:*"] },
     { Sid = "ReadProfile", Effect = "Allow", Action = ["iam:GetInstanceProfile"], Resource = [aws_iam_instance_profile.devbox.arn] },
     { Sid = "ReadSpotRole", Effect = "Allow", Action = ["iam:GetRole"], Resource = ["arn:aws:iam::${var.account_id}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"] },
     {
@@ -110,17 +110,11 @@ locals {
       })
     },
     {
-      # Fleet's dependent RunInstances authorization requires the same full
-      # expiry-aware tags. Legacy requests remain observation/teardown only.
-      Sid = "TagOnlyAtLaunch", Effect = "Allow", Action = ["ec2:CreateTags"], Resource = ["${local.ec2}:instance/*", "${local.ec2}:volume/*"]
+      # Both Fleet and its dependent RunInstances creation require identical
+      # immutable expiry-aware scope/identity tags. No post-creation retagging.
+      Sid = "TagAtCreation", Effect = "Allow", Action = ["ec2:CreateTags"], Resource = ["${local.ec2}:fleet/*", "${local.ec2}:instance/*", "${local.ec2}:volume/*"]
       Condition = merge(local.creation_condition, {
-        StringEquals = merge(local.creation_scope, { "ec2:CreateAction" = "RunInstances" })
-      })
-    },
-    {
-      Sid = "TagFleetAtLaunch", Effect = "Allow", Action = ["ec2:CreateTags"], Resource = ["${local.ec2}:fleet/*", "${local.ec2}:instance/*", "${local.ec2}:volume/*"]
-      Condition = merge(local.creation_condition, {
-        StringEquals = merge(local.creation_scope, { "ec2:CreateAction" = "CreateFleet" })
+        StringEquals = merge(local.creation_scope, { "ec2:CreateAction" = ["RunInstances", "CreateFleet"] })
       })
     },
     {

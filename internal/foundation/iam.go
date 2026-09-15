@@ -27,68 +27,8 @@ func checkIAM(ctx context.Context, api IAM, m config.Manifest) error {
 		return fail
 	}
 	for _, key := range []string{"instance", "operator"} {
-		expected := m.Roles[key]
-		name := aws.String(roleName(expected.ARN))
-		role, err := api.GetRole(ctx, &iam.GetRoleInput{RoleName: name})
-		if err != nil || role == nil || role.Role == nil || aws.ToString(role.Role.Arn) != expected.ARN || role.Role.PermissionsBoundary != nil {
-			return fail
-		}
-		trust, err := jsonDigest(aws.ToString(role.Role.AssumeRolePolicyDocument))
-		if err != nil || trust != expected.TrustSHA256 {
-			return fail
-		}
-		tags := map[string]string{}
-		for _, t := range role.Role.Tags {
-			tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
-		}
-		if tags["ManagedBy"] != "devbox" || tags["Deployment"] != m.Deployment || tags["Owner"] != m.Owner {
-			return fail
-		}
-		var marker *string
-		count := 0
-		for {
-			policies, err := api.ListRolePolicies(ctx, &iam.ListRolePoliciesInput{RoleName: name, Marker: marker})
-			if err != nil || policies == nil {
-				return fail
-			}
-			for _, policy := range policies.PolicyNames {
-				if policy != expected.PolicyName {
-					return fail
-				}
-				count++
-			}
-			if !policies.IsTruncated {
-				break
-			}
-			if aws.ToString(policies.Marker) == "" || aws.ToString(policies.Marker) == aws.ToString(marker) {
-				return fail
-			}
-			marker = policies.Marker
-		}
-		if count != 1 {
-			return fail
-		}
-		marker = nil
-		for {
-			attached, err := api.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{RoleName: name, Marker: marker})
-			if err != nil || attached == nil || len(attached.AttachedPolicies) != 0 {
-				return fail
-			}
-			if !attached.IsTruncated {
-				break
-			}
-			if aws.ToString(attached.Marker) == "" || aws.ToString(attached.Marker) == aws.ToString(marker) {
-				return fail
-			}
-			marker = attached.Marker
-		}
-		policy, err := api.GetRolePolicy(ctx, &iam.GetRolePolicyInput{RoleName: name, PolicyName: aws.String(expected.PolicyName)})
-		if err != nil || policy == nil || aws.ToString(policy.RoleName) != aws.ToString(name) || aws.ToString(policy.PolicyName) != expected.PolicyName {
-			return fail
-		}
-		hash, err := jsonDigest(aws.ToString(policy.PolicyDocument))
-		if err != nil || hash != expected.PolicySHA256 {
-			return fail
+		if err := checkRole(ctx, api, m, m.Roles[key]); err != nil {
+			return err
 		}
 	}
 	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
@@ -134,6 +74,79 @@ func checkReadiness(ctx context.Context, api SSM, m config.Manifest) error {
 	}
 	hash, err := jsonDigest(aws.ToString(out.Content))
 	if err != nil || hash != m.Readiness.ContentSHA256 {
+		return fail
+	}
+	return nil
+}
+
+// checkRole preserves the single-inline-policy/no-attachments trust boundary for
+// both worker/operator and independently verified cleanup service roles.
+func checkRole(ctx context.Context, api IAM, m config.Manifest, expected config.Role) error {
+	fail := errors.New("foundation role trust or permissions differ from export")
+	if api == nil {
+		return fail
+	}
+
+	name := aws.String(roleName(expected.ARN))
+	role, err := api.GetRole(ctx, &iam.GetRoleInput{RoleName: name})
+	if err != nil || role == nil || role.Role == nil || aws.ToString(role.Role.Arn) != expected.ARN || role.Role.PermissionsBoundary != nil {
+		return fail
+	}
+	trust, err := jsonDigest(aws.ToString(role.Role.AssumeRolePolicyDocument))
+	if err != nil || trust != expected.TrustSHA256 {
+		return fail
+	}
+	tags := map[string]string{}
+	for _, t := range role.Role.Tags {
+		tags[aws.ToString(t.Key)] = aws.ToString(t.Value)
+	}
+	if tags["ManagedBy"] != "devbox" || tags["Deployment"] != m.Deployment || tags["Owner"] != m.Owner {
+		return fail
+	}
+	var marker *string
+	count := 0
+	for {
+		policies, err := api.ListRolePolicies(ctx, &iam.ListRolePoliciesInput{RoleName: name, Marker: marker})
+		if err != nil || policies == nil {
+			return fail
+		}
+		for _, policy := range policies.PolicyNames {
+			if policy != expected.PolicyName {
+				return fail
+			}
+			count++
+		}
+		if !policies.IsTruncated {
+			break
+		}
+		if aws.ToString(policies.Marker) == "" || aws.ToString(policies.Marker) == aws.ToString(marker) {
+			return fail
+		}
+		marker = policies.Marker
+	}
+	if count != 1 {
+		return fail
+	}
+	marker = nil
+	for {
+		attached, err := api.ListAttachedRolePolicies(ctx, &iam.ListAttachedRolePoliciesInput{RoleName: name, Marker: marker})
+		if err != nil || attached == nil || len(attached.AttachedPolicies) != 0 {
+			return fail
+		}
+		if !attached.IsTruncated {
+			break
+		}
+		if aws.ToString(attached.Marker) == "" || aws.ToString(attached.Marker) == aws.ToString(marker) {
+			return fail
+		}
+		marker = attached.Marker
+	}
+	policy, err := api.GetRolePolicy(ctx, &iam.GetRolePolicyInput{RoleName: name, PolicyName: aws.String(expected.PolicyName)})
+	if err != nil || policy == nil || aws.ToString(policy.RoleName) != aws.ToString(name) || aws.ToString(policy.PolicyName) != expected.PolicyName {
+		return fail
+	}
+	hash, err := jsonDigest(aws.ToString(policy.PolicyDocument))
+	if err != nil || hash != expected.PolicySHA256 {
 		return fail
 	}
 	return nil

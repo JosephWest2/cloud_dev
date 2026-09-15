@@ -16,3 +16,6 @@ result_retention_days = 30 # Whole days, 2-365; never shorten unexpired promises
 availability_zones = ["us-east-2a", "us-east-2b", "us-east-2c"]
 instance_types     = ["c7i.2xlarge", "c7a.2xlarge", "c6i.2xlarge", "c6a.2xlarge"]
 root_disk_gb       = 100 # Encrypted gp3, deleted on termination; must fit the AMI.
+# Keep disabled until independent failure evidence (#47) and reviewed acceptance.
+cleanup_schedule_enabled   = false
+cleanup_log_retention_days = 30

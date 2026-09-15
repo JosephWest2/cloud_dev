@@ -1,7 +1,7 @@
 output "deployment_manifest" {
   description = "Non-secret CLI contract; export with tofu output -json deployment_manifest."
   value = {
-    schema_version       = 5
+    schema_version       = 6
     account              = var.account_id
     region               = var.region
     deployment           = var.deployment
@@ -25,6 +25,7 @@ output "deployment_manifest" {
     execution     = local.execution_manifest
     results       = local.results_manifest
     launch_ledger = local.launch_ledger_manifest
+    cleanup       = local.cleanup_manifest
     roles = {
       instance = {
         arn           = aws_iam_role.instance.arn

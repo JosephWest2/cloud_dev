@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -93,23 +94,59 @@ func TestOpenTofuExport(t *testing.T) {
 		if err != nil {
 			t.Fatal("OpenTofu exported an invalid CLI manifest:", err)
 		}
-		if m.SchemaVersion != 5 {
-			t.Fatal("foundation must export manifest version 5")
+		if m.SchemaVersion != 6 {
+			t.Fatal("foundation must export manifest version 6")
 		}
 		resources := map[string]map[string]json.RawMessage{}
 		for _, r := range event.State.Values.Root.Resources {
 			resources[r.Address] = r.Values
 		}
+		cleanup, err := config.DecodeCleanup(m.Cleanup, m)
+		if err != nil {
+			t.Fatal("OpenTofu cleanup descriptor:", err)
+		}
+		var zipDigest string
+		if err := json.Unmarshal(resources["aws_lambda_function.cleanup"]["source_code_hash"], &zipDigest); err != nil {
+			t.Fatal(err)
+		}
+		bytes, err := base64.StdEncoding.DecodeString(zipDigest)
+		if err != nil || fmt.Sprintf("%x", bytes) != cleanup.Function.CodeSHA256 {
+			t.Fatal("Lambda base64/manifest hex code digest mismatch")
+		}
+		var environments []struct {
+			Variables map[string]string `json:"variables"`
+		}
+		if err := json.Unmarshal(resources["aws_lambda_function.cleanup"]["environment"], &environments); err != nil || len(environments) != 1 {
+			t.Fatal("missing cleanup environment")
+		}
+		environment, _ := json.Marshal(environments[0].Variables)
+		if digest(environment) != cleanup.Function.EnvironmentSHA256 {
+			t.Fatal("cleanup environment digest mismatch")
+		}
+		var targets []struct {
+			Input string `json:"input"`
+		}
+		if err := json.Unmarshal(resources["aws_scheduler_schedule.cleanup"]["target"], &targets); err != nil || len(targets) != 1 {
+			t.Fatal("missing cleanup schedule input")
+		}
+		inputHash, err := jsonDigest(targets[0].Input)
+		if err != nil || inputHash != cleanup.Schedule.InputSHA256 {
+			t.Fatal("cleanup schedule input digest mismatch")
+		}
 		verifyPlacementExport(t, m, resources)
 		expected := map[string]map[string]string{
-			"aws_iam_role.instance":        {"assume_role_policy": m.Roles["instance"].TrustSHA256},
-			"aws_iam_role.operator":        {"assume_role_policy": m.Roles["operator"].TrustSHA256},
-			"aws_iam_role_policy.instance": {"policy": m.Roles["instance"].PolicySHA256},
-			"aws_iam_role_policy.operator": {"policy": m.Roles["operator"].PolicySHA256},
-			"aws_ssm_document.readiness":   {"content": m.Readiness.ContentSHA256},
-			"aws_ssm_document.execution":   {"content": m.Execution.ContentSHA256},
-			"aws_s3_bucket_policy.results": {"policy": m.Results.PolicySHA256},
-			"aws_launch_template.agent":    {"user_data": m.BootstrapSHA256},
+			"aws_iam_role.cleanup":                  {"assume_role_policy": cleanup.ExecutionRole.TrustSHA256},
+			"aws_iam_role.cleanup_scheduler":        {"assume_role_policy": cleanup.SchedulerRole.TrustSHA256},
+			"aws_iam_role_policy.cleanup":           {"policy": cleanup.ExecutionRole.PolicySHA256},
+			"aws_iam_role_policy.cleanup_scheduler": {"policy": cleanup.SchedulerRole.PolicySHA256},
+			"aws_iam_role.instance":                 {"assume_role_policy": m.Roles["instance"].TrustSHA256},
+			"aws_iam_role.operator":                 {"assume_role_policy": m.Roles["operator"].TrustSHA256},
+			"aws_iam_role_policy.instance":          {"policy": m.Roles["instance"].PolicySHA256},
+			"aws_iam_role_policy.operator":          {"policy": m.Roles["operator"].PolicySHA256},
+			"aws_ssm_document.readiness":            {"content": m.Readiness.ContentSHA256},
+			"aws_ssm_document.execution":            {"content": m.Execution.ContentSHA256},
+			"aws_s3_bucket_policy.results":          {"policy": m.Results.PolicySHA256},
+			"aws_launch_template.agent":             {"user_data": m.BootstrapSHA256},
 		}
 		for _, r := range event.State.Values.Root.Resources {
 			for field, want := range expected[r.Address] {

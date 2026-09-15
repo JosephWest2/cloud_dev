@@ -1,4 +1,4 @@
-.PHONY: build install check runner cleanup
+.PHONY: build install check runner cleanup cleanup-check
 
 build:
 	go build -trimpath -buildvcs=false -o bin/devbox ./cmd/devbox
@@ -9,6 +9,9 @@ runner:
 cleanup:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -tags lambda.norpc -o bin/cleanup/bootstrap ./cmd/devbox-cleanup
 	python3 scripts/package-cleanup.py bin/cleanup/bootstrap bin/devbox-cleanup-linux-amd64.zip
+
+cleanup-check: cleanup
+	python3 scripts/check-cleanup-package.py
 
 install:
 	go install -trimpath -buildvcs=false ./cmd/devbox
@@ -22,7 +25,7 @@ check:
 
 TOFU ?= tofu
 .PHONY: infra-check
-infra-check: runner cleanup
+infra-check: runner cleanup-check
 	$(TOFU) fmt -check -recursive infra
 	$(TOFU) -chdir=infra/state-bootstrap init -backend=false -input=false -lockfile=readonly
 	$(TOFU) -chdir=infra/state-bootstrap validate
