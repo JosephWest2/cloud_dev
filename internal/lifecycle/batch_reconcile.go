@@ -218,6 +218,13 @@ func (r *launchReconciler) scan(ctx context.Context) {
 					actual, tags := record(instance), tagsOf(instance)
 					id, attemptID := actual.ID, tags["AttemptId"]
 					r.retain(attemptID, id, config.LaunchChoice{}, actual.Volumes)
+					if worker, retained := r.workers[id]; retained {
+						// Keep scan diagnostics if later exact-ID inspection has no row.
+						// Only expiry is copied: identity checks and allocation bounds
+						// still require the existing verification below.
+						inspectInstanceExpiry(&worker.Instance, instance.Tags, now)
+						r.workers[id] = worker
+					}
 					n, known := r.attempts[attemptID]
 					valid := false
 					if known {

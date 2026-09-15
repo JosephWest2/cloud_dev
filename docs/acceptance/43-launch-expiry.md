@@ -155,3 +155,38 @@ These corrections are confined to recovery diagnostics and plan decoding; the
 complete affected package suites cover their callers without repeating the full
 repository check. The v6 handoff and all TTL/send gates remain unchanged. No AWS
 or GitHub writes were made; live acceptance remains pending.
+
+## Follow-up review: scoped inventory expiry fallback
+
+Reproduced the P2 finding against `8f3d9be` with the independent final-review
+overlay. Scoped scans now retain worker expiry diagnostics when later exact-ID
+inspection fails, returns NotFound, or returns no rows. Newer exact-ID rows still
+replace those diagnostics, including rows returned with a partial-read error.
+This changes only observed worker expiry fields; schema, immutable records,
+request deadline, historical fulfillment, scope validation and allocation bounds
+remain unchanged. The manifest-v6 handoff and TTL/send gates are unchanged.
+
+Permanent regressions cover running, shutting-down and terminated workers;
+missing, invalid, empty, nil, noncanonical and duplicate expiry tags; original
+and future valid controls; exact-read precedence and partial responses. Public
+`up --resume` tests recover from shared records after local cache loss and check
+nullable JSON, stable worker IDs, immutable ledger bytes and zero new allocation.
+Unavailable-read readiness retries use controlled cancellation.
+
+Verification passed:
+
+```sh
+go test -count=1 ./internal/lifecycle -run '^TestExpiryScan'
+go test -count=1 -overlay /tmp/issue43-final-review-045v18w6/overlay.json ./internal/lifecycle -run '^TestFinalReview'
+go test -count=1 -overlay /tmp/issue43-review-7d25txin/overlay.json ./internal/lifecycle -run '^TestReview'
+go test -count=1 ./internal/lifecycle ./internal/cli ./internal/config ./internal/foundation ./internal/expiry
+go test -race -count=1 ./internal/lifecycle ./internal/cli
+go vet ./internal/lifecycle ./internal/cli
+git diff --check
+```
+
+The independent final-review overlay also checks the SDK send gate at expiry
+equality and 1ns before expiry. Full affected package suites and race checks cover
+this observation-only correction; the repository-wide check was not repeated.
+Fresh review of the final commit is pending with the parent. No live acceptance
+was performed.
