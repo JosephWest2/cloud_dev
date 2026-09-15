@@ -297,7 +297,7 @@ func (s *Service) WaitReady(ctx context.Context, m config.Manifest, i *Instance,
 	}
 	last := ""
 	for attempt := 0; ; attempt++ {
-		fresh, err := s.Resolve(ctx, i.ID)
+		fresh, err := s.resolveWithExpiry(ctx, i.ID, i)
 		if err != nil {
 			observationError(i, err)
 			return err

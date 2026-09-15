@@ -374,11 +374,11 @@ func (r *launchReconciler) verify(ctx context.Context) {
 		}
 		worker := workers[0]
 		worker.Volumes = mergeFleetVolumes(worker.Volumes, r.workers[id].Volumes)
-		if terminal := inspection.terminalObservation; terminal != nil {
-			// Terminal rows bypass live-setting verification, but their observed
-			// expiry diagnostics still belong in public output, even on a partial
-			// read or pin mismatch. Never copy them into the immutable plan/ledger.
-			copyObservedExpiry(&worker.Instance, *terminal)
+		if latest := inspection.latestExpiryObservation; latest != nil {
+			// Filtering terminal rows must not reorder diagnostics from mixed
+			// terminal/live responses. Keep the last matching row's expiry even
+			// on partial reads or conflicts, without changing verification status.
+			copyObservedExpiry(&worker.Instance, *latest)
 		}
 		var inspectionFailure *Failure
 		onlyGone := err == nil || (errors.As(err, &inspectionFailure) && inspectionFailure.Code == "worker_observation_unavailable")
@@ -405,6 +405,7 @@ type historicalFleetInventory struct {
 	known                          WorkerOutcome
 	historical, gone, live, failed bool
 	terminalObservation            *Instance
+	latestExpiryObservation        *Instance
 	seen                           map[string]bool
 }
 
@@ -432,6 +433,10 @@ func (s *historicalFleetInventory) DescribeInstances(ctx context.Context, in *ec
 		for _, instance := range reservation.Instances {
 			count++
 			actual := record(instance)
+			if actual.ID == s.known.ID {
+				inspectInstanceExpiry(&actual, instance.Tags, clockNow(s.r.clock))
+				s.latestExpiryObservation = &actual
+			}
 			s.r.retain(tagsOf(instance)["AttemptId"], actual.ID, config.LaunchChoice{}, actual.Volumes)
 			if s.seen[actual.ID] {
 				s.failed = true
@@ -440,7 +445,6 @@ func (s *historicalFleetInventory) DescribeInstances(ctx context.Context, in *ec
 			s.seen[actual.ID] = true
 			terminal := actual.State == "terminated" || actual.State == "shutting-down"
 			if s.historical && actual.ID == s.known.ID && terminal {
-				inspectInstanceExpiry(&actual, instance.Tags, clockNow(s.r.clock))
 				s.gone, s.terminalObservation = true, &actual
 				if !historicalInstanceMatches(s.r.out.Receipt.Plan, s.attempt, s.known, aws.ToString(reservation.OwnerId), instance) {
 					s.failed = true
