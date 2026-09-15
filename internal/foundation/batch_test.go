@@ -340,3 +340,26 @@ func TestSpotServiceRoleRequiresExactAccountServiceAndTrust(t *testing.T) {
 		}
 	}
 }
+
+// A v6 reader must keep every v5 launch check. Cleanup health is independent
+// and is implemented by #46; this test does not attest to scheduled deployment.
+func TestExpiryManifestPreservesLaunchVerification(t *testing.T) {
+	for _, drift := range []bool{false, true} {
+		f, m, p := batchFixture(t)
+		m.SchemaVersion = 6
+		m.Cleanup = json.RawMessage(`{"execution_role":null}`)
+		if drift {
+			f.responses["DescribeImages"] = strings.Replace(f.responses["DescribeImages"], `"VolumeSize":8`, `"VolumeSize":9`, 1)
+		}
+		failed := false
+		for _, check := range Verify(context.Background(), Clients{f, f, f, f}, m, p) {
+			failed = failed || check.Err != nil
+		}
+		if failed != drift {
+			t.Fatalf("v6 launch checks: drift=%t failure=%t", drift, failed)
+		}
+		if !drift && (f.calls["DescribeInstanceTypeOfferings"] != len(m.CompatiblePools) || f.calls["GetRole"] != 3) {
+			t.Fatal("v6 skipped Fleet verification", f.calls)
+		}
+	}
+}

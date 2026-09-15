@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -19,7 +20,7 @@ import (
 )
 
 const help = `Usage: devbox [options] doctor
-       devbox [options] up agent [--count N] [--group GROUP] [--name BASE] [--on-demand]
+       devbox [options] up agent [--count N] [--group GROUP] [--name BASE] [--on-demand] [--ttl DURATION]
        devbox [options] up --resume REQUEST_ID
        devbox [options] up --retry-missing REQUEST_ID --after ATTEMPT_ID
        devbox [options] ls [--group GROUP]
@@ -42,13 +43,14 @@ Options may appear before or after the command:
   --name BASE           Base for stable names ending in each instance ID
   --count N             Instance count within configured max_count (default 10)
   --group GROUP         Launch group or exact inventory filter
+  --ttl DURATION        Lifetime: default 2h, max 168h; active work never extends it
   --on-demand           Explicitly select On-Demand; no automatic fallback
   --resume REQUEST_ID   Observe a batch request without allocating
   --json                One versioned JSON result on stdout
   --help, -h            Show this help
 
 Batch launch and recovery:
-  up agent [--count N] [--group GROUP] [--name BASE] [--on-demand]
+  up agent [--count N] [--group GROUP] [--name BASE] [--on-demand] [--ttl DURATION]
   up --retry-missing REQUEST_ID --after ATTEMPT_ID
   ls [--group GROUP]
   Count means instances; default 1, configured maximum default 10, range 1–100.
@@ -64,10 +66,12 @@ Batch launch and recovery:
   workers under one overall deadline (default 5m). Resume never replaces
   interrupted or removed workers. Separate requests may share a group.
 
-Expiry rollout (#42 contract; implementation pending):
-  Planned default_ttl=2h, up --ttl override, maximum 168h (7 days).
+Expiry:
+  up --ttl overrides config default_ttl, then the default 2h; maximum 168h.
   One deadline per request; active work and retries never extend it.
-  TTL flags/config and cleanup commands are not available in this slice.
+  Use unsigned Go durations (1h30m, 36h, 168h); no zero or unlimited.
+  All launch overrides are rejected on resume/retry. Legacy requests cannot allocate.
+  Cleanup is planned every 5m; its command and deployment ship separately.
   Continue using down for manual cleanup until scheduled cleanup is verified.
 
 Scoped teardown:
@@ -95,9 +99,9 @@ Logs options:
   Default logs prints status; its exit code describes retrieval, not workload exit.
 
 doctor checks local setup and AWS identity without provisioning resources.
-up uses pinned instant Spot Fleet allocation with the version-5 foundation.
-Version-4 explicit single-worker On-Demand and legacy receipt recovery remain
-available. ls, individual access and down use AWS inventory without receipts.
+up requires the expiry-capable version-6 foundation for instant Fleet allocation,
+including explicit On-Demand and count one. Version-4/5 manifests and legacy
+receipts remain usable for observation, down and saved logs. ls, individual access and down use AWS inventory without receipts.
 up waits for EC2 + SSM + bootstrap readiness. ssh uses real SSH over SSM.
 ssh-config supports editors/scp/sftp; proxy is its transport helper.
 ssh/proxy reject --json. Failed/finished sessions retain workers: run down.
@@ -206,7 +210,7 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 		key, val, hasVal := strings.Cut(a, "=")
 		switch key {
-		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--count", "--group", "--resume", "--retry-missing", "--after", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout", "--stream", "--stdout-file", "--stderr-file":
+		case "--config", "--aws-profile", "--region", "--timeout", "--name", "--count", "--group", "--resume", "--retry-missing", "--after", "--ttl", "--cwd", "--exec-timeout", "--delivery-timeout", "--wait-timeout", "--stream", "--stdout-file", "--stderr-file":
 			if !hasVal {
 				i++
 				if i >= len(args) || strings.HasPrefix(args[i], "--") {
@@ -214,11 +218,11 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 				}
 				val = args[i]
 			}
-			if val == "" {
+			if val == "" && key != "--ttl" {
 				return fail("option values must not be empty; run devbox --help")
 			}
 			switch key {
-			case "--name", "--count", "--group", "--resume", "--retry-missing", "--after":
+			case "--name", "--count", "--group", "--resume", "--retry-missing", "--after", "--ttl":
 				if lifecycleOptions[key] {
 					return fail("lifecycle options must not be repeated; run devbox --help")
 				}
@@ -261,6 +265,9 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 					}
 					execOptions.WaitTimeout = duration
 				}
+			case "--ttl":
+				value := val
+				launchFlags.TTL = &value
 			case "--name":
 				launchFlags.Name = val
 			case "--count":
@@ -346,10 +353,17 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 	if command == "exec" && (len(positional) != 1 || !lifecycle.ValidTarget(positional[0]) || !separator || len(execOptions.Argv) == 0 || execOptions.Argv[0] == "") {
 		return fail("use exec with one managed name or instance ID, then -- COMMAND [ARGS...]")
 	}
+	if command != "up" && launchFlags.TTL != nil {
+		return fail("--ttl requires up agent")
+	}
 	if command == "up" {
 		launchFlags.Group = group
 		selection, err := lifecycle.ResolveLaunchSelection(positional, launchFlags, config.HardMaxCount)
 		if err != nil {
+			var f *lifecycle.Failure
+			if errors.As(err, &f) {
+				return emitBatch(lifecycle.BatchResult{SchemaVersion: 2, Command: "up", ExitCode: 2, Code: f.Code, Message: f.Message}, "", jsonMode, stdout, stderr)
+			}
 			return fail(err.Error())
 		}
 		launch = lifecycle.UpOptions{Name: selection.Name, Resume: selection.Resume, OnDemand: selection.OnDemand}
@@ -473,7 +487,7 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 		return emitBatch(*r.Batch, r.RecoveryPrefix, jsonMode, stdout, stderr)
 	}
 	if jsonMode {
-		if err := json.NewEncoder(stdout).Encode(r); err != nil {
+		if err := json.NewEncoder(stdout).Encode(lifecycle.PublicResult(r)); err != nil {
 			fmt.Fprintln(stderr, "cannot write command result")
 			return doctor.ExitPrerequisite
 		}
@@ -487,7 +501,7 @@ func emitLifecycle(r lifecycle.Result, jsonMode bool, stdout, stderr io.Writer) 
 			}
 		}
 		for _, i := range r.Instances {
-			if _, err := fmt.Fprintf(stdout, "%s name=%q base=%q group=%q request=%q attempt=%s image=%s type=%s subnet=%s az=%s market=%s template=%s/%s ec2=%s ssm=%s bootstrap=%s readiness=%s root_deletion=%s\n", i.ID, i.Name, i.BaseName, i.Group, i.RequestID, i.AttemptID, i.Image, i.Type, i.SubnetID, i.AvailabilityZone, i.Market, i.TemplateID, i.TemplateVersion, i.State, i.SSM, i.Bootstrap, i.Readiness, i.RootDeletion); err != nil {
+			if _, err := fmt.Fprintf(stdout, "%s name=%q base=%q group=%q request=%q attempt=%s image=%s type=%s subnet=%s az=%s market=%s template=%s/%s ec2=%s ssm=%s bootstrap=%s readiness=%s root_deletion=%s expires_at=%s expiry_status=%s\n", i.ID, i.Name, i.BaseName, i.Group, i.RequestID, i.AttemptID, i.Image, i.Type, i.SubnetID, i.AvailabilityZone, i.Market, i.TemplateID, i.TemplateVersion, i.State, i.SSM, i.Bootstrap, i.Readiness, i.RootDeletion, expiryText(i.ExpiresAt), i.ExpiryStatus); err != nil {
 				return doctor.ExitPrerequisite
 			}
 			if i.ProbeCommandID != "" || i.ObservationCode != "" {

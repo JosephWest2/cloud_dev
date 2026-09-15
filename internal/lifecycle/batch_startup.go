@@ -50,7 +50,7 @@ func (s *batchStartup) wait(ctx context.Context, plan LaunchPlan, worker *Worker
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		observed, err := VerifyFleetWorkers(ctx, s.api, evidence.plan, evidence.attempt, []WorkerOutcome{*worker})
+		observed, err := VerifyFleetWorkers(ctx, s.api, evidence.plan, evidence.attempt, []WorkerOutcome{*worker}, s.service.Clock)
 		if len(observed) != 1 || observed[0].ID != worker.ID {
 			return failure("worker_inventory_invalid", "Exact startup inspection returned contradictory identities; preserve every known worker and root.")
 		}
@@ -151,7 +151,7 @@ func (s *batchStartup) readiness(ctx context.Context, recovery *RecoveryService,
 	if pending && ctx.Err() == nil {
 		current, refreshErr := recovery.Resume(ctx, outcome.RequestID)
 		refreshable := s.mayRefresh(operationErr)
-		if current.Plan.SchemaVersion == 1 && current.Plan.Digest() == outcome.Plan.Digest() {
+		if supportedPlan(current.Plan.SchemaVersion) && current.Plan.Digest() == outcome.Plan.Digest() {
 			*outcome = refreshBatchStartup(*outcome, current, operationErr != nil && !refreshable)
 		}
 		if refreshable {

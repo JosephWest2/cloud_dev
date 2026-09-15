@@ -29,7 +29,7 @@ func BuildFleetInput(plan LaunchPlan, attempt AttemptReceipt) (*ec2.CreateFleetI
 	if err != nil || version == 0 || strconv.FormatUint(version, 10) != plan.Image.LaunchTemplateVersion || !validFleetResourceID(plan.Image.LaunchTemplateID, "lt") || !validFleetResourceID(plan.Image.AMIID, "ami") || plan.Image.RootDeviceName != "/dev/sda1" || len(plan.Choices) == 0 {
 		return nil, invalid
 	}
-	if plan.SchemaVersion != 1 || !ValidRequest(plan.RequestID) || !ValidRequest(attempt.AttemptID) || attempt.RequestedCount < 1 || attempt.RequestedCount > plan.RequestedCount || plan.RequestedCount > config.HardMaxCount || attempt.ClientToken != attemptToken(plan.Digest(), attempt.AttemptID, attempt.RequestedCount) {
+	if validatePlanExpiry(plan) != nil || !ValidRequest(plan.RequestID) || !ValidRequest(attempt.AttemptID) || attempt.RequestedCount < 1 || attempt.RequestedCount > plan.RequestedCount || plan.RequestedCount > config.HardMaxCount || attempt.ClientToken != attemptToken(plan.Digest(), attempt.AttemptID, attempt.RequestedCount) {
 		return nil, invalid
 	}
 	wantID, err := AttemptID(plan.RequestID, attempt.ParentID)
@@ -43,6 +43,9 @@ func BuildFleetInput(plan LaunchPlan, attempt AttemptReceipt) (*ec2.CreateFleetI
 	wantTags := map[string]string{"ManagedBy": "devbox", "Deployment": plan.Deployment, "Owner": plan.Owner, "Profile": plan.Profile,
 		"Name": plan.BaseName, "BaseName": plan.BaseName, "RequestId": plan.RequestID, "BatchId": plan.RequestID,
 		"CreatedAt": plan.CreatedAt, "NamingVersion": "1", "AttemptId": attempt.AttemptID}
+	if plan.SchemaVersion == 2 {
+		wantTags["ExpiresAt"] = plan.ExpiresAt
+	}
 	if plan.Group != "" {
 		wantTags["Group"] = plan.Group
 	}
@@ -258,7 +261,7 @@ func fleetResponsePool(plan LaunchPlan, instanceType, subnet, zone string, launc
 func fleetWorker(plan LaunchPlan, attempt AttemptReceipt, id string, choice config.LaunchChoice) WorkerOutcome {
 	name, _ := WorkerName(plan.BaseName, id)
 	return WorkerOutcome{
-		Instance: Instance{ID: id, Name: name, RequestID: plan.RequestID, Profile: plan.Profile, CreatedAt: plan.CreatedAt,
+		Instance: Instance{ID: id, Name: name, RequestID: plan.RequestID, Profile: plan.Profile, CreatedAt: plan.CreatedAt, ExpiresAt: plan.ExpiresAt,
 			Image: plan.Image.AMIID, Type: choice.InstanceType, Market: plan.Market, TemplateID: plan.Image.LaunchTemplateID, TemplateVersion: plan.Image.LaunchTemplateVersion,
 			State: "unknown", SSM: "not_observed", Bootstrap: "not_observed", Readiness: "not_observed", RootDeletion: "unavailable", Volumes: []Volume{},
 			Group: plan.Group, BaseName: plan.BaseName, AttemptID: attempt.AttemptID, SubnetID: choice.SubnetID, AvailabilityZone: choice.AvailabilityZone}, Status: "not_observed",

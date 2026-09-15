@@ -18,7 +18,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/ec2/types"
-	"github.com/aws/smithy-go"
 )
 
 func setupUp(t *testing.T) (*Service, config.Manifest, config.Profile, Store, *fakeEC2) {
@@ -41,7 +40,11 @@ func setupUp(t *testing.T) (*Service, config.Manifest, config.Profile, Store, *f
 	s := testService(api)
 	s.Scope = c
 	s.VerifyFoundation = func(context.Context, config.Manifest, config.Profile) error { return nil }
-	return s, m, p, Store{Dir: filepath.Join(t.TempDir(), "requests")}, api
+	store := Store{Dir: filepath.Join(t.TempDir(), "requests")}
+	if err := os.MkdirAll(store.Dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	return s, m, p, store, api
 }
 func quiet(Receipt, string) error { return nil }
 func launched(in *ec2.RunInstancesInput) types.Instance {
@@ -53,70 +56,51 @@ func launched(in *ec2.RunInstancesInput) types.Instance {
 	i.Tags = append(i.Tags, types.Tag{Key: aws.String("aws:ec2launchtemplate:id"), Value: in.LaunchTemplate.LaunchTemplateId}, types.Tag{Key: aws.String("aws:ec2launchtemplate:version"), Value: in.LaunchTemplate.Version})
 	return i
 }
-func TestLostLaunchResponseAndRestartReplay(t *testing.T) {
+func TestLegacyLostLaunchResponseAndRestartReplay(t *testing.T) {
 	s, m, p, store, api := setupUp(t)
-	var instance *types.Instance
+	r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
+	r.State = "dispatched"
+	if err := store.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	original := launchInput(r)
+	instance := launched(original)
 	invisible := 0
-	api.describe = func(in *ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
-		if instance == nil {
-			return inventory(), nil
-		}
+	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 		if invisible < 2 {
 			invisible++
 			return inventory(), nil
 		}
-		return inventory(*instance), nil
-	}
-	var original *ec2.RunInstancesInput
-	api.run = func(in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
-		original = in
-		if aws.ToInt32(in.MinCount) != 1 || aws.ToInt32(in.MaxCount) != 1 || in.InstanceMarketOptions != nil || aws.ToString(in.ImageId) != m.Images["agent"].AMIID || aws.ToString(in.LaunchTemplate.Version) != "1" {
-			t.Fatalf("bad launch %+v", in)
-		}
-		if len(in.TagSpecifications) != 2 || !reflect.DeepEqual(in.TagSpecifications[0].Tags, in.TagSpecifications[1].Tags) || len(in.TagSpecifications[0].Tags) != 7 {
-			t.Fatal("missing resource tags")
-		}
-		r, err := store.Load(aws.ToString(in.ClientToken))
-		if err != nil || r.State != "dispatched" {
-			t.Fatalf("dispatch not durable: %+v %v", r, err)
-		}
-		i := launched(in)
-		instance = &i
-		return nil, errors.New("response lost SECRET")
-	}
-	first, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, quiet)
-	if err != nil || first.Status != "allocated" || api.launches != 1 {
-		t.Fatalf("%+v %v launches=%d", first, err, api.launches)
-	}
-	r, err := store.Load(first.RequestID)
-	if err != nil || r.State != "observed" || !reflect.DeepEqual(launchInput(r), original) {
-		t.Fatalf("receipt changed: %+v %v", r, err)
-	}
-	// Restart: new service, no manifest/profile, no retained instance object in service.
-	restarted := testService(api)
-	got, err := restarted.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
-	if err != nil || got.Status != "allocated" || api.launches != 1 {
-		t.Fatalf("replay %+v %v launches=%d", got, err, api.launches)
-	}
-}
-func TestUncertainLaunchNeverReallocates(t *testing.T) {
-	s, m, p, store, api := setupUp(t)
-	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(), nil }
-	api.run = func(*ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) { return nil, errors.New("lost") }
-	r, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, quiet)
-	if err == nil || r.Status != "outcome_unresolved" || !ValidRequest(r.RequestID) {
-		t.Fatalf("%+v %v", r, err)
+		return inventory(instance), nil
 	}
 	for range 2 {
-		_, err = s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
-		if err == nil {
-			t.Fatal("invisible outcome claimed resolved")
+		out, err := s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
+		if err != nil || out.Status != "allocated" || api.launches != 0 {
+			t.Fatalf("%+v %v launches=%d", out, err, api.launches)
 		}
 	}
-	if api.launches != 1 {
-		t.Fatalf("duplicate allocation: %d", api.launches)
+	saved, err := store.Load(r.RequestID)
+	if err != nil || !reflect.DeepEqual(launchInput(saved), original) {
+		t.Fatal("historical launch serialization changed", err)
 	}
 }
+
+func TestLegacyUncertainLaunchNeverReallocates(t *testing.T) {
+	s, m, p, store, api := setupUp(t)
+	r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
+	r.State = "dispatched"
+	if err := store.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(), nil }
+	for range 2 {
+		out, err := s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
+		if err == nil || out.Status != "outcome_unresolved" || api.launches != 0 {
+			t.Fatalf("%+v %v", out, err)
+		}
+	}
+}
+
 func TestPreparedReceiptReplayAndParameterChanges(t *testing.T) {
 	for _, variant := range []string{"same", "image", "type", "disk", "template", "scope"} {
 		t.Run(variant, func(t *testing.T) {
@@ -162,12 +146,12 @@ func TestPreparedReceiptReplayAndParameterChanges(t *testing.T) {
 				s.Scope.Region = "us-west-2"
 			}
 			_, err = s.Up(context.Background(), m, p, UpOptions{Resume: r.RequestID}, store, quiet)
-			if variant == "same" {
-				if err != nil || api.launches != 1 {
-					t.Fatal(err, api.launches)
-				}
-			} else if err == nil || api.launches != 0 {
-				t.Fatalf("changed parameters launched: %v %d", err, api.launches)
+			var f *Failure
+			if !errors.As(err, &f) || api.launches != 0 {
+				t.Fatalf("legacy request allocated: %v", err)
+			}
+			if variant != "scope" && f.Code != "legacy_request_no_expiry" {
+				t.Fatal(err)
 			}
 		})
 	}
@@ -220,37 +204,44 @@ func TestConcurrentPreparedResume(t *testing.T) {
 	wg.Wait()
 	close(errs)
 	for err := range errs {
-		if err != nil {
+		var f *Failure
+		if !errors.As(err, &f) || f.Code != "legacy_request_no_expiry" {
 			t.Fatal(err)
 		}
 	}
-	if api.launches != 1 {
-		t.Fatal("multiple launches", api.launches)
+	if api.launches != 0 {
+		t.Fatal("legacy allocation", api.launches)
 	}
 }
-func TestPreMutationDiagnosticFailure(t *testing.T) {
+func TestLegacyFreshAllocationIsRetired(t *testing.T) {
 	s, m, p, store, api := setupUp(t)
-	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(), nil }
-	result, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, func(Receipt, string) error { return io.ErrClosedPipe })
-	r, loadErr := store.Load(result.RequestID)
-	if err == nil || api.launches != 0 || loadErr != nil || r.State != "prepared" {
-		t.Fatalf("%+v %v %v", result, err, loadErr)
+	out, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, func(Receipt, string) error { t.Fatal("announced legacy allocation"); return nil })
+	var f *Failure
+	if !errors.As(err, &f) || f.Code != "legacy_request_no_expiry" || api.launches != 0 || out.RequestID != "" {
+		t.Fatalf("%+v %v", out, err)
 	}
 }
-func TestPostLaunchReceiptFailurePreservesIDs(t *testing.T) {
+
+func TestLegacyObservationReceiptFailurePreservesIDs(t *testing.T) {
 	s, m, p, store, api := setupUp(t)
-	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(), nil }
-	api.run = func(in *ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
+	r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
+	r.State = "dispatched"
+	if err := store.Save(r); err != nil {
+		t.Fatal(err)
+	}
+	i := launched(launchInput(r))
+	api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) {
 		if err := os.Rename(store.Dir, store.Dir+"-moved"); err != nil {
 			t.Fatal(err)
 		}
-		return &ec2.RunInstancesOutput{Instances: []types.Instance{launched(in)}}, nil
+		return inventory(i), nil
 	}
-	r, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, quiet)
-	if err == nil || len(r.Instances) != 1 || r.Instances[0].ID != "i-12345678" || r.RequestID == "" {
-		t.Fatalf("IDs lost: %+v %v", r, err)
+	out, err := s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
+	if err == nil || len(out.Instances) != 1 || out.Instances[0].ID != "i-12345678" || api.launches != 0 {
+		t.Fatalf("%+v %v", out, err)
 	}
 }
+
 func TestLockCancellationAndReceiptValidation(t *testing.T) {
 	s, m, p, store, _ := setupUp(t)
 	r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
@@ -284,7 +275,7 @@ func TestLockCancellationAndReceiptValidation(t *testing.T) {
 }
 func TestRunCleanupWithoutManifestProfileOrReceipts(t *testing.T) {
 	path := testutil.Setup(t)
-	testutil.Write(t, path, testutil.Config+"profile_file='missing.toml'\n")
+	testutil.Write(t, path, testutil.Config+"profile_file='missing.toml'\ndefault_ttl='unlimited'\n")
 	if err := os.Remove(filepath.Join(filepath.Dir(path), "deployment.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -305,7 +296,7 @@ func TestRunInvalidConfigManifestIdentityPreventLaunch(t *testing.T) {
 			case "config":
 				testutil.Write(t, path, "SECRET malformed")
 			case "profile":
-				testutil.Write(t, path, testutil.Config+"profile_file='missing.toml'\n")
+				testutil.Write(t, path, testutil.Config+"profile_file='missing.toml'\ndefault_ttl='unlimited'\n")
 			case "manifest":
 				testutil.Write(t, filepath.Join(filepath.Dir(path), "deployment.json"), strings.Replace(testutil.Manifest, "123456789012", "999999999999", 1))
 			}
@@ -373,10 +364,15 @@ func TestLaunchRejectionSurvivesRestartWithoutRawDiagnostics(t *testing.T) {
 		t.Run(code, func(t *testing.T) {
 			s, m, p, store, api := setupUp(t)
 			api.describe = func(*ec2.DescribeInstancesInput) (*ec2.DescribeInstancesOutput, error) { return inventory(), nil }
-			api.run = func(*ec2.RunInstancesInput) (*ec2.RunInstancesOutput, error) {
-				return nil, &smithy.GenericAPIError{Code: code, Message: "SECRET raw AWS message"}
+			r, _ := newReceipt(parameters(s.Scope, m, p, "smoke"))
+			r.State = "dispatched"
+			if code != "UnexpectedSecretCode" {
+				r.LaunchErrorCode = code
 			}
-			first, err := s.Up(context.Background(), m, p, UpOptions{Name: "smoke", OnDemand: true}, store, quiet)
+			if err := store.Save(r); err != nil {
+				t.Fatal(err)
+			}
+			first, err := s.Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: r.RequestID}, store, quiet)
 			want := "outcome_unresolved"
 			if code == "PendingVerification" {
 				want = "launch_pending_verification"
@@ -388,7 +384,7 @@ func TestLaunchRejectionSurvivesRestartWithoutRawDiagnostics(t *testing.T) {
 				t.Fatalf("original diagnostic: %+v %v", first, err)
 			}
 			resumed, err := testService(api).Up(context.Background(), config.Manifest{}, config.Profile{}, UpOptions{Resume: first.RequestID}, store, quiet)
-			if !errors.As(err, &f) || f.Code != want || resumed.RequestID != first.RequestID || api.launches != 1 {
+			if !errors.As(err, &f) || f.Code != want || resumed.RequestID != first.RequestID || api.launches != 0 {
 				t.Fatalf("restart diagnostic or dispatch: %+v %v", resumed, err)
 			}
 			raw, err := os.ReadFile(store.Path(first.RequestID))

@@ -3,14 +3,15 @@ package lifecycle
 import (
 	"context"
 	"errors"
-	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 )
 
 // RecoveryService reads shared authority before using local evidence. Observation
 // never invokes Dispatcher, including for a prepared but unclaimed batch.
 type RecoveryService struct {
+	Clock      expiry.Clock
 	Scope      config.Config
 	Ledger     RecoveryLedger
 	Cache      Store
@@ -218,6 +219,14 @@ func (s *RecoveryService) RetryMissing(ctx context.Context, m config.Manifest, p
 		unlock()
 		return out, nil
 	}
+	if err := checkAllocation(r.Plan, s.Clock); err != nil {
+		unlock()
+		return out, err
+	}
+	if err := requireExpiryManifest(m); err != nil {
+		unlock()
+		return out, err
+	}
 	maximum := s.Scope.MaxCount
 	if maximum == 0 {
 		maximum = config.DefaultMaxCount
@@ -230,11 +239,16 @@ func (s *RecoveryService) RetryMissing(ctx context.Context, m config.Manifest, p
 		unlock()
 		return out, failure("allocator_unavailable", "shared recovery has no verified dispatch service")
 	}
+	created, err := expiry.Timestamp(clockNow(s.Clock))
+	if err != nil {
+		unlock()
+		return out, expiryFailure(err)
+	}
 	aid, _ := AttemptID(id, after)
 	candidate := cloneBatch(r)
 	candidate.Attempts = append(candidate.Attempts, AttemptReceipt{
 		AttemptID: aid, ParentID: after, ClientToken: attemptToken(r.PlanSHA256, aid, missing), RequestedCount: missing,
-		CreatedAt: time.Now().UTC().Format(time.RFC3339Nano), State: "prepared", InstanceIDs: []string{}, Errors: []ResourceError{},
+		CreatedAt: created, State: "prepared", InstanceIDs: []string{}, Errors: []ResourceError{},
 	})
 	unlock()
 	// Dispatch takes the same local lock and revalidates current pins plus shared

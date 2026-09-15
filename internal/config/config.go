@@ -18,16 +18,17 @@ import (
 )
 
 type Config struct {
-	SchemaVersion   int    `toml:"schema_version"`
-	ExpectedAccount string `toml:"expected_account"`
-	Region          string `toml:"region"`
-	Deployment      string `toml:"deployment"`
-	Owner           string `toml:"owner"`
-	AWSProfile      string `toml:"aws_profile"`
-	Manifest        string `toml:"manifest"`
-	ProfileFile     string `toml:"profile_file"`
-	SSHIdentityFile string `toml:"ssh_identity_file"`
-	MaxCount        int    `toml:"max_count"`
+	SchemaVersion   int     `toml:"schema_version"`
+	ExpectedAccount string  `toml:"expected_account"`
+	Region          string  `toml:"region"`
+	Deployment      string  `toml:"deployment"`
+	Owner           string  `toml:"owner"`
+	AWSProfile      string  `toml:"aws_profile"`
+	Manifest        string  `toml:"manifest"`
+	ProfileFile     string  `toml:"profile_file"`
+	SSHIdentityFile string  `toml:"ssh_identity_file"`
+	MaxCount        int     `toml:"max_count"`
+	DefaultTTL      *string `toml:"default_ttl"`
 }
 
 type Overrides struct{ AWSProfile, Region string }
@@ -71,6 +72,9 @@ type Manifest struct {
 	LaunchLedger       *LaunchLedger    `json:"launch_ledger,omitempty"`
 	Roles              map[string]Role  `json:"roles"`
 	Images             map[string]Image `json:"images"`
+	// Cleanup is owned and health-validated by the scheduled cleanup adapter (#46).
+	// Launch-independent recovery treats its contents as opaque.
+	Cleanup json.RawMessage `json:"cleanup,omitempty"`
 }
 
 type Document struct {
@@ -258,8 +262,11 @@ func readManifest(path string, c Config) (Manifest, error) {
 }
 
 func validateManifestScope(m Manifest, c Config) error {
-	if m.SchemaVersion != 4 && m.SchemaVersion != 5 {
-		return errors.New("unsupported manifest schema_version; use version 4 or apply and re-export version 5 from the foundation")
+	if m.SchemaVersion != 4 && m.SchemaVersion != 5 && m.SchemaVersion != 6 {
+		return errors.New("unsupported manifest schema_version; use version 4/5 for recovery or re-export version 6 from the foundation")
+	}
+	if m.SchemaVersion != 6 && len(m.Cleanup) != 0 {
+		return errors.New("cleanup descriptor requires manifest version 6")
 	}
 	if m.SchemaVersion == 4 {
 		if m.LaunchLedger != nil || m.Subnets != nil || m.CompatiblePools != nil {
@@ -378,7 +385,7 @@ func validateManifest(m Manifest, c Config, p Profile) (Manifest, error) {
 			return m, errors.New("manifest images require an exact AMI ID, architecture, launch template ID and positive numeric version (not $Latest or $Default)")
 		}
 	}
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		if err := validateManifestV5(m); err != nil {
 			return m, err
 		}
