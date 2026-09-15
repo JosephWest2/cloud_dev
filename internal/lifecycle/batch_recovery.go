@@ -258,7 +258,9 @@ func (s *RecoveryService) RetryMissing(ctx context.Context, m config.Manifest, p
 	if !dispatched.Dispatched && recoverablePreparationConflict(dispatchErr) {
 		// A concurrent winner may already have canonical preparation/response.
 		// Observe that record, including when our own prepared timestamp differed.
-		return s.Resume(ctx, id)
+		current, err := s.Resume(ctx, id)
+		retainBatchExpiry(&current, out)
+		return current, err
 	}
 	combined := LaunchObservation{Receipt: dispatched.Receipt, Workers: append(cloneWorkers(observation.Workers), dispatched.Workers...), Errors: observation.Errors, HistoricalFulfillment: observation.HistoricalFulfillment}
 	combined.Bounded = dispatchErr == nil && dispatched.Outcome().MissingCount != nil

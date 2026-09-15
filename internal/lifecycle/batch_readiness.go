@@ -161,7 +161,7 @@ func (s *Service) waitBatchWorker(ctx context.Context, manifest config.Manifest,
 			observationError(&worker.Instance, err)
 			return err
 		}
-		fresh, err := s.resolveBatchReady(ctx, worker.ID)
+		fresh, err := s.resolveBatchReady(ctx, &worker.Instance)
 		if err != nil {
 			observationError(&worker.Instance, err)
 			return err
@@ -207,14 +207,18 @@ func (s *Service) waitBatchWorker(ctx context.Context, manifest config.Manifest,
 	}
 }
 
-func (s *Service) resolveBatchReady(ctx context.Context, id string) ([]Instance, error) {
-	fresh, err := s.Resolve(ctx, id)
+func (s *Service) resolveBatchReady(ctx context.Context, diagnostics *Instance) ([]Instance, error) {
+	id := diagnostics.ID
+	fresh, err := s.resolveWithExpiry(ctx, id, diagnostics)
 	var missing *Failure
 	if errors.As(err, &missing) && missing.Code == "target_unresolved" {
 		// Resolve intentionally selects live targets. An exact scoped reread
 		// can retain a worker that terminated after allocation reconciliation,
 		// without interpreting an empty inventory result as termination.
 		observed, lookupErr := s.inventory(ctx, id, "", "")
+		for _, row := range observed {
+			copyObservedExpiry(diagnostics, row)
+		}
 		if lookupErr != nil {
 			return observed, lookupErr
 		}

@@ -177,6 +177,11 @@ func cloneWorkers(workers []WorkerOutcome) []WorkerOutcome {
 	b, _ := json.Marshal(workers)
 	var copy []WorkerOutcome
 	_ = json.Unmarshal(b, &copy)
+	// Preserve same-run diagnostic provenance across outcome copies, while the
+	// permanent JSON representation remains unchanged and cannot assert it.
+	for n := range copy {
+		copy[n].expiryObserved = workers[n].expiryObserved
+	}
 	return copy
 }
 
