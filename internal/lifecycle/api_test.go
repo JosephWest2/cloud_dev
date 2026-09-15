@@ -14,9 +14,9 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 )
 
-// Exercise the actual pinned SDK serializer and retryer: retries of the initial
-// dispatch retain the original client token and complete immutable request.
-func TestSDKLaunchRetryKeepsTokenAndParameters(t *testing.T) {
+// Historical serializer regression only: direct SDK retries retain the original
+// wire input. The lifecycle allocator no longer sends RunInstances.
+func TestLegacyRunInstancesSerializerRetainsTokenAndParameters(t *testing.T) {
 	s, m, p, _, _ := setupUp(t)
 	receipt, err := newReceipt(parameters(s.Scope, m, p, "smoke"))
 	if err != nil {

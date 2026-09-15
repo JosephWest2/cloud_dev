@@ -13,9 +13,12 @@ complete lifecycle workflow, failure checks and cleanup evidence. The
 [MVP 2 acceptance runbook](docs/acceptance/02-exec-logs.md) covers remote checks,
 literal arguments, complete output, detachment and recovery after teardown.
 Existing deployments need the [multi-AZ foundation upgrade](docs/setup.md#upgrade-to-the-multi-az-spot-foundation-29)
-and a real manifest-v5 export for batch launches. Scoped inventory and teardown
-remain available for older workers; legacy single-worker receipt recovery remains
-supported. Fresh live Spot acceptance and cleanup are tracked in issue #34.
+and its manifest-v5 export for existing batch recovery. **This client requires
+the expiry-capable manifest v6 from #46 for all new launches**, including explicit
+On-Demand and count one. The current foundation source still exports v5; do not
+change the version number by hand. Scoped inventory, teardown, saved logs and
+legacy receipt observation remain available. Scheduled expiry deployment and
+live acceptance are pending; continue manual `down`.
 
 The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
 Ubuntu 24.04 LTS x86-64, approved public subnets across selected AZs with public IPv4, outbound TCP 80/443,
@@ -199,6 +202,52 @@ Spot behavior and structured-output rules, and
 [foundation validation evidence](docs/acceptance/07-foundation.md) and
 [IAM boundaries](docs/iam.md).
 
+## Worker lifetime and expiry rollout
+
+Fresh requests use `up --ttl DURATION`, then config-v1 `default_ttl`, then **2h**.
+The maximum is **168h (7 days)**. Use unsigned Go durations such as `30m`,
+`1h30m`, `.5h`, or `36h`; no signs, whitespace, `7d`, zero, or unlimited values.
+An explicitly empty value is invalid. A configured duration is validated even
+when overridden. There is no environment or workload-profile TTL override.
+Invalid launch durations do not disable inventory, explicit teardown, or saved logs.
+
+```toml
+# config.toml (schema_version remains 1)
+default_ttl = "2h"
+```
+
+```sh
+# Requires the real expiry-capable v6 foundation/tag policies from #46:
+devbox up agent --count 2 --ttl 36h --json > batch.json
+devbox ls --json
+devbox down i-0123456789abcdef0
+```
+
+The preview prints effective `ttl` and exact UTC `expires_at` before dispatch.
+Every worker, root volume and Fleet in a request receives identical `CreatedAt`
+and `ExpiresAt` creation tags. The original timestamps are durably persisted
+before sending. Restart, resume, missing-capacity retries, readiness failures,
+active SSH/exec and detached work never extend expiry. At `now >= expires_at`,
+new allocation is rejected; known workers and permanent fulfillment remain
+observable. Removed or terminated workers do not become replacement capacity.
+All explicit launch overrides, including an identical `--ttl`, are rejected on
+`--resume` and `--retry-missing`. Create a new request for a different lifetime.
+
+`ls` and per-worker launch results show `expires_at` (UTC string or null) and
+`expiry_status` (`future`, `expired`, `missing`, `invalid`, `duplicate`). Inventory
+comes from AWS even after local state loss. Missing, invalid or duplicate expiry
+never hides a worker or blocks deliberate `down`. Legacy requests have no expiry
+and cannot allocate more workers; they remain inspectable and removable.
+
+Cleanup is planned every five minutes. Expiry is an eligibility boundary, not
+an exact termination guarantee; scheduling, throttling and AWS completion add
+delay. **This slice does not deploy cleanup or pass live acceptance.** The v6
+reader reserves the `cleanup` descriptor for #46; cleanup health/failure evidence
+is verified separately. Do not infer unattended readiness from a version number.
+S3 results keep their independent retention; permanent `launches/v2/` records
+and dispatch claims are retained. See the [expiry contract](docs/plans/04-expiry-contract.md)
+and [offline verification notes](docs/acceptance/43-launch-expiry.md).
+
 ## Launch, rediscover and use a group
 
 ```sh
@@ -343,7 +392,7 @@ coverage, volume verification, and the final gate status. Historical
 
 ## Run a noninteractive command
 
-Use a newly bootstrapped worker and its matching manifest v4 or v5:
+Use a newly bootstrapped worker and its matching manifest v4, v5 or v6:
 
 ```sh
 devbox exec "$first_worker" -- /usr/bin/printf '%s\n' '' 'two words' '$(id)' '--json'

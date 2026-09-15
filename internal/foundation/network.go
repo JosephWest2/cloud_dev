@@ -30,7 +30,7 @@ func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 		}
 		expectedSubnets[id] = ""
 	}
-	if m.SchemaVersion == 5 {
+	if m.SchemaVersion == 5 || m.SchemaVersion == 6 {
 		if len(m.Subnets) != len(expectedSubnets) {
 			return fail
 		}
@@ -75,7 +75,7 @@ func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 		for _, sub := range s.Subnets {
 			id := aws.ToString(sub.SubnetId)
 			zone, exists := expectedSubnets[id]
-			if !exists || seenSubnets[id] || (m.SchemaVersion == 5 && aws.ToString(sub.AvailabilityZone) != zone) || aws.ToString(sub.VpcId) != m.VPCID || aws.ToString(sub.OwnerId) != m.Account || sub.State != types.SubnetStateAvailable || !scoped(sub.Tags, m) || aws.ToBool(sub.MapPublicIpOnLaunch) {
+			if !exists || seenSubnets[id] || ((m.SchemaVersion == 5 || m.SchemaVersion == 6) && aws.ToString(sub.AvailabilityZone) != zone) || aws.ToString(sub.VpcId) != m.VPCID || aws.ToString(sub.OwnerId) != m.Account || sub.State != types.SubnetStateAvailable || !scoped(sub.Tags, m) || aws.ToBool(sub.MapPublicIpOnLaunch) {
 				return fail
 			}
 			seenSubnets[id] = true
@@ -115,7 +115,7 @@ func checkNetwork(ctx context.Context, api EC2, m config.Manifest) error {
 		valid := expected && !associated[id] && aws.ToString(a.RouteTableId) == m.RouteTableID && a.AssociationState != nil && a.AssociationState.State == types.RouteTableAssociationStateCodeAssociated
 		// A preserved legacy subnet may remain associated while excluded from
 		// the launch allowlist. Verify every selected association exactly.
-		if m.SchemaVersion == 5 && expected && (!valid || aws.ToBool(a.Main) || aws.ToString(a.GatewayId) != "") {
+		if (m.SchemaVersion == 5 || m.SchemaVersion == 6) && expected && (!valid || aws.ToBool(a.Main) || aws.ToString(a.GatewayId) != "") {
 			return fail
 		}
 		if valid {

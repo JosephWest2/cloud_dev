@@ -7,6 +7,7 @@ import (
 	"io"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
+	"github.com/JosephWest2/cloud_dev/internal/expiry"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
 )
 
@@ -18,6 +19,7 @@ type Options struct {
 	UpOptions
 }
 type Dependencies struct {
+	Clock       expiry.Clock
 	New         func(context.Context, config.Config) (*Service, error)
 	Store       *Store
 	ConfirmDown ConfirmDown
@@ -36,6 +38,9 @@ type Result struct {
 }
 
 func Run(ctx context.Context, path string, overrides config.Overrides, o Options, deps Dependencies, diagnostics io.Writer) Result {
+	if o.Command == "up" && o.Selection == nil && o.Resume == "" {
+		o.Selection = &LaunchSelection{Profile: "agent", Name: o.Name, Count: 1, OnDemand: o.OnDemand}
+	}
 	if o.Command == "down" && o.DownSelection != nil {
 		return runSelectedDown(ctx, path, overrides, *o.DownSelection, deps)
 	}
@@ -87,30 +92,14 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 				return fail(err, 1)
 			}
 		}
-		needsLaunch := true
 		if o.Resume != "" {
 			receipt, loadErr := store.Load(o.Resume)
 			if loadErr != nil {
 				return fail(loadErr, 2)
 			}
-			r.RequestID = receipt.RequestID
-			r.ReceiptPath = store.Path(receipt.RequestID)
-			needsLaunch = receipt.State == "prepared"
+			r.RequestID, r.ReceiptPath = receipt.RequestID, store.Path(receipt.RequestID)
 			for _, id := range receipt.InstanceIDs {
 				r.Instances = append(r.Instances, Instance{ID: id, State: "not_observed", SSM: "not_observed", Bootstrap: "not_observed", Readiness: "not_observed", RootDeletion: "unavailable", Volumes: []Volume{}})
-			}
-		}
-		if needsLaunch {
-			p, err = config.LoadProfile(c.ProfileFile)
-			if err != nil {
-				return fail(failure("profile_invalid", err.Error()), 2)
-			}
-			m, err = config.LoadManifest(c.Manifest, c, p)
-			if err != nil {
-				return fail(failure("manifest_invalid", err.Error()), 1)
-			}
-			if m.SchemaVersion == 5 {
-				return fail(failure("feature_unavailable", "new launches with manifest version 5 require the batch allocator and recovery integration; inventory and cleanup remain available"), 2)
 			}
 		}
 	}
@@ -122,6 +111,9 @@ func Run(ctx context.Context, path string, overrides config.Overrides, o Options
 	if err != nil {
 		return fail(err, 1)
 	}
+	serviceCopy := *service
+	service = &serviceCopy
+	service.Clock = deps.Clock
 	switch o.Command {
 	case "ls":
 		r.SchemaVersion = 2

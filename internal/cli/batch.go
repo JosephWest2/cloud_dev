@@ -55,8 +55,8 @@ func writeBatchText(w io.Writer, r lifecycle.BatchResult) error {
 	if _, err := fmt.Fprintf(w, "%s: %s\nrequest=%s requested=%d fulfilled=%d ready=%d missing=%s\n", r.Code, r.Message, r.RequestID, r.RequestedCount, r.FulfilledCount, r.ReadyCount, missing); err != nil {
 		return err
 	}
-	if r.Plan.SchemaVersion == 1 {
-		if _, err := fmt.Fprintf(w, "profile=%s region=%s market=%s base=%q group=%q template=%s/%s image=%s\n", r.Plan.Profile, r.Plan.Region, r.Plan.Market, r.Plan.BaseName, r.Plan.Group, r.Plan.Image.LaunchTemplateID, r.Plan.Image.LaunchTemplateVersion, r.Plan.Image.AMIID); err != nil {
+	if r.Plan.SchemaVersion == 1 || r.Plan.SchemaVersion == 2 {
+		if _, err := fmt.Fprintf(w, "profile=%s region=%s market=%s base=%q group=%q template=%s/%s image=%s %s\n", r.Plan.Profile, r.Plan.Region, r.Plan.Market, r.Plan.BaseName, r.Plan.Group, r.Plan.Image.LaunchTemplateID, r.Plan.Image.LaunchTemplateVersion, r.Plan.Image.AMIID, r.Plan.ExpiryPreview()); err != nil {
 			return err
 		}
 	}
@@ -66,7 +66,7 @@ func writeBatchText(w io.Writer, r lifecycle.BatchResult) error {
 		}
 	}
 	for _, worker := range r.Workers {
-		if _, err := fmt.Fprintf(w, "%s name=%q group=%q attempt=%s type=%s subnet=%s az=%s market=%s ec2=%s ssm=%s bootstrap=%s readiness=%s status=%s\n", worker.ID, worker.Name, worker.Group, worker.AttemptID, worker.Type, worker.SubnetID, worker.AvailabilityZone, worker.Market, worker.State, worker.SSM, worker.Bootstrap, worker.Readiness, worker.Status); err != nil {
+		if _, err := fmt.Fprintf(w, "%s name=%q group=%q attempt=%s type=%s subnet=%s az=%s market=%s ec2=%s ssm=%s bootstrap=%s readiness=%s status=%s expires_at=%s expiry_status=%s\n", worker.ID, worker.Name, worker.Group, worker.AttemptID, worker.Type, worker.SubnetID, worker.AvailabilityZone, worker.Market, worker.State, worker.SSM, worker.Bootstrap, worker.Readiness, worker.Status, expiryText(worker.ExpiresAt), worker.ExpiryStatus); err != nil {
 			return err
 		}
 		if worker.ObservationCode != "" || worker.ProbeCommandID != "" {

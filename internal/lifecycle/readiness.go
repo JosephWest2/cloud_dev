@@ -31,6 +31,12 @@ type SSM interface {
 // Resolve does not trust EC2 filters, including for explicit IDs. Retain matches
 // on ambiguity for recovery, but never act on an ambiguous selection.
 func (s *Service) Resolve(ctx context.Context, target string) ([]Instance, error) {
+	return s.resolveWithExpiry(ctx, target, nil)
+}
+
+// Keep diagnostic evidence before errors or live-target filtering discard rows.
+// Selection and probe authority still follow Resolve's original checks.
+func (s *Service) resolveWithExpiry(ctx context.Context, target string, diagnostics *Instance) ([]Instance, error) {
 	if !ValidTarget(target) {
 		return nil, failure("target_invalid", "use a friendly name or EC2 instance ID")
 	}
@@ -39,6 +45,11 @@ func (s *Service) Resolve(ctx context.Context, target string) ([]Instance, error
 		id, name = target, ""
 	}
 	found, err := s.inventory(ctx, id, name, "")
+	if diagnostics != nil {
+		for _, observed := range found {
+			copyObservedExpiry(diagnostics, observed)
+		}
+	}
 	if err != nil {
 		return found, err
 	}
@@ -152,7 +163,7 @@ func (s *Service) observeWithGuard(ctx context.Context, m config.Manifest, i *In
 	}
 	// A command is only dispatched after a fresh EC2 scope check. No user
 	// parameters, output destinations, or arbitrary command documents are allowed.
-	fresh, e := s.Resolve(ctx, i.ID)
+	fresh, e := s.resolveWithExpiry(ctx, i.ID, i)
 	if e != nil {
 		return e
 	}
@@ -286,7 +297,7 @@ func (s *Service) WaitReady(ctx context.Context, m config.Manifest, i *Instance,
 	}
 	last := ""
 	for attempt := 0; ; attempt++ {
-		fresh, err := s.Resolve(ctx, i.ID)
+		fresh, err := s.resolveWithExpiry(ctx, i.ID, i)
 		if err != nil {
 			observationError(i, err)
 			return err

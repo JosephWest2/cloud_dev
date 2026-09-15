@@ -45,7 +45,12 @@ type Instance struct {
 	SubnetID         string   `json:"subnet_id"`
 	AvailabilityZone string   `json:"availability_zone"`
 	HostKey          string   `json:"-"`
-	clientToken      string
+	ExpiresAt        string   `json:"expires_at,omitempty"`
+	ExpiryStatus     string   `json:"expiry_status,omitempty"`
+	// expiryObserved is same-run diagnostic provenance, never ledger authority.
+	// A missing tag on an observed row differs from an unobserved plan fallback.
+	expiryObserved bool
+	clientToken    string
 }
 
 func tagsOf(i types.Instance) map[string]string {
@@ -96,6 +101,9 @@ func record(i types.Instance) Instance {
 func inventoryTags(i types.Instance) (map[string]string, bool) {
 	tags := map[string]string{}
 	for _, tag := range i.Tags {
+		if tag.Key != nil && *tag.Key == "ExpiresAt" {
+			continue
+		}
 		if tag.Key == nil || tag.Value == nil || *tag.Key == "" {
 			return nil, false
 		}
@@ -190,6 +198,7 @@ func (s *Service) inventory(ctx context.Context, id, name, request string) ([]In
 
 func (s *Service) inventorySelection(ctx context.Context, id, name, request, group string) (found []Instance, resultErr error) {
 	found = []Instance{}
+	now := clockNow(s.Clock)
 	defer func() { sort.Slice(found, func(i, j int) bool { return found[i].ID < found[j].ID }) }()
 	in := &ec2.DescribeInstancesInput{}
 	// A generated public name differs from AWS Name. Scan the complete scope so
@@ -241,6 +250,7 @@ func (s *Service) inventorySelection(ctx context.Context, id, name, request, gro
 						continue
 					}
 					r := record(i)
+					inspectInstanceExpiry(&r, i.Tags, now)
 					if !validInventoryIdentity(i, tags) || (id != "" && r.ID != id) || (cloudName != "" && tags["Name"] != cloudName) || (request != "" && r.RequestID != request) || (group != "" && r.Group != group) {
 						invalid("inventory_invalid", "AWS inventory did not match the requested identity or naming schema; retry inspection before mutation")
 						continue
@@ -260,6 +270,7 @@ func (s *Service) inventorySelection(ctx context.Context, id, name, request, gro
 					}
 					if n, exists := seen[r.ID]; exists {
 						found[n].Volumes = mergeFleetVolumes(found[n].Volumes, r.Volumes)
+						copyObservedExpiry(&found[n], r)
 						continue
 					}
 					seen[r.ID] = len(found)
