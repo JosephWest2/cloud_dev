@@ -84,13 +84,7 @@ func DecodeCleanup(raw json.RawMessage, m Manifest) (Cleanup, error) {
 			return c, fail
 		}
 	}
-	if len(c.Evidence) > 0 {
-		var capability struct {
-			SchemaVersion int `json:"schema_version"`
-		}
-		if json.Unmarshal(c.Evidence, &capability) != nil || capability.SchemaVersion != 1 {
-			return c, fail
-		}
-	}
+	// Evidence has its own decoder: unsupported capability data must not hide
+	// the independent function/schedule diagnostics or emergency operations.
 	return c, nil
 }

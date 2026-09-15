@@ -106,6 +106,11 @@ func TestOpenTofuExport(t *testing.T) {
 		if err != nil {
 			t.Fatal("OpenTofu cleanup descriptor:", err)
 		}
+		evidence, err := config.DecodeEvidence(cleanup.Evidence, m, cleanup)
+		if err != nil {
+			t.Fatal("OpenTofu evidence descriptor:", err)
+		}
+		verifyEvidenceExport(t, m, cleanup, evidence, resources)
 		var zipDigest string
 		if err := json.Unmarshal(resources["aws_lambda_function.cleanup"]["source_code_hash"], &zipDigest); err != nil {
 			t.Fatal(err)
@@ -137,6 +142,10 @@ func TestOpenTofuExport(t *testing.T) {
 		verifySchedulerDelivery(t, targets[0].Input, cleanup)
 		verifyPlacementExport(t, m, resources)
 		expected := map[string]map[string]string{
+			"aws_iam_role.evidence":                 {"assume_role_policy": evidence.PipeRole.TrustSHA256},
+			"aws_iam_role.cleanup_health":           {"assume_role_policy": evidence.HealthRole.TrustSHA256},
+			"aws_iam_role_policy.evidence":          {"policy": evidence.PipeRole.PolicySHA256},
+			"aws_iam_role_policy.cleanup_health":    {"policy": evidence.HealthRole.PolicySHA256},
 			"aws_iam_role.cleanup":                  {"assume_role_policy": cleanup.ExecutionRole.TrustSHA256},
 			"aws_iam_role.cleanup_scheduler":        {"assume_role_policy": cleanup.SchedulerRole.TrustSHA256},
 			"aws_iam_role_policy.cleanup":           {"policy": cleanup.ExecutionRole.PolicySHA256},

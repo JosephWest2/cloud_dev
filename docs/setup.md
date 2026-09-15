@@ -507,3 +507,14 @@ cleanup-check` before planning. Follow the [scheduled-expiry migration and
 verification instructions](acceptance/46-scheduled-expiry.md); install independent
 failure evidence before enabling automatic cleanup. A matching deployment or a
 zero-error counter alone does not establish a recent successful cleanup run.
+
+### Retained cleanup evidence and health (#47)
+
+Manifest v6 now exports `cleanup.evidence` version 1: shared encrypted failure
+transport, independent Pipe-to-Logs retention, alarms and a read-only health role.
+The operator assumes that exact role only for bounded doctor checks; manual
+cleanup, explicit teardown, observation and durable results retain their independent
+operator path. Review the [cleanup recovery runbook](runbooks/cleanup.md) before
+enabling the schedule. It includes exact reads, repair procedures and the future
+#48 pre-handler/route failure demonstrations. Existing v6 exports without the
+capability cannot establish unattended health; re-export after the reviewed apply.
