@@ -94,7 +94,9 @@ func checkEvidenceRoute(ctx context.Context, clients CleanupClients, e config.Cl
 		aws.ToString(p.Source) != e.Queue.ARN ||
 		aws.ToString(p.Target) != e.Logs.ARN ||
 		aws.ToString(p.Enrichment) != "" ||
-		p.EnrichmentParameters != nil ||
+		// DescribePipe can return {} for an unused enrichment. An empty input
+		// template also means removal; any HTTP configuration remains drift.
+		(p.EnrichmentParameters != nil && (p.EnrichmentParameters.HttpParameters != nil || aws.ToString(p.EnrichmentParameters.InputTemplate) != "")) ||
 		p.SourceParameters == nil ||
 		p.SourceParameters.FilterCriteria != nil ||
 		p.SourceParameters.SqsQueueParameters == nil ||
