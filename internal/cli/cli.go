@@ -64,6 +64,12 @@ Batch launch and recovery:
   workers under one overall deadline (default 5m). Resume never replaces
   interrupted or removed workers. Separate requests may share a group.
 
+Expiry rollout (#42 contract; implementation pending):
+  Planned default_ttl=2h, up --ttl override, maximum 168h (7 days).
+  One deadline per request; active work and retries never extend it.
+  TTL flags/config and cleanup commands are not available in this slice.
+  Continue using down for manual cleanup until scheduled cleanup is verified.
+
 Scoped teardown:
   down NAME_OR_INSTANCE_ID [NAME_OR_INSTANCE_ID ...]
   down --group GROUP

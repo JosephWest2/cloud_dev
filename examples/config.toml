@@ -8,6 +8,10 @@ manifest = "deployment.json" # Relative to this config file.
 # Maximum instances per request: integer 1–100, default 10 when omitted.
 # TOML overrides the default; there is no environment or CLI override.
 max_count = 10
+# Planned expiry configuration (#43; not accepted by this contract-only release):
+# default_ttl = "2h" # up --ttl overrides; positive Go duration, maximum 168h.
+# One deadline per request; active work and retries do not extend it.
+# Manual down remains required until scheduled cleanup is deployed/verified.
 # profile_file = "agent.toml" # Optional; defaults to the embedded agent profile.
 
 # Dedicated Ed25519 private key stays local; retain its matching .pub file.
