@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Private acceptance captures and schedule-request preparation; no implicit AWS calls.
 
-Only `capture` executes a command, as an explicit argv without a shell. Never pass
+Only explicit capture/activation commands execute argv, always without a shell. Never pass
 credential commands, private keys, raw state, or secret-valued arguments to it.
 Derived identity summaries are recovery aids, never cleanup authorization.
 """
@@ -16,6 +16,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 import uuid
 
 
@@ -77,66 +78,213 @@ def init_run(args):
     return 0
 
 
+class CatchableSignals:
+    """Record the first INT/TERM/HUP; repeated signals cannot abort finalization."""
+    def __enter__(self):
+        self.received = None
+        self.originals = {}
+        for number in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+            self.originals[number] = signal.signal(number, self.handle)
+        return self
+
+    def handle(self, number, _frame):
+        if self.received is None:
+            self.received = number
+
+    def __exit__(self, *_args):
+        for number, original in self.originals.items():
+            signal.signal(number, original)
+
+
 def stop_process_group(process, sig):
     try:
         os.killpg(process.pid, sig)
     except ProcessLookupError:
         pass
     try:
-        process.wait(timeout=5)
+        process.wait(timeout=2)
     except subprocess.TimeoutExpired:
         pass
-    # The direct child may exit before descendants that ignored the first signal.
-    # Finish the entire capture group before returning control to the caller.
+    # The direct child can exit before descendants that ignored the first signal.
     try:
         os.killpg(process.pid, signal.SIGKILL)
     except ProcessLookupError:
         pass
-    process.wait()
+    process.wait(timeout=2)
+    # Wait for the remaining Linux process-group members to stop before hashing
+    # regular files that descendants inherited as stdout/stderr. Zombies cannot
+    # write; an uninterruptible live member leaves the capture unverified.
+    deadline = time.monotonic() + 2
+    while True:
+        active = False
+        for entry in Path("/proc").iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                fields = (entry / "stat").read_text().rsplit(")", 1)[1].split()
+                if int(fields[2]) == process.pid and fields[0] not in ("Z", "X"):
+                    active = True
+                    break
+            except (FileNotFoundError, ProcessLookupError, PermissionError):
+                continue
+        if not active:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.01)
 
 
-def capture(args):
+def snapshot_inputs(argv, target, cwd):
+    rewritten, snapshots = [], []
+    for argument in argv:
+        prefix = next((p for p in ("file://", "fileb://") if argument.startswith(p)), None)
+        if prefix is None:
+            rewritten.append(argument)
+            continue
+        source = Path(argument[len(prefix):])
+        if not source.is_absolute():
+            source = Path(cwd) / source
+        source = source.resolve(strict=True)
+        destination = target / ("input-%03d" % len(snapshots))
+        with destination.open("xb") as stream:
+            stream.write(source.read_bytes())
+            stream.flush()
+            os.fsync(stream.fileno())
+        snapshots.append({"source": str(source), "snapshot": destination.name,
+                          "sha256": digest(destination)})
+        rewritten.append(prefix + str(destination))
+    return rewritten, snapshots
+
+
+def capture(args, guard=None, after=None):
     run = private_directory(args.run)
     if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,79}", args.label):
         raise ValueError("capture label must be a short lowercase filename")
     argv = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
     if not argv:
         raise ValueError("capture needs an explicit command after --")
+    if args.timeout is not None and args.timeout <= 0:
+        raise ValueError("capture timeout must be positive")
     target = run / "commands" / args.label
-    target.mkdir(mode=0o700)  # Refuse to overwrite earlier evidence, even failures.
-    write_json(target / "command.json", {
-        "argv": argv, "cwd": str(Path(args.cwd).resolve()),
-        "started_at": timestamp(), "status": "started",
-    })
-    code, status = 1, "failed_to_start"
+    target.mkdir(mode=0o700)
+    sync_directory(target.parent)
+    code, status, spawned = 1, "failed_to_start", False
     stdout, stderr = target / "stdout", target / "stderr"
-    try:
-        with stdout.open("xb") as out, stderr.open("xb") as err:
-            try:
-                process = subprocess.Popen(argv, cwd=args.cwd, stdout=out, stderr=err,
-                                           start_new_session=True)
-                returncode = process.wait(timeout=args.timeout)
-                code = returncode if returncode >= 0 else 128 - returncode
-                status = "completed"
-            except subprocess.TimeoutExpired:
-                stop_process_group(process, signal.SIGTERM)
-                code, status = 124, "capture_timeout"
-            except KeyboardInterrupt:
-                if "process" in locals():
-                    stop_process_group(process, signal.SIGINT)
-                code, status = 130, "interrupted"
-            finally:
-                out.flush()
-                err.flush()
-                os.fsync(out.fileno())
-                os.fsync(err.fileno())
-    finally:
-        write_json(target / "result.json", {
-            "finished_at": timestamp(), "exit_code": code, "status": status,
-            "stdout_sha256": digest(stdout) if stdout.exists() else None,
-            "stderr_sha256": digest(stderr) if stderr.exists() else None,
-        })
-    print(f"{args.label}: exit {code}; {target}")
+    outputs, capture_errors = [], []
+    streams_stable = True
+    command_exit_code = None
+    with CatchableSignals() as signals:
+        try:
+            argv, inputs = snapshot_inputs(argv, target, args.cwd)
+            for value in getattr(args, "output_file", []):
+                path = Path(value)
+                if not path.is_absolute():
+                    path = Path(args.cwd) / path
+                path = path.resolve()
+                if path.exists():
+                    raise ValueError("capture output file already exists; choose a new case/step")
+                outputs.append(path)
+            write_json(target / "command.json", {
+                "argv": argv, "original_argv": args.argv,
+                "cwd": str(Path(args.cwd).resolve()), "inputs": inputs,
+                "started_at": timestamp(), "status": "started",
+            })
+            with stdout.open("xb") as out, stderr.open("xb") as err:
+                try:
+                    if signals.received:
+                        code, status = 128 + signals.received, "interrupted_before_dispatch"
+                    else:
+                        # All copying/persistence precedes the final UTC/hash guard.
+                        if guard is not None:
+                            guard(argv, target)
+                        if signals.received:
+                            code, status = 128 + signals.received, "interrupted_before_dispatch"
+                        else:
+                            deadline = time.monotonic() + args.timeout if args.timeout is not None else None
+                            process = subprocess.Popen(argv, cwd=args.cwd, stdout=out, stderr=err,
+                                env=getattr(args, "environment", None), start_new_session=True)
+                            spawned = True
+                            while True:
+                                if signals.received:
+                                    stop_process_group(process, signals.received)
+                                    code, status = 128 + signals.received, "interrupted"
+                                    break
+                                if deadline is not None and time.monotonic() >= deadline:
+                                    stop_process_group(process, signal.SIGTERM)
+                                    code, status = 124, "capture_timeout"
+                                    break
+                                try:
+                                    returncode = process.wait(timeout=0.05)
+                                    command_exit_code = returncode if returncode >= 0 else 128 - returncode
+                                    code, status = command_exit_code, "completed"
+                                    # A signal can arrive while wait() returns normally.
+                                    # The common shutdown below still drains descendants.
+                                    if signals.received:
+                                        code, status = 128 + signals.received, "interrupted"
+                                    break
+                                except subprocess.TimeoutExpired:
+                                    pass
+                except ValueError as failure:
+                    code, status = 2, "dispatch_rejected"
+                    err.write((str(failure) + "\n").encode())
+                finally:
+                    if spawned:
+                        try:
+                            streams_stable = stop_process_group(process, signals.received or signal.SIGTERM)
+                            if not streams_stable:
+                                capture_errors.append({"stage": "shutdown", "code": "process_group_still_running"})
+                        except (OSError, subprocess.TimeoutExpired) as failure:
+                            streams_stable = False
+                            capture_errors.append({"stage": "shutdown", "code": type(failure).__name__})
+                        if process.returncode is not None:
+                            command_exit_code = process.returncode if process.returncode >= 0 else 128 - process.returncode
+                        if signals.received:
+                            code, status = 128 + signals.received, "interrupted"
+                    for name, stream in (("stdout", out), ("stderr", err)):
+                        try:
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        except OSError as failure:
+                            capture_errors.append({"stage": name, "code": type(failure).__name__})
+        finally:
+            artifacts = []
+            for number, source in enumerate(outputs):
+                item = {"source": str(source), "present": source.exists()}
+                if source.exists():
+                    destination = target / ("output-%03d" % number)
+                    try:
+                        with destination.open("xb") as stream:
+                            stream.write(source.read_bytes())
+                            stream.flush()
+                            os.fsync(stream.fileno())
+                        item.update(snapshot=destination.name, sha256=digest(destination))
+                    except OSError as failure:
+                        item["capture_error"] = type(failure).__name__
+                        capture_errors.append({"stage": "output_artifact", "source": str(source), "code": type(failure).__name__})
+                artifacts.append(item)
+            hashes = {}
+            for name, source in (("stdout", stdout), ("stderr", stderr)):
+                try:
+                    hashes[name + "_sha256"] = digest(source) if source.exists() else None
+                except OSError as failure:
+                    hashes[name + "_sha256"] = None
+                    capture_errors.append({"stage": name + "_hash", "code": type(failure).__name__})
+            if capture_errors:
+                code, status = 1, "evidence_capture_failed"
+            result = {
+                "finished_at": timestamp(), "exit_code": code, "status": status,
+                "command_started": spawned, "command_exit_code": command_exit_code,
+                "signal": signals.received, "streams_stable": streams_stable,
+                **hashes, "output_artifacts": artifacts, "capture_errors": capture_errors,
+            }
+            if after is not None:
+                after(result)
+                code = result["exit_code"]
+            write_json(target / "result.json", result)
+        print(f"{args.label}: exit {code}; {target}", file=sys.stderr)
+        if getattr(args, "passthrough", False) and stdout.exists():
+            sys.stdout.buffer.write(stdout.read_bytes())
+            sys.stdout.buffer.flush()
     return code
 
 
@@ -181,6 +329,61 @@ def prepare_schedule(args):
     write_json(Path(args.output), update)
     print(f"Prepared {args.output}; no AWS request sent. Review the full target and diff before use.")
     return 0
+
+
+ACTIVATION_BUDGET = 45
+DISCONNECT_MARGIN = 120
+ACTIVATION_LEAD = 180  # 45s bounded CLI + shutdown allowance + 120s disconnect.
+
+
+def activate_schedule(args):
+    if not re.fullmatch(r"[0-9a-f]{64}", args.sha256):
+        raise ValueError("activation requires the reviewed lowercase SHA-256")
+    started = {}
+
+    def guard(argv, target):
+        input_arg = argv[argv.index("--cli-input-json") + 1]
+        snapshot = Path(input_arg.removeprefix("file://"))
+        if digest(snapshot) != args.sha256:
+            raise ValueError("reviewed schedule bytes changed; no dispatch")
+        request = json.loads(snapshot.read_text())
+        start_value = request.get("StartDate")
+        if request.get("State") != "ENABLED" or start_value is None:
+            raise ValueError("activation requires an enabled request with StartDate")
+        schedule_update(request, "ENABLED", start_value)
+        start = dt.datetime.fromisoformat(start_value.replace("Z", "+00:00"))
+        # No input-copy, disk write, credential loading, or user review after this
+        # final sample and before the bounded command starts.
+        checked = utc_now()
+        if (start - checked).total_seconds() < ACTIVATION_LEAD:
+            raise ValueError("activation needs 180 seconds of fresh lead; no dispatch")
+        started.update(start=start, checked=checked)
+
+    def after(result):
+        result["reviewed_input_sha256"] = args.sha256
+        if not result["command_started"]:
+            result["activation"] = "not_dispatched"
+            return
+        result["dispatch_checked_at"] = timestamp(started["checked"])
+        result["first_occurrence"] = timestamp(started["start"])
+        remaining = (started["start"] - utc_now()).total_seconds()
+        result["disconnect_margin_seconds"] = remaining
+        if result["exit_code"] == 0 and remaining >= DISCONNECT_MARGIN:
+            result["activation"] = "acknowledged_pending_readback"
+        else:
+            # A failed/slow/interrupted CLI can follow AWS acceptance. Never send
+            # a second update automatically or tell the user it is safe to leave.
+            result["activation"] = "outcome_unknown_reconcile_before_disconnect"
+            if result["exit_code"] == 0:
+                result["exit_code"], result["status"] = 1, "activation_margin_lost"
+
+    args.argv = [args.aws_executable, "--profile", args.profile, "--region", args.region,
+                 "--cli-connect-timeout", "5", "--cli-read-timeout", "15", "--no-cli-pager",
+                 "scheduler", "update-schedule", "--cli-input-json", "file://" + str(Path(args.input).resolve())]
+    args.timeout = ACTIVATION_BUDGET
+    args.output_file = []
+    args.environment = dict(os.environ, AWS_MAX_ATTEMPTS="1", AWS_RETRY_MODE="standard")
+    return capture(args, guard=guard, after=after)
 
 
 IDENTITY_PATTERNS = {
@@ -240,6 +443,8 @@ def main():
     cap.add_argument("--cwd", default=os.getcwd())
     cap.add_argument("--timeout", type=float, default=None,
                      help="optional outer timeout in seconds; preserve partial output")
+    cap.add_argument("--passthrough", action="store_true", help="replay captured stdout after finalization")
+    cap.add_argument("--output-file", action="append", default=[], help="snapshot an explicit command output file")
     cap.add_argument("argv", nargs=argparse.REMAINDER)
     cap.set_defaults(run_command=capture)
     schedule = commands.add_parser("prepare-schedule")
@@ -248,6 +453,16 @@ def main():
     schedule.add_argument("--state", choices=("ENABLED", "DISABLED"), required=True)
     schedule.add_argument("--start-date")
     schedule.set_defaults(run_command=prepare_schedule)
+    activation = commands.add_parser("activate-schedule")
+    activation.add_argument("--run", required=True)
+    activation.add_argument("--label", required=True)
+    activation.add_argument("--cwd", default=os.getcwd())
+    activation.add_argument("--input", required=True)
+    activation.add_argument("--sha256", required=True)
+    activation.add_argument("--profile", required=True)
+    activation.add_argument("--region", required=True)
+    activation.add_argument("--aws-executable", default="aws")
+    activation.set_defaults(run_command=activate_schedule)
     ids = commands.add_parser("identities")
     ids.add_argument("--output", required=True)
     ids.add_argument("sources", nargs="+")

@@ -3,8 +3,8 @@
 **Preparation only; every live case is pending.** This researched protocol
 accompanies [the expiry acceptance ledger](04-expiry.md). Its AWS mechanisms have
 been checked against official documentation; actual outcomes have not been
-observed. Match the final #47 exported fields and review complete restoration
-artifacts before the authorized live checkpoint. No AWS calls were made while
+observed. The #47 interface is merged at `14bb326`; match actual exported IDs and review
+complete restoration artifacts before the authorized live checkpoint. No AWS calls were made while
 preparing this protocol.
 
 ## Recommendations and the important distinction
@@ -15,13 +15,12 @@ preparing this protocol.
 4. **Lambda async pre-handler failure:** reserved concurrency zero is explicitly documented to send **new asynchronous events** directly to the configured OnFailure destination, without retries or function triggering. Restore concurrency afterward; events already delivered to the destination are not automatically replayed. [Lambda retained invocation records](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-retain-records.html)
 5. **Consumer failure:** prefer `StopPipe`, verify actual `STOPPED`, then generate one new correlated async failure. Observe backlog and failing doctor; `StartPipe`, verify `RUNNING`, and require the original failure record to arrive in retained Logs. This exercises stopped-consumer detection and recovery with fewer moving parts than IAM breakage. Stop/start are supported reversible operations on the exact pipe. [StopPipe](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_StopPipe.html), [StartPipe](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_StartPipe.html)
 
-Run these while the operator remains online, preferably **before creating acceptance workers or after their verified teardown**. Freeze the scope inventory and verify there are no eligible workers to clean up if a control-plane change propagates late. None of these commands allocates a worker or changes any worker tags, TTLs, instances, volumes, Fleet requests, results, or launch ledgers. The separate three-worker/offline campaign remains mandatory; these tests do not replace it.
+Run the first Case B canary before H1 health and any workers. Run the remaining cases while the operator is online after verified worker teardown, or with independently confirmed future workers only. Freeze the scope inventory and verify there are no eligible workers to clean up if a control-plane change propagates late. None of these commands allocates a worker or changes any worker tags, TTLs, instances, volumes, Fleet requests, results, or launch ledgers. The separate three-worker/offline campaign remains mandatory; these tests do not replace it.
 
 ## Current implementation handoff
 
-These paths were checked against the in-progress #47 implementation during
-preflight. **Final #47 integration and exported-manifest verification remain
-pending.** Bind actual IDs from the final export instead of guessing names:
+These paths match merged #47 at `14bb326`. Live exported-manifest verification
+remains pending. Bind actual IDs from the final export instead of guessing names:
 
 | Resource | Manifest JSON path |
 |---|---|
@@ -47,7 +46,7 @@ The #46 Scheduler target has **literal** `<aws.scheduler.*>` transport keywords;
 
 ## Setup and durable capture (commands for the later approved run)
 
-These are parameterized, staged command fragments, not an unattended script. Use the main acceptance helper to capture the actual commands and outcomes when executing each approved stage. Use a fresh private directory for each attempt; never overwrite a previous attempt's originals. `MANIFEST` must be the actual v6 export JSON, not the outer `tofu output -json` map. `SETUP_PROFILE` is the already authorized setup identity; the operator/health roles intentionally lack these mutation permissions. Do not add permissions to the operator to run the campaign.
+These are staged fragments, not an unattended script. Source the actual wrapper below: every awsc call invokes the capture executable with explicit AWS argv. Captures use unique case/step labels, preserve stderr/status/times/hashes, snapshot file:// and fileb:// inputs, and optionally snapshot output files. Redirected stdout files are convenience copies; immutable commands/ captures are authoritative. Never try to execute a shell function through capture. Use a fresh private directory for each attempt; never overwrite a previous attempt's originals. `MANIFEST` must be the actual v6 export JSON, not the outer `tofu output -json` map. `SETUP_PROFILE` is the already authorized setup identity; the operator/health roles intentionally lack these mutation permissions. Do not add permissions to the operator to run the campaign.
 
 ```bash
 set -euo pipefail
@@ -55,7 +54,10 @@ umask 077
 : "${MANIFEST:?path to final exported manifest}"
 : "${SETUP_PROFILE:?approved setup profile name}"
 RUN_UTC=$(date -u +%Y%m%dT%H%M%SZ)
-CAMPAIGN_DIR="$HOME/.local/state/devbox/acceptance/04-expiry/$RUN_UTC/failure-campaign"
+: "${ACCEPTANCE_RUN:?existing private durable acceptance run}"
+: "${acceptance_repo:?final tested repository path}"
+ACCEPTANCE_HELPER="$acceptance_repo/scripts/expiry-acceptance.py"
+CAMPAIGN_DIR="$ACCEPTANCE_RUN/failure-$RUN_UTC-$(python3 -c 'import uuid; print(uuid.uuid4().hex[:8])')"
 mkdir -p "$CAMPAIGN_DIR"
 test ! -e "$CAMPAIGN_DIR/manifest.json"
 cp -- "$MANIFEST" "$CAMPAIGN_DIR/manifest.json"
@@ -79,24 +81,22 @@ PIPE_ARN=$(jq -er '.cleanup.evidence.pipe.arn' "$MANIFEST")
 FAILURE_LOG_GROUP=$(jq -er '.cleanup.evidence.logs.name' "$MANIFEST")
 FAILURE_STREAM=$(jq -er '.cleanup.evidence.stream' "$MANIFEST")
 HANDLER_LOG_GROUP=$(jq -er '.cleanup.logs.name' "$MANIFEST")
-export AWS_PAGER='' AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=2
-awsc() {
-  timeout 45s aws --profile "$SETUP_PROFILE" --region "$REGION" \
-    --cli-connect-timeout 5 --cli-read-timeout 15 "$@"
-}
-awsc sts get-caller-identity > "$CAMPAIGN_DIR/caller.json"
+export AWS_PAGER='' AWS_RETRY_MODE=standard AWS_MAX_ATTEMPTS=1
+source "$acceptance_repo/scripts/expiry-failure-capture.sh"
+begin_failure_case baseline
+awsc step-01 sts get-caller-identity > "$CAMPAIGN_DIR/caller.json"
 test "$(jq -r '.Account' "$CAMPAIGN_DIR/caller.json")" = "$ACCOUNT"
-awsc scheduler get-schedule --name "$SCHEDULE_NAME" --group-name "$SCHEDULE_GROUP" > "$CAMPAIGN_DIR/schedule.original.json"
-awsc iam get-role --role-name "$SCHED_ROLE_NAME" > "$CAMPAIGN_DIR/scheduler-role.original.json"
-awsc iam get-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" > "$CAMPAIGN_DIR/scheduler-policy.response.original.json"
-awsc lambda get-function-configuration --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/function.original.json"
-awsc lambda get-function-concurrency --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/concurrency.original.json"
-awsc lambda get-function-event-invoke-config --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/async.original.json"
-awsc pipes describe-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.original.json"
-awsc sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribute-names All > "$CAMPAIGN_DIR/queue.original.json"
+awsc step-02 scheduler get-schedule --name "$SCHEDULE_NAME" --group-name "$SCHEDULE_GROUP" > "$CAMPAIGN_DIR/schedule.original.json"
+awsc step-03 iam get-role --role-name "$SCHED_ROLE_NAME" > "$CAMPAIGN_DIR/scheduler-role.original.json"
+awsc step-04 iam get-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" > "$CAMPAIGN_DIR/scheduler-policy.response.original.json"
+awsc step-05 lambda get-function-configuration --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/function.original.json"
+awsc step-06 lambda get-function-concurrency --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/concurrency.original.json"
+awsc step-07 lambda get-function-event-invoke-config --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/async.original.json"
+awsc step-08 pipes describe-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.original.json"
+awsc step-09 sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribute-names All > "$CAMPAIGN_DIR/queue.original.json"
 ```
 
-Capture original `describe-alarms`, baseline doctor output/exit status, full function/config digests, recent terminal summary, queue counts and finite-window logs too. Before proceeding, assert all returned ARNs equal the manifest; both failure destinations equal `QUEUE_ARN`; pipe source/target/role/template match the manifest; pipe is actually RUNNING; concurrency is 1; queue has no known backlog; no unrelated actor is changing these resources. Capture all role inline/attached policy inventory when validating the baseline. Expected drift during injection must not be disguised by editing the manifest.
+Capture original `describe-alarms`, baseline doctor output/exit status, full function/config digests, queue counts and finite-window logs too. For the first worker-free Case B canary, missing failure stream/recent success and unsettled alarms are expected pending states; verify actual configuration/role/route pins before invoking it. Restore afterward, then require recent genuine scheduled completion and full doctor health before workers. Later failure cases start from that established healthy baseline. Before proceeding, assert all returned ARNs equal the manifest; both failure destinations equal `QUEUE_ARN`; pipe source/target/role/template match the manifest; pipe is actually RUNNING; concurrency is 1; queue has no known backlog; no unrelated actor is changing these resources. Capture all role inline/attached policy inventory when validating the baseline. Expected drift during injection must not be disguised by editing the manifest.
 
 GetRolePolicy may represent the policy as a document or URL-encoded text depending on client handling. Normalize only for editing, preserving the complete original response separately; do not use `unquote_plus`, which changes literal `+`. [GetRolePolicy CLI](https://docs.aws.amazon.com/cli/latest/reference/iam/get-role-policy.html)
 
@@ -127,41 +127,54 @@ Schedule updates replace omitted fields with defaults. Always mutate a **full co
 
 ## Restoration must exist before the first mutation
 
-Save a standalone `restore.sh` in the durable directory, together with the profile name, manifest and paths above (no credentials). It must reconstruct variables from those files, acquire the same local campaign lock, and perform these operations even after a failed command:
-
-1. Restore `schedule.parked.json` first: original full target/config, temporarily DISABLED. Do not delete/recreate anything.
-2. If policy injection was armed, restore the **complete** `scheduler-policy.original.json` with `iam put-role-policy`. Preserve the Scheduler trust document throughout.
-3. If an optional Pipe policy injection was armed, restore its complete captured original too. Restore the original Pipe desired state using start/stop, and poll its **CurrentState**, not only the API acknowledgment.
-4. Keep the zero-concurrency guard until already issued test attempts have settled. With captured Scheduler age 300 and Lambda age 300/timeout 180, use a 600-second quiescence interval after parking, capture the failure records/metrics, and extend only as an explicitly diagnosed recovery step. Do not assume disabling a schedule cancels already accepted asynchronous requests or in-flight retries.
-5. Restore concurrency exactly: `put-function-concurrency --reserved-concurrent-executions N` if the original response had `ReservedConcurrentExecutions`; otherwise `delete-function-concurrency`. The reviewed baseline requires 1, but recovery must not silently invent an original setting. [Get concurrency](https://docs.aws.amazon.com/cli/latest/reference/lambda/get-function-concurrency.html), [Delete concurrency](https://docs.aws.amazon.com/cli/latest/reference/lambda/delete-function-concurrency.html)
-6. Only after those succeed, restore `schedule.restore.json` including its **original** state and dates. If restoration cannot complete, leave the schedule parked, retain originals, and produce a conspicuous `RESTORE_FAILED` record with exact commands still needed; do not report healthy. Never automatically enable a schedule whose original state was DISABLED.
-7. Read back policy/config/route and compare semantic originals; ignore only output timestamps/revision metadata changed by the APIs. Restore the normal doctor checks and wait for a genuinely new successful scheduled terminal summary where the approved original state is ENABLED.
-
-Core restoration commands:
+Create the saved recovery entry point after all originals above have been captured
+and checked, before the first mutation:
 
 ```bash
-awsc scheduler update-schedule --cli-input-json "file://$CAMPAIGN_DIR/schedule.parked.json"
-awsc iam put-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" \
-  --policy-document "file://$CAMPAIGN_DIR/scheduler-policy.original.json"
-# Restore Pipe original state; require original RUNNING for these campaign cases.
-awsc pipes start-pipe --name "$PIPE_NAME"
-# After finite settling, restore the captured concurrency rather than a default.
-if jq -e 'has("ReservedConcurrentExecutions")' "$CAMPAIGN_DIR/concurrency.original.json" >/dev/null; then
-  ORIGINAL_CONCURRENCY=$(jq -er '.ReservedConcurrentExecutions' "$CAMPAIGN_DIR/concurrency.original.json")
-  awsc lambda put-function-concurrency --function-name "$FUNCTION_ARN" \
-    --reserved-concurrent-executions "$ORIGINAL_CONCURRENCY"
-else
-  awsc lambda delete-function-concurrency --function-name "$FUNCTION_ARN"
-fi
-# Perform only if every required earlier restore/readback succeeded.
-awsc scheduler update-schedule --cli-input-json "file://$CAMPAIGN_DIR/schedule.restore.json"
+prepare_failure_restore
+arm_failure_restore
 ```
 
-Arm per-resource restoration markers **before** each mutation, since a client timeout does not prove the mutation failed. Install `EXIT`, `INT`, `TERM`, and `HUP` handling that runs the saved restore script without recursively invoking itself; aggregate restore errors instead of stopping at the first one. A shell trap cannot survive power loss or SIGKILL. Therefore these failure tests happen while online, originals persist on disk, and the exact standalone restore command belongs in the operator handoff. A temporary one-time schedule bounds test production even if the local session is interrupted; it does not automatically restore concurrency or schedule configuration. Do not claim otherwise.
+The sourced functions copy this exact wrapper/helper into the durable campaign,
+write a standalone executable restore.sh with only scoped names/paths, and arm
+EXIT/INT/TERM/HUP recovery. The active campaign holds the local lock; its trap
+releases it before the recovery process acquires it. Repeated catchable signals
+cannot interrupt recovery. Another live campaign holding that lock prevents
+concurrent repairs. After shell loss, run the saved restore.sh directly.
+
+Recovery attempts to park the full original schedule first, restores any armed
+Scheduler policy and Pipe state, then keeps concurrency zero for the bounded
+600-second quiescence interval after a successful park. It restores the captured
+concurrency (or deletes the setting if originally absent), and captures schedule,
+concurrency and Pipe readbacks. Failed repairs do not suppress later independent
+steps; failed parking prevents removal of the concurrency guard. Every command,
+including denied repair calls, has its own immutable capture.
+
+**Recovery deliberately leaves the schedule parked.** The result is either
+RESTORE_FAILED or RESTORE_PARKED_REVIEW_REQUIRED; neither claims health or normal
+schedule restoration. Inspect the archived readbacks, exact policy bytes, actual
+Pipe CurrentState and original settings before the separately reviewed final
+normal-schedule update. Poll bounded transitions and keep unique captures. Only
+when every required repair/readback agrees may the full schedule.restore.json
+be sent through awsc; its original state/dates must remain intact. Never enable
+an originally disabled schedule. Capture a later genuine scheduled success and
+normal doctor/alarms after the approved enabled configuration is restored.
+
+Arm the per-resource .armed marker **before** each mutation because a timeout may
+follow AWS acceptance. Normal recovery does not erase markers, originals, errors,
+or failure messages. If a repair cannot finish, the durable result and exact
+commands remain available; stop and diagnose rather than silently claiming a
+repaired deployment. SIGKILL, host suspension, kernel/process failures or power
+loss cannot be repaired by shell traps. Keep these tests online and record any
+interruption as unresolved until independently reconciled.
 
 Do not replay destination messages into cleanup during recovery: the Pipe should drain them to retained Logs. Never purge the queue, delete messages manually, delete log streams/groups, shorten retention, delete/recreate the Pipe, or replace failed-event logs with a later success.
 
 ## Case A: exact-role denied Scheduler delivery
+
+```bash
+begin_failure_case denied-delivery
+```
 
 Start from the captured, healthy baseline. Park the schedule using the full copy and allow prior work to settle. Generate a policy that adds exactly one statement; preserve all prior statements and use the same inline policy name:
 
@@ -170,19 +183,19 @@ jq --arg f "$FUNCTION_ARN" '
   .Statement |= (if type == "array" then . else [.] end) |
   .Statement += [{Sid:"Acceptance48DenyCleanupInvoke",Effect:"Deny",
                  Action:"lambda:InvokeFunction",Resource:$f}]
-' "$CAMPAIGN_DIR/scheduler-policy.original.json" > "$CAMPAIGN_DIR/scheduler-policy.denied.json"
+' "$CAMPAIGN_DIR/scheduler-policy.original.json" > "$CASE_DIR/scheduler-policy.denied.json"
 touch "$CAMPAIGN_DIR/restore-scheduler-policy.armed"
-awsc iam put-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" \
-  --policy-document "file://$CAMPAIGN_DIR/scheduler-policy.denied.json"
-awsc iam get-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" \
-  > "$CAMPAIGN_DIR/scheduler-policy.injected.json"
+awsc step-16 iam put-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" \
+  --policy-document "file://$CASE_DIR/scheduler-policy.denied.json"
+awsc step-17 iam get-role-policy --role-name "$SCHED_ROLE_NAME" --policy-name "$SCHED_POLICY" \
+  > "$CASE_DIR/scheduler-policy.injected.json"
 ```
 
 Verify the trust is unchanged and SQS SendMessage still allowed; do not replace the policy with a Deny-only document. IAM is eventually consistent, so successful readback is not a propagation guarantee. Allow a bounded settling period and use the actual delivery result as the assertion. A 120-second settling allowance is a campaign choice, not an AWS guarantee. [IAM eventual consistency](https://docs.aws.amazon.com/IAM/latest/UserGuide/troubleshoot.html)
 
 Prepare one attempt on the **same schedule** using the complete captured input: copy the full original update, set `ScheduleExpression=at(T)` at a future UTC minute, timezone UTC, `State=ENABLED`, `ActionAfterCompletion=NONE`, retaining the complete original Target/DLQ/role/retries/input. The existing schedule ARN and group remain unchanged. An already approved finite existing schedule window is also usable, but may generate multiple events. No new schedule, role, function or queue is needed.
 
-Concrete update, with the reviewed `CASE_AT_UTC` supplied as `YYYY-MM-DDTHH:MM:SS` (UTC, no trailing Z), sufficiently in the future for the controls to settle. Set `CASE_BASE` to `schedule.parked.json` for A or `schedule.sync-zero.parked.json` for A2. The original StartDate/EndDate stay captured and are ignored by the temporary `at` expression; the final restoration recovers them exactly.
+Concrete update, with the reviewed `CASE_AT_UTC` supplied as `YYYY-MM-DDTHH:MM:SS` (UTC, no trailing Z), sufficiently in the future for the controls to settle. Set `CASE_BASE` to the absolute captured `schedule.parked.json` for A or the current case's `schedule.sync-zero.parked.json` for A2. The original StartDate/EndDate stay captured and are ignored by the temporary `at` expression; the final restoration recovers them exactly.
 
 ```bash
 : "${CASE_AT_UTC:?future UTC one-time instant from approved timing helper}"
@@ -191,12 +204,12 @@ jq --arg at "$CASE_AT_UTC" '
   .ScheduleExpression = ("at(" + $at + ")") |
   .ScheduleExpressionTimezone = "UTC" |
   .State = "ENABLED" | .ActionAfterCompletion = "NONE"
-' "$CASE_BASE" > "$CAMPAIGN_DIR/schedule.case.once.json"
+' "$CASE_BASE" > "$CASE_DIR/schedule.case.once.json"
 touch "$CAMPAIGN_DIR/restore-schedule.armed"
-awsc scheduler update-schedule --cli-input-json "file://$CAMPAIGN_DIR/schedule.case.once.json" \
-  > "$CAMPAIGN_DIR/schedule.case.update.json"
-awsc scheduler get-schedule --name "$SCHEDULE_NAME" --group-name "$SCHEDULE_GROUP" \
-  > "$CAMPAIGN_DIR/schedule.case.readback.json"
+awsc step-18 scheduler update-schedule --cli-input-json "file://$CASE_DIR/schedule.case.once.json" \
+  > "$CASE_DIR/schedule.case.update.json"
+awsc step-19 scheduler get-schedule --name "$SCHEDULE_NAME" --group-name "$SCHEDULE_GROUP" \
+  > "$CASE_DIR/schedule.case.readback.json"
 ```
 
 Required retained-record predicates:
@@ -211,14 +224,18 @@ Restore the whole original policy after capturing the event. `TargetErrorCount` 
 
 ## Case A2: strict Scheduler retry exhaustion without handler startup
 
+```bash
+begin_failure_case exhaustion
+```
+
 Use this when #48 literally requires exhausted retries. Start with the original Scheduler policy restored; leave no Deny in place. Park the schedule, then set and read back reserved concurrency zero. Temporarily use a universal synchronous target, preserving the same RoleArn, DeadLetterConfig and RetryPolicy:
 
 ```bash
 touch "$CAMPAIGN_DIR/restore-concurrency.armed"
-awsc lambda put-function-concurrency --function-name "$FUNCTION_ARN" --reserved-concurrent-executions 0
-awsc lambda get-function-concurrency --function-name "$FUNCTION_ARN" > "$CAMPAIGN_DIR/concurrency.zero.json"
-jq -e '.ReservedConcurrentExecutions == 0' "$CAMPAIGN_DIR/concurrency.zero.json" >/dev/null
-python3 - "$CAMPAIGN_DIR" "$FUNCTION_ARN" <<'PY'
+awsc step-20 lambda put-function-concurrency --function-name "$FUNCTION_ARN" --reserved-concurrent-executions 0
+awsc step-21 lambda get-function-concurrency --function-name "$FUNCTION_ARN" > "$CASE_DIR/concurrency.zero.json"
+jq -e '.ReservedConcurrentExecutions == 0' "$CASE_DIR/concurrency.zero.json" >/dev/null
+python3 - "$CAMPAIGN_DIR" "$FUNCTION_ARN" "$CASE_DIR" <<'PY'
 import json, pathlib, sys
 p = pathlib.Path(sys.argv[1]); f = sys.argv[2]
 u = json.loads((p/'schedule.parked.json').read_text())
@@ -228,7 +245,7 @@ t['Arn'] = 'arn:aws:scheduler:::aws-sdk:lambda:invoke'
 t['Input'] = json.dumps({'FunctionName': f, 'InvocationType': 'RequestResponse',
                          'Payload': payload}, separators=(',', ':'))
 # json.dumps does not HTML-escape literal Scheduler angle brackets.
-(p/'schedule.sync-zero.parked.json').write_text(json.dumps(u)+'\n')
+(pathlib.Path(sys.argv[3])/'schedule.sync-zero.parked.json').write_text(json.dumps(u)+'\n')
 PY
 ```
 
@@ -242,18 +259,27 @@ Keep concurrency zero until the one-time attempts settle and the schedule is par
 
 ## Case B: Lambda asynchronous failure before the handler starts
 
+Run this worker-free canary before H1 full health: the Pipe must create its fixed
+failures stream before doctor can verify it. Reuse the actual case evidence later
+in the acceptance matrix; do not generate a second event just to fill a row.
+
+```bash
+begin_failure_case async-prehandler
+```
+
 Keep the full original schedule parked to make this a single controlled direct async invocation. This is **live destination-route evidence**, not the scheduled/offline worker proof. An actual normal Scheduler tick while concurrency is zero is a valid additional end-to-end variation: templated Scheduler invokes Lambda asynchronously. [Scheduler with Lambda](https://docs.aws.amazon.com/lambda/latest/dg/with-eventbridge-scheduler.html)
 
 Set/read back concurrency zero as above. Verify `get-function-event-invoke-config` still has the original OnFailure exact queue, maximum age 300 and retry attempts 0. Leave function code, execution role, environment, trust and SQS SendMessage intact. Create one unique, valid correlation-only input:
 
 ```bash
-CASE_ID="a48-async-$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
-jq -n --arg id "$CASE_ID" '{schema_version:1,execution_id:$id}' > "$CAMPAIGN_DIR/async.payload.json"
-date -u +%FT%TZ > "$CAMPAIGN_DIR/async.started.utc"
-awsc lambda invoke --function-name "$FUNCTION_ARN" --invocation-type Event \
-  --payload "fileb://$CAMPAIGN_DIR/async.payload.json" \
-  "$CAMPAIGN_DIR/async.invoke.payload" > "$CAMPAIGN_DIR/async.invoke.response.json"
-jq -e '.StatusCode == 202' "$CAMPAIGN_DIR/async.invoke.response.json" >/dev/null
+# CASE_ID and CASE_DIR come from begin_failure_case; Case C reuses these
+# payload/invoke lines in its own fresh case, without changing its case directory.
+jq -n --arg id "$CASE_ID" '{schema_version:1,execution_id:$id}' > "$CASE_DIR/async.payload.json"
+date -u +%FT%TZ > "$CASE_DIR/async.started.utc"
+awsc step-22 --capture-output "$CASE_DIR/async.invoke.payload" lambda invoke --function-name "$FUNCTION_ARN" --invocation-type Event \
+  --payload "fileb://$CASE_DIR/async.payload.json" \
+  "$CASE_DIR/async.invoke.payload" > "$CASE_DIR/async.invoke.response.json"
+jq -e '.StatusCode == 202' "$CASE_DIR/async.invoke.response.json" >/dev/null
 ```
 
 `202` proves acceptance only. Require the retained Logs envelope with body `requestPayload.execution_id == CASE_ID`, matching `requestContext.functionArn` (allow its actual `$LATEST` qualifier), nonempty request ID, failure condition and timestamp. Save `approximateInvokeCount`, response context and payload exactly as returned. AWS does not promise a specific condition/reason string for this bypass in the cited guidance; do not hardcode the example's `RetriesExhausted`/count 3 as this case's expectation.
@@ -266,59 +292,38 @@ For the normal Scheduler-tick variant, distinguish envelopes by structure: Sched
 
 ## Case C: stopped consumer, real backlog, and recovery of the original event
 
+```bash
+begin_failure_case pipe-stopped
+```
+
 Start with an empty, healthy route, parked schedule, and concurrency zero. Stop the exact Pipe and poll until **CurrentState and DesiredState are STOPPED** before producing a fresh Case B event with a new case ID:
 
 ```bash
 touch "$CAMPAIGN_DIR/restore-pipe.armed"
-awsc pipes stop-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.stop.response.json"
+awsc step-23 pipes stop-pipe --name "$PIPE_NAME" > "$CASE_DIR/pipe.stop.response.json"
 # Poll describe-pipe every 10 seconds, at most 180 seconds, saving every response.
-awsc pipes describe-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.stopped.json"
-jq -e '.CurrentState == "STOPPED" and .DesiredState == "STOPPED"' "$CAMPAIGN_DIR/pipe.stopped.json" >/dev/null
+awsc step-24 pipes describe-pipe --name "$PIPE_NAME" > "$CASE_DIR/pipe.stopped.json"
+jq -e '.CurrentState == "STOPPED" and .DesiredState == "STOPPED"' "$CASE_DIR/pipe.stopped.json" >/dev/null
 # Produce exactly one new async event using Case B, with a distinct CASE_ID.
-awsc sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribute-names All > "$CAMPAIGN_DIR/queue.stopped.json"
+awsc step-25 sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribute-names All > "$CASE_DIR/queue.stopped.json"
 ```
 
 Require new queue backlog relative to the empty baseline (`ApproximateNumberOfMessages > 0`; also record not-visible/delayed), preserved failure record absent from the fixed log stream while stopped, and doctor `cleanup_evidence_route` failure. Save exact stopped state and StateReason if supplied. Approximate queue counts may take at least a minute to become consistent after producers stop; use repeated bounded observations, not one zero count as proof of emptiness. [GetQueueAttributes consistency](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/APIReference/API_GetQueueAttributes.html)
 
-Run doctor using the final #48 command/config convention and retain its nonzero exit status. Current #47 rejects either non-RUNNING state or any queue backlog. Capture the named queue-visible/backlog alarms, which should eventually enter ALARM; the age alarm needs a message older than 300 seconds. A deliberately stopped Pipe has no execution, so **do not require `ExecutionFailed` or `TargetStageFailed` to increase**. Those alarms test errors during execution, not administrative stop.
+Run doctor using the final #48 command/config convention and retain its nonzero exit status. Merged #47 rejects either non-RUNNING state or any queue backlog. Capture the named queue-visible/backlog alarms, which should eventually enter ALARM; the age alarm needs a message older than 300 seconds. A deliberately stopped Pipe has no execution, so **do not require `ExecutionFailed` or `TargetStageFailed` to increase**. Those alarms test errors during execution, not administrative stop.
 
 Repair:
 
 ```bash
-awsc pipes start-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.start.response.json"
+awsc step-26 pipes start-pipe --name "$PIPE_NAME" > "$CASE_DIR/pipe.start.response.json"
 # Poll at 10-second intervals up to 180 seconds for actual RUNNING.
-awsc pipes describe-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.restarted.json"
-jq -e '.CurrentState == "RUNNING" and .DesiredState == "RUNNING"' "$CAMPAIGN_DIR/pipe.restarted.json" >/dev/null
+awsc step-27 pipes describe-pipe --name "$PIPE_NAME" > "$CASE_DIR/pipe.restarted.json"
+jq -e '.CurrentState == "RUNNING" and .DesiredState == "RUNNING"' "$CASE_DIR/pipe.restarted.json" >/dev/null
 ```
 
 Then require the **same case ID** in retained Logs, original failure timestamp and SQS `SentTimestamp` predating restart, exact queue/Pipe ARNs, and a source `messageId`. Record CloudWatch `eventId`, log stream, timestamp and ingestion time. Repeated records with the same message ID are delivery duplicates; retain them. After delivery, observe all three queue counts reaching zero and eventual alarm/doctor recovery. A later clean summary is an additional recovery record and must not overwrite the original failure envelope.
 
 Avoid `sqs receive-message` during this test: it becomes a competing consumer and changes visibility/receive counts. Let the Pipe recover the original. SQS messages are hidden when read, deleted after successful processing, and become available again after failed processing and visibility expiration. [Pipes SQS source](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-pipes-sqs.html)
-
-### Optional stronger broken-target case
-
-Only if the acceptance gate specifically requires a failed Pipe target call, use the same existing Pipe policy and append Deny for `logs:PutLogEvents` on exactly `FAILURE_LOG_GROUP_ARN:log-stream:failures`. Capture and restore the full Pipe policy with the same procedure as Case A; preserve trust, SQS receive/delete/get attributes and Logs stream creation. Generate one new real pre-handler failure while the Pipe is RUNNING. Require backlog plus actual target/execution failure telemetry or a failed/stopped state, then restore the whole policy and start only if necessary. Do not deny Logs access to cleanup, health or account-wide resources.
-
-Example injection preparation after capturing `pipe-policy.original.json` with the same robust GetRolePolicy decoder:
-
-```bash
-PIPE_ROLE_ARN=$(jq -er '.cleanup.evidence.pipe_role.arn' "$MANIFEST")
-PIPE_ROLE_NAME=${PIPE_ROLE_ARN##*/}
-PIPE_POLICY=$(jq -er '.cleanup.evidence.pipe_role.policy_name' "$MANIFEST")
-FAILURE_STREAM_ARN="$(jq -er '.cleanup.evidence.logs.arn' "$MANIFEST"):log-stream:$FAILURE_STREAM"
-jq --arg a "$FAILURE_STREAM_ARN" '
-  .Statement |= (if type == "array" then . else [.] end) |
-  .Statement += [{Sid:"Acceptance48DenyFailureWrite",Effect:"Deny",
-                 Action:"logs:PutLogEvents",Resource:$a}]
-' "$CAMPAIGN_DIR/pipe-policy.original.json" > "$CAMPAIGN_DIR/pipe-policy.denied.json"
-awsc iam put-role-policy --role-name "$PIPE_ROLE_NAME" --policy-name "$PIPE_POLICY" \
-  --policy-document "file://$CAMPAIGN_DIR/pipe-policy.denied.json"
-# Restore after the observed failure; never delete the source message.
-awsc iam put-role-policy --role-name "$PIPE_ROLE_NAME" --policy-name "$PIPE_POLICY" \
-  --policy-document "file://$CAMPAIGN_DIR/pipe-policy.original.json"
-```
-
-Repeated authorization failures **can**, but need not promptly, stop a Pipe. Capture actual StateReason. With this design's omitted batching window, failed-message retry waits follow the queue's **1,800-second visibility timeout**. Repairing IAM or starting the Pipe does not make an already hidden message immediately visible. Budget 2,160 seconds after repair for original delivery, then stop the test and diagnose if still missing; never shorten queue visibility or purge/re-send just to manufacture a fast pass. [Pipe retry timing and failure states](https://docs.aws.amazon.com/eventbridge/latest/userguide/eb-pipes-error-troubleshooting.html)
 
 ## Finite observation and retained evidence
 
@@ -332,7 +337,6 @@ These are campaign deadlines, not AWS latency guarantees. Every poll should save
 | Direct async concurrency-zero envelope with running Pipe | 300 seconds after accepted request |
 | Stopped Pipe backlog and visible alarm | 600 seconds; preserve observation if metric publication is delayed |
 | Original event delivery after administrative restart | 300 seconds, provided it was produced after fully STOPPED and no in-flight messages existed |
-| Original event delivery after broken-target repair | 2,160 seconds because visibility may be 1,800 seconds |
 | Restore quiescence with guarded function | 600 seconds after parking, then diagnose rather than silently retry forever |
 | Full scheduled-summary/15-minute health-window recovery | up to 1,500 seconds after approved normal schedule restoration |
 
@@ -340,18 +344,18 @@ For reads, avoid server-side filtering that could hide schema differences. Fetch
 
 ```bash
 # START_MS and END_MS are fixed epoch-millisecond bounds recorded per case.
-awsc logs filter-log-events --log-group-name "$FAILURE_LOG_GROUP" \
+awsc step-30 logs filter-log-events --log-group-name "$FAILURE_LOG_GROUP" \
   --log-stream-names "$FAILURE_STREAM" --start-time "$START_MS" --end-time "$END_MS" \
-  > "$CAMPAIGN_DIR/failures.window.raw.json"
-awsc logs filter-log-events --log-group-name "$HANDLER_LOG_GROUP" \
+  > "$CASE_DIR/failures.window.raw.json"
+awsc step-31 logs filter-log-events --log-group-name "$HANDLER_LOG_GROUP" \
   --start-time "$START_MS" --end-time "$END_MS" \
-  > "$CAMPAIGN_DIR/handler.window.raw.json"
+  > "$CASE_DIR/handler.window.raw.json"
 jq '[.cleanup.evidence.alarms[] | .name]' "$MANIFEST" > "$CAMPAIGN_DIR/alarm-names.json"
-awsc cloudwatch describe-alarms --alarm-names "file://$CAMPAIGN_DIR/alarm-names.json" \
-  > "$CAMPAIGN_DIR/alarms.observed.json"
-awsc cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name AsyncEventsDropped \
+awsc step-32 cloudwatch describe-alarms --alarm-names "file://$CAMPAIGN_DIR/alarm-names.json" \
+  > "$CASE_DIR/alarms.observed.json"
+awsc step-33 cloudwatch get-metric-statistics --namespace AWS/Lambda --metric-name AsyncEventsDropped \
   --dimensions "Name=FunctionName,Value=$FUNCTION_NAME" --statistics Sum --period 60 \
-  --start-time "$START_UTC" --end-time "$END_UTC" > "$CAMPAIGN_DIR/async-dropped.json"
+  --start-time "$START_UTC" --end-time "$END_UTC" > "$CASE_DIR/async-dropped.json"
 ```
 
 CLI pagination must finish; if the wrapper times out, the incomplete output is not an empty result. Narrow the exact time window and retry into a new file. Keep raw logs with `eventId`, stream, event/ingestion times. A local parser may normalize JSON-string bodies and `stringValue`/`StringValue` for assertions, but raw captures remain immutable. Add SHA-256 files after each finalized capture set. No receipt handles, credentials, presigned URLs or unrelated log groups belong in the published report.

@@ -2,9 +2,9 @@
 
 **Preparation only: live acceptance is pending.** No AWS authentication, API
 observation, migration, launch, scheduled cleanup, or laptop-offline result is
-claimed by this record. #42–#46 are merged and independently reviewed; #47's
-failure route and health implementation must be integrated before final checks
-and the reviewed live campaign. Keep #48 and parent #4 open until every live gate
+claimed by this record. #42–#47 are merged and independently reviewed; final #47 at `14bb326` is
+integrated into this acceptance branch. Final checks and the reviewed live
+campaign remain pending. Keep #48 and parent #4 open until every live gate
 below has actual evidence. Interactive release #5 is a separate gate.
 
 This document is an executable protocol plus an evidence ledger. Commands under
@@ -16,16 +16,18 @@ scheduler delivery, or cleanup while a laptop is offline.
 
 | Item | Actual preparation result |
 | --- | --- |
-| Preparation baseline | `73076ea`, merged #42–#46; final tested revision pending #47 integration |
+| Preparation baseline | `73076ea`, merged #42–#46; final tested revision pending the preparation-fix review and root-owned checks |
 | Date | September 15, 2026 UTC (September 14, US/Central) |
 | Durable evidence directory | `~/.local/state/devbox/acceptance/04-expiry/20260915T023635Z-4d506132`, mode 0700 |
 | Original configuration | User config and referenced manifest copied byte-for-byte to `original-config/`; original paths/hashes recorded privately in `preservation.json`; originals untouched |
 | Final test config/export | Pending reviewed migration; never relabel the preserved schema-3 manifest as v6 |
-| Local helper verification | Five controlled tests passed; `commands/helper-tests/` records exact command, output, time and exit 0 |
+| Initial helper verification | Five controlled tests passed; `commands/helper-tests/` preserves the original preparation result |
+| Capture/activation verification | Thirteen controlled tests passed, including real subprocess signal races, stale activation rejection and sourced-wrapper recovery; `commands/preparation-review-fixes/` preserves stdout/stderr/time/exit/hashes |
 | Tool versions captured | Go `go1.27.1-X:nodwarf5 linux/amd64`; Python `3.14.7`; AWS CLI `2.34.32`; OpenTofu `1.12.6 linux_amd64`; jq `1.8.2` |
 | Locked provider | AWS `6.64.0`; final backendless init/validation pending |
+| Durable OpenTofu | Parent preserved `tools/tofu-1.12.6` under the run with hash/provenance; use it for migration/recovery after `/tmp` loss |
 | Intermediate integration | Parent reports `make check` and `make build` passing on `73076ea`; this is not the final #48 revision or a live result |
-| Final artifacts/tests | Pending final #47 integration and exact revision pinning |
+| Final artifacts/tests | Pending preparation-fix review, exact revision pinning and root-owned final checks |
 | AWS scope and resources | Prior accepted scope below is a planning input; fresh identity/state/inventory checks remain pending |
 
 Prior accepted scope was account `464557813916`, region `us-east-2`, deployment
@@ -54,7 +56,7 @@ rerun remains pending; child verification is linked separately.
 | D2 inspectable dry-run/manual cleanup | #44/#45; `TestDryRunNoWritesOrRechecks`, `TestCleanupAdapterSharedFixtures`, `TestCleanupAdapterDecisionsEqualDirectService` | Complete expired dry-run with exactly the short set and future long worker; later harmless manual rerun | Pending |
 | D3 Go Lambda, schedule and scoped IAM | #46/#47; actual package/export bridge, `TestCleanupHealthRejectsDrift`, strict Lambda decoder/factory tests | Reviewed saved plan/apply, v6 export, role/code pins, recent scheduled successful summary/end | Pending |
 | D4 exact scope, diagnostics and final recheck | #42/#44/#46; `TestEligibilityScopeTagsStatesAndUTC`, `TestFinalRecheckRejectsForgedAndDriftedEvidence`, `TestSDKScopeSerializationAndSingleMutationAttempt` | Restricted operator launch/manual actions; scheduled cleanup role; exact tags/IDs and untouched long worker | Pending |
-| D5 retained decisions, termination/invocation failures, health | #44/#46/#47; journal acknowledgment/rejection tests; #47 transport and health tests to be added after merge | Handler events plus independent Scheduler exhaustion/Lambda pre-handler failure records, health failure/repair and later success | Pending |
+| D5 retained decisions, termination/invocation failures, health | #44/#46/#47; journal acknowledgment/rejection tests; `TestBothProducerDestinationsAreVerified`, `TestEvidenceRouteAndAlarmDrift`, `TestCompletionCannotBeInferredFromSilenceOrPartial` | Handler events plus independent Scheduler exhaustion/Lambda pre-handler failure records, health failure/repair and later success | Pending |
 | D6 repeated/concurrent cleanup, later retry, disposable roots | #44/#48; `TestHappyPathAndRepeat`, `TestTrulyConcurrentRunsHaveIndependentAuthority`, `TestDenialProtectionThrottlingAndLaterScanRecovery`, `TestVolumeEvidenceIsExactAndIndependent`, terminal-history regressions | Harmless rerun, exact terminal states, exact root deletion, final empty campaign set | Pending |
 
 | Human acceptance step | Evidence predicate and planned capture | Status |
@@ -84,8 +86,10 @@ References: [expiry contract](../plans/04-expiry-contract.md),
 [launch verification](43-launch-expiry.md),
 [shared service contract](../plans/04-expiry-cleanup-service.md),
 [manual runbook](45-manual-cleanup.md),
-[scheduled deployment](46-scheduled-expiry.md). Add the final #47 runbook and
-specific test names after its merge; no unavailable health interface is assumed.
+[scheduled deployment](46-scheduled-expiry.md). The final [cleanup health/recovery runbook](../runbooks/cleanup.md) and
+[#47 controlled verification](47-cleanup-evidence.md) define the deployed interface.
+Doctor uses the restricted operator, validates the health-role pins, then assumes
+the read-only health role for these checks.
 
 ## Capture helper and final local verification
 
@@ -94,7 +98,15 @@ argv without a shell, records stdout/stderr/start/end/exit/SHA-256, preserves
 partial outputs, refuses reused labels, and prepares complete schedule update
 JSON without contacting AWS. Its `identities` command indexes even attempt-only
 IDs from supplied JSON; that index is a recovery aid, never termination authority.
-The helper stores no environment dump. Never give it credential-source commands,
+The helper stores no environment dump. INT/TERM/HUP stop the entire command
+process group with a bounded grace period and final kill, then preserve final
+stdout/stderr hashes and status; repeated catchable signals cannot interrupt
+finalization. The direct-child exit/signal race also drains remaining process-group
+writers before hashing. Capture commands must not detach background work. An
+output-artifact error preserves the underlying command exit, available stream
+hashes and a separate evidence-capture failure. SIGKILL, host suspension or power loss can leave an unresolved
+started record and cannot prove that AWS rejected a request. Reconcile any
+possibly accepted mutation from independent state before proceeding. Never give it credential-source commands,
 keys, raw state, or secret-valued command arguments.
 
 From the final integrated acceptance worktree, bind the existing run directory:
@@ -117,7 +129,7 @@ preserved output before deciding the next operation; an up error may still have
 allocated workers. Optional `capture --timeout` terminates its process group and
 preserves partial output; it never automatically retries a command.
 
-After #47 and any demonstrated integration corrections are committed, capture
+After these preparation fixes and any demonstrated integration corrections are reviewed, capture
 all final checks once. Parent owns this final run; do not reuse intermediate
 success as final evidence:
 
@@ -177,11 +189,19 @@ affected checks and update the tested-revision boundary explicitly.
    beside the new config, and compare deployed code/policy pins. Follow #47 for
    the complete failure route and health-reader roles. Never substitute a mock
    export, policy simulation or zero-error counter for working authorization.
-6. With no campaign workers allocated, enable the reviewed schedule and capture
-   a genuine successful scheduled invocation, its summary/end/correlation and
-   independent health/API results. This is H1; a manual Lambda invoke is not H1.
-   Then disable the same schedule using a complete preserved update and capture
-   that disabled health state before launching the timed matrix.
+6. Keep the first installation disabled and run the **worker-free Case B async
+   pre-handler canary first**. The Pipe creates its fixed failure stream only
+   after a real event; doctor intentionally cannot verify the missing stream
+   before this canary. Verify configuration/role/route pins while recording that
+   expected initial health failure, then preserve the real OnFailure record and
+   restore original concurrency/settings. Reuse this Case B evidence in the
+   final matrix; it is live route evidence, not scheduled/offline worker proof.
+7. Parent prepares/reviews/applies the separate saved enabled-schedule plan.
+   Capture a genuine successful scheduled invocation, summary/end/correlation,
+   and `doctor --timeout 120s --json` plus independent health/API results after
+   alarms settle. This is H1; the earlier manual canary is not H1. Then disable
+   the same schedule using a complete preserved update and capture that disabled
+   health state before launching the timed matrix.
 
 All cloud command results must capture explicit profile/region, request start/end
 and exit. Read previous result/ledger records without deleting them. If the old
@@ -268,8 +288,8 @@ fields, so always capture GetSchedule and preserve every mutable setting.
 
 The helper copies exact target ARN, role, literal input, DLQ, retry policy,
 flexible window, timezone, KMS and other returned mutable fields. It removes only
-read-only metadata and changes state/start date. It refuses unknown fields or an
-activation less than two minutes in the future. **Preparation sends nothing.**
+read-only metadata and changes state/start date. Preparation refuses unknown fields or a start less than two minutes ahead.
+**Preparation sends nothing and does not authorize later activation.**
 
 ```bash
 # Read-only capture; bind names from the actual v6 export.
@@ -287,15 +307,40 @@ python3 scripts/expiry-acceptance.py prepare-schedule \
   --state ENABLED --start-date "$acceptance_first_tick"
 ```
 
-Parent reviews the exact update JSON and start time before the authorized
-`aws scheduler update-schedule --cli-input-json file://...` call. Immediately
-capture GetSchedule again to verify every preserved setting and the accepted
-boundary. Record update acknowledgment and first eligible occurrence separately.
-This temporary StartDate is controlled drift and must later be removed/restored
-through the reviewed intended configuration, with the full target preserved.
+Parent reviews the exact JSON and records its SHA-256 together with the start
+boundary. Activation must use the executable path below, not a separate raw
+update-schedule command. Supply the previously reviewed hash; do not recompute a
+new hash to silently accept changed bytes:
 
-Aim to finish dry-run soon after expiry and set the first occurrence around
-expiry +4m, with at least two minutes left for user disconnect. If that timing
+```bash
+python3 scripts/expiry-acceptance.py activate-schedule \
+  --run "$acceptance_run" --label schedule-offline-activation \
+  --input "$acceptance_run/migration/schedule-offline-start.json" \
+  --sha256 "$acceptance_reviewed_schedule_sha256" \
+  --profile devbox-setup --region us-east-2
+```
+
+It captures a private byte-for-byte input snapshot, checks its reviewed hash and
+current UTC **immediately before** starting the one-attempt CLI, and sends nothing
+unless at least 180 seconds remain. The CLI has a 45-second outer limit and
+bounded connection/read calls, preserving at least 120 seconds for acknowledgment
+and disconnect under normal host operation. Code 0 means only
+acknowledged_pending_readback. Every failed, timed-out, signaled, or late result
+after command start is outcome_unknown_reconcile_before_disconnect: AWS may have
+accepted the update. Do not retry automatically or tell the user to disconnect;
+read the exact schedule and park/replan the controlled run if needed.
+
+Immediately read GetSchedule with a bounded capture and compare the complete
+accepted settings/boundary with the reviewed input. Before the user checkpoint,
+verify at least 60 seconds still remain. If that margin has gone, keep the user
+online and reconcile/replan; readback cannot retroactively prevent an invocation.
+Record acknowledgment, readback and first eligible occurrence separately. Host
+suspension, clock jumps or unknown outcomes make the offline attempt inconclusive
+until independent reconciliation. Later restore/remove temporary StartDate via
+the reviewed intended configuration, preserving the full target.
+
+Aim to finish dry-run soon after expiry and choose the first occurrence around
+expiry +5m, with sufficient review/activation/disconnect margin. If that timing
 cannot be met, choose another reviewed future boundary; keep the original TTL
 and report deliberate disabled delay separately. Healthy operation's roughly
 nine-minute expiry-to-request planning target does not apply to an intentionally
@@ -358,7 +403,7 @@ A temporary InvokeFunction permission denial can prove a failed delivery but
 must not be called retry exhaustion without actual retryable-error/exhaustion
 fields. The [failure-route protocol](04-expiry-failures.md) supplies concrete commands,
 finite observation windows, full-setting restoration requirements and separate
-pass predicates. Final #47 manifest/API verification and concrete saved recovery
+pass predicates. Actual exported-manifest verification and concrete saved recovery
 artifacts still precede its live use; this gate is not waived.
 
 Required cases are Scheduler retry exhaustion without handler startup, a new
