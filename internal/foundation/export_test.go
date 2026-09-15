@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/JosephWest2/cloud_dev/internal/cleanuplambda"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/testutil"
 )
@@ -93,23 +95,60 @@ func TestOpenTofuExport(t *testing.T) {
 		if err != nil {
 			t.Fatal("OpenTofu exported an invalid CLI manifest:", err)
 		}
-		if m.SchemaVersion != 5 {
-			t.Fatal("foundation must export manifest version 5")
+		if m.SchemaVersion != 6 {
+			t.Fatal("foundation must export manifest version 6")
 		}
 		resources := map[string]map[string]json.RawMessage{}
 		for _, r := range event.State.Values.Root.Resources {
 			resources[r.Address] = r.Values
 		}
+		cleanup, err := config.DecodeCleanup(m.Cleanup, m)
+		if err != nil {
+			t.Fatal("OpenTofu cleanup descriptor:", err)
+		}
+		var zipDigest string
+		if err := json.Unmarshal(resources["aws_lambda_function.cleanup"]["source_code_hash"], &zipDigest); err != nil {
+			t.Fatal(err)
+		}
+		bytes, err := base64.StdEncoding.DecodeString(zipDigest)
+		if err != nil || fmt.Sprintf("%x", bytes) != cleanup.Function.CodeSHA256 {
+			t.Fatal("Lambda base64/manifest hex code digest mismatch")
+		}
+		var environments []struct {
+			Variables map[string]string `json:"variables"`
+		}
+		if err := json.Unmarshal(resources["aws_lambda_function.cleanup"]["environment"], &environments); err != nil || len(environments) != 1 {
+			t.Fatal("missing cleanup environment")
+		}
+		environment, _ := json.Marshal(environments[0].Variables)
+		if digest(environment) != cleanup.Function.EnvironmentSHA256 {
+			t.Fatal("cleanup environment digest mismatch")
+		}
+		var targets []struct {
+			Input string `json:"input"`
+		}
+		if err := json.Unmarshal(resources["aws_scheduler_schedule.cleanup"]["target"], &targets); err != nil || len(targets) != 1 {
+			t.Fatal("missing cleanup schedule input")
+		}
+		inputHash, err := jsonDigest(targets[0].Input)
+		if err != nil || inputHash != cleanup.Schedule.InputSHA256 {
+			t.Fatal("cleanup schedule input digest mismatch")
+		}
+		verifySchedulerDelivery(t, targets[0].Input, cleanup)
 		verifyPlacementExport(t, m, resources)
 		expected := map[string]map[string]string{
-			"aws_iam_role.instance":        {"assume_role_policy": m.Roles["instance"].TrustSHA256},
-			"aws_iam_role.operator":        {"assume_role_policy": m.Roles["operator"].TrustSHA256},
-			"aws_iam_role_policy.instance": {"policy": m.Roles["instance"].PolicySHA256},
-			"aws_iam_role_policy.operator": {"policy": m.Roles["operator"].PolicySHA256},
-			"aws_ssm_document.readiness":   {"content": m.Readiness.ContentSHA256},
-			"aws_ssm_document.execution":   {"content": m.Execution.ContentSHA256},
-			"aws_s3_bucket_policy.results": {"policy": m.Results.PolicySHA256},
-			"aws_launch_template.agent":    {"user_data": m.BootstrapSHA256},
+			"aws_iam_role.cleanup":                  {"assume_role_policy": cleanup.ExecutionRole.TrustSHA256},
+			"aws_iam_role.cleanup_scheduler":        {"assume_role_policy": cleanup.SchedulerRole.TrustSHA256},
+			"aws_iam_role_policy.cleanup":           {"policy": cleanup.ExecutionRole.PolicySHA256},
+			"aws_iam_role_policy.cleanup_scheduler": {"policy": cleanup.SchedulerRole.PolicySHA256},
+			"aws_iam_role.instance":                 {"assume_role_policy": m.Roles["instance"].TrustSHA256},
+			"aws_iam_role.operator":                 {"assume_role_policy": m.Roles["operator"].TrustSHA256},
+			"aws_iam_role_policy.instance":          {"policy": m.Roles["instance"].PolicySHA256},
+			"aws_iam_role_policy.operator":          {"policy": m.Roles["operator"].PolicySHA256},
+			"aws_ssm_document.readiness":            {"content": m.Readiness.ContentSHA256},
+			"aws_ssm_document.execution":            {"content": m.Execution.ContentSHA256},
+			"aws_s3_bucket_policy.results":          {"policy": m.Results.PolicySHA256},
+			"aws_launch_template.agent":             {"user_data": m.BootstrapSHA256},
 		}
 		for _, r := range event.State.Values.Root.Resources {
 			for field, want := range expected[r.Address] {
@@ -145,6 +184,49 @@ func TestOpenTofuExport(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("no mock-applied manifest in OpenTofu test output")
+	}
+}
+
+// This crosses the provisioned string boundary: JSON equivalence alone cannot
+// prove that Scheduler finds its literal context keywords before delivery.
+func verifySchedulerDelivery(t *testing.T, input string, cleanup config.Cleanup) {
+	t.Helper()
+	values := []string{
+		"<aws.scheduler.schedule-arn>", cleanup.Schedule.ARN,
+		"<aws.scheduler.scheduled-time>", "2026-09-14T12:00:00Z",
+		"<aws.scheduler.execution-id>", "d32c5kddcf5bb8c3",
+		"<aws.scheduler.attempt-number>", "1",
+	}
+	for i := 0; i < len(values); i += 2 {
+		if strings.Count(input, values[i]) != 1 {
+			t.Fatalf("rendered Scheduler input must contain exactly one literal %s", values[i])
+		}
+	}
+	substitute := strings.NewReplacer(values...).Replace
+	delivered, err := cleanuplambda.Decode([]byte(substitute(input)))
+	if err != nil || delivered.SchemaVersion != 1 || delivered.ScheduleARN != values[1] || delivered.ScheduledTime != values[3] || delivered.ExecutionID != values[5] || delivered.AttemptNumber != values[7] {
+		t.Fatalf("rendered Scheduler input failed real adapter decoding after substitution: %+v %v", delivered, err)
+	}
+	// Recreate the original broken transport as a negative control. Its canonical
+	// digest still matches, demonstrating why the digest bridge alone missed it.
+	var object map[string]any
+	if err := json.Unmarshal([]byte(input), &object); err != nil {
+		t.Fatal(err)
+	}
+	escaped, err := json.Marshal(object)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest(escaped) != cleanup.Schedule.InputSHA256 || digest([]byte(input)) == cleanup.Schedule.InputSHA256 {
+		t.Fatal("manifest must retain the canonical digest, separate from literal transport bytes")
+	}
+	if _, err := cleanuplambda.Decode([]byte(substitute(string(escaped)))); err == nil {
+		t.Fatal("escaped-keyword negative control unexpectedly delivered valid correlation")
+	}
+	restored := strings.NewReplacer(`\u003c`, "<", `\u003e`, ">").Replace(string(escaped))
+	positive, err := cleanuplambda.Decode([]byte(substitute(restored)))
+	if err != nil || positive != delivered {
+		t.Fatalf("restored-keyword positive control: %+v %v", positive, err)
 	}
 }
 

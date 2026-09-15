@@ -32,8 +32,8 @@ def main():
             if resource["address"] == "aws_iam_role_policy.operator":
                 policy = resource["values"]["policy"]
                 manifest = values["outputs"]["deployment_manifest"]["value"]
-    if not policy or manifest["schema_version"] != 5:
-        raise RuntimeError("expected a mock-applied v5 manifest and rendered operator policy")
+    if not policy or manifest["schema_version"] != 6:
+        raise RuntimeError("expected a mock-applied v6 manifest and rendered operator policy")
 
     region, account = manifest["region"], manifest["account"]
     ec2 = f"arn:aws:ec2:{region}:{account}"
@@ -45,7 +45,7 @@ def main():
         "ManagedBy": "devbox", "Deployment": manifest["deployment"], "Owner": manifest["owner"],
         "Profile": "agent", "Name": "smoke", "BaseName": "smoke", "NamingVersion": "1",
         "RequestId": "a" * 32, "BatchId": "a" * 32, "AttemptId": "b" * 32,
-        "CreatedAt": "2026-09-14T00:00:00Z", "Group": "smoke-batch",
+        "CreatedAt": "2026-09-14T00:00:00Z", "ExpiresAt": "2026-09-14T02:00:00Z", "Group": "smoke-batch",
     }
     contexts = {"aws:RequestedRegion": region, "ec2:InstanceProfile": manifest["instance_profile_arn"],
                 "ec2:LaunchTemplate": template, "ec2:Subnet": subnet,
@@ -93,14 +93,14 @@ def main():
 
     launch_case("Spot creation authorization chain", True)
     launch_case("On-Demand creation authorization chain", True, mutate=lambda c, t, lt, sn: (c.update({"ec2:InstanceMarketType": "on-demand"}) or lt, sn))
-    launch_case("legacy seven-tag RunInstances", True, api="RunInstances", mutate=lambda c, t, lt, sn: (
-        [t.pop(k) for k in ["BaseName", "NamingVersion", "BatchId", "AttemptId", "Group"]] and lt, sn))
+    launch_case("legacy allocation is rejected", False, api="RunInstances", mutate=lambda c, t, lt, sn: (
+        [t.pop(k) for k in ["BaseName", "NamingVersion", "BatchId", "AttemptId", "Group", "ExpiresAt"]] and lt, sn))
     for tag in ["ManagedBy", "Owner", "Deployment", "Profile", "NamingVersion"]:
         def wrong_tag(c, t, lt, sn, key=tag):
             t[key] = "foreign"
             return lt, sn
         launch_case("reject wrong " + tag, False, mutate=wrong_tag)
-    for tag in ["RequestId", "AttemptId", "BaseName", "BatchId"]:
+    for tag in ["RequestId", "AttemptId", "BaseName", "BatchId", "CreatedAt", "ExpiresAt"]:
         def missing_tag(c, t, lt, sn, key=tag):
             t.pop(key)
             return lt, sn

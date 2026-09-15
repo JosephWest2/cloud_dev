@@ -13,9 +13,12 @@ import (
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
+	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/aws/aws-sdk-go-v2/service/scheduler"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 )
@@ -44,7 +47,11 @@ func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p 
 		}
 		return []Check{{"foundation_identity", err}}
 	}
-	return Verify(ctx, Clients{EC2: ec2.NewFromConfig(a), IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p)
+	checks := Verify(ctx, Clients{EC2: ec2.NewFromConfig(a), IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p)
+	if m.SchemaVersion == 6 {
+		checks = append(checks, VerifyCleanup(ctx, CleanupClients{Lambda: lambda.NewFromConfig(a), Scheduler: scheduler.NewFromConfig(a), Logs: cloudwatchlogs.NewFromConfig(a), IAM: iam.NewFromConfig(a)}, m, m.Cleanup)...)
+	}
+	return checks
 }
 
 func Verify(ctx context.Context, clients Clients, m config.Manifest, p config.Profile) []Check {
@@ -113,6 +120,20 @@ func roleName(arn string) string { return arn[strings.LastIndex(arn, "/")+1:] }
 // Message is an allowlist boundary for structured diagnostics, including injected dependencies.
 func Message(name string) string {
 	switch name {
+	case "cleanup_configuration":
+		return "cleanup descriptor is invalid or absent; review and re-export the v6 foundation; manual cleanup remains independent"
+	case "cleanup_function":
+		return "cleanup function differs from its pinned runtime, code, environment, role or bounded execution settings"
+	case "cleanup_schedule":
+		return "cleanup schedule differs from its pinned target, role, delivery input or retry settings"
+	case "cleanup_logs":
+		return "cleanup log group is missing, unreadable or has different retention; inspect retained invocation evidence"
+	case "cleanup_iam":
+		return "cleanup execution or Scheduler role trust/policies differ from the trusted export"
+	case "cleanup_enabled":
+		return "automatic cleanup is disabled; install and verify independent failure evidence before enabling the schedule"
+	case "cleanup_evidence":
+		return "unattended cleanup readiness is unverified: independent delivery/execution failure evidence and recent successful completion require issue #47"
 	case "foundation_configuration":
 		return "launch configuration is unsupported; verify the complete version 5 manifest and profile type/subnet/AZ choices before allocation"
 	case "foundation_network":

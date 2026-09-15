@@ -194,7 +194,7 @@ run "policy_contract" {
   assert {
     condition = alltrue([for s in jsondecode(aws_iam_role_policy.operator.policy).Statement :
       s.Condition.StringEquals["aws:RequestTag/Owner"] == var.owner && s.Condition.StringEquals["aws:RequestTag/Deployment"] == var.deployment && s.Condition.StringLike["aws:RequestTag/RequestId"] == "?*"
-      if contains(["TagOnlyAtLaunch", "TagFleetAtLaunch"], s.Sid)
+      if s.Sid == "TagAtCreation"
     ])
     error_message = "Mandatory creation tagging must enforce scoped and dynamic tags on both instances and volumes."
   }
@@ -234,7 +234,7 @@ run "policy_contract" {
 run "durable_execution_contract" {
   command = apply # Mock provider only; validates rendered bootstrap/manifest.
   assert {
-    condition     = output.deployment_manifest.schema_version == 5 && output.deployment_manifest.results == local.results_manifest && output.deployment_manifest.execution == local.execution_manifest && output.deployment_manifest.launch_ledger == local.launch_ledger_manifest
+    condition     = output.deployment_manifest.schema_version == 6 && output.deployment_manifest.results == local.results_manifest && output.deployment_manifest.execution == local.execution_manifest && output.deployment_manifest.launch_ledger == local.launch_ledger_manifest
     error_message = "Manifest v5 must retain exact execution/storage contracts and add permanent launch records."
   }
   assert {
@@ -329,4 +329,17 @@ run "retention_fractional" {
   command = plan
   variables { result_retention_days = 2.5 }
   expect_failures = [var.result_retention_days]
+}
+
+override_resource {
+  target = aws_iam_role.cleanup
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-cleanup" }
+}
+override_resource {
+  target = aws_iam_role.cleanup_scheduler
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-schedule" }
+}
+override_resource {
+  target = aws_lambda_function.cleanup
+  values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
 }

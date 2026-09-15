@@ -497,3 +497,13 @@ Static policy/mock tests do not prove Spot authorization. Actual restricted-role
 Spot/On-Demand launch, independent worker use, and exact disposable-root cleanup
 are the fresh acceptance gate in #34. Never force live Spot scarcity to test
 partial/unknown capacity; controlled SDK tests own those failure cases.
+
+## Scheduled expiry foundation (manifest v6)
+
+The v6 foundation adds a Go cleanup function and an explicitly disabled schedule,
+and requires `ExpiresAt` in current Fleet creation tags. Existing v4/v5 records
+remain available for observation and explicit teardown. Build `make runner
+cleanup-check` before planning. Follow the [scheduled-expiry migration and
+verification instructions](acceptance/46-scheduled-expiry.md); install independent
+failure evidence before enabling automatic cleanup. A matching deployment or a
+zero-error counter alone does not establish a recent successful cleanup run.

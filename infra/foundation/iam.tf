@@ -24,12 +24,12 @@ locals {
   request_scope  = { for k, v in local.tags : "aws:RequestTag/${k}" => v }
   resource_scope = { for k, v in local.tags : "ec2:ResourceTag/${k}" => v }
   ssm_scope      = { for k, v in local.tags : "ssm:resourceTag/${k}" => v }
-  creation_tags  = ["ManagedBy", "Deployment", "Owner", "Profile", "Name", "BaseName", "NamingVersion", "RequestId", "BatchId", "AttemptId", "CreatedAt", "Group"]
+  creation_tags  = ["ManagedBy", "Deployment", "Owner", "Profile", "Name", "BaseName", "NamingVersion", "RequestId", "BatchId", "AttemptId", "CreatedAt", "ExpiresAt", "Group"]
   subnet_arns    = [for id in local.subnet_ids : "${local.ec2}:subnet/${id}"]
   creation_scope = merge(local.request_scope, {
     "aws:RequestedRegion" = var.region, "aws:RequestTag/Profile" = "agent", "aws:RequestTag/NamingVersion" = "1"
   })
-  dynamic_creation_tags = { for key in ["Name", "BaseName", "RequestId", "BatchId", "AttemptId", "CreatedAt"] : "aws:RequestTag/${key}" => "?*" }
+  dynamic_creation_tags = { for key in ["Name", "BaseName", "RequestId", "BatchId", "AttemptId", "CreatedAt", "ExpiresAt"] : "aws:RequestTag/${key}" => "?*" }
   creation_condition = {
     StringEquals                = local.creation_scope
     StringLike                  = local.dynamic_creation_tags
@@ -49,13 +49,20 @@ locals {
   operator_policy = jsonencode({ Version = "2012-10-17", Statement = [
     {
       Sid       = "RegionalInventory", Effect = "Allow", Resource = "*"
-      Action    = ["ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeVpcs", "ec2:DescribeVpcAttribute", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeRouteTables", "ec2:DescribeInternetGateways", "ec2:DescribeImages", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeLaunchTemplates", "ec2:DescribeInstanceTypes", "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeAvailabilityZones", "ec2:DescribeFleets", "ssm:DescribeInstanceInformation", "ssm:GetCommandInvocation"]
+      Action    = ["ec2:DescribeInstances", "ec2:DescribeVolumes", "ec2:DescribeVpcs", "ec2:DescribeVpcAttribute", "ec2:DescribeSubnets", "ec2:DescribeSecurityGroups", "ec2:DescribeRouteTables", "ec2:DescribeInternetGateways", "ec2:DescribeImages", "ec2:DescribeLaunchTemplateVersions", "ec2:DescribeLaunchTemplates", "ec2:DescribeInstanceTypes", "ec2:DescribeInstanceTypeOfferings", "ec2:DescribeAvailabilityZones", "ec2:DescribeFleets", "ssm:DescribeInstanceInformation", "ssm:GetCommandInvocation", "logs:DescribeLogGroups"]
       Condition = { StringEquals = { "aws:RequestedRegion" = var.region } }
     },
     {
       Sid      = "ReadRoles", Effect = "Allow"
       Action   = ["iam:GetRole", "iam:ListRolePolicies", "iam:GetRolePolicy", "iam:ListAttachedRolePolicies"]
-      Resource = [aws_iam_role.instance.arn, aws_iam_role.operator.arn]
+      Resource = [aws_iam_role.instance.arn, aws_iam_role.operator.arn, aws_iam_role.cleanup.arn, aws_iam_role.cleanup_scheduler.arn]
+    },
+    {
+      # These service-specific actions accept only their matching ARN types;
+      # grouping exact read destinations avoids repeated policy overhead.
+      Sid      = "ReadCleanup", Effect = "Allow"
+      Action   = ["lambda:GetFunctionConfiguration", "lambda:GetFunctionConcurrency", "lambda:GetFunctionEventInvokeConfig", "scheduler:GetSchedule", "logs:FilterLogEvents", "logs:DescribeLogStreams"]
+      Resource = [local.cleanup_arn, local.cleanup_manifest.schedule.arn, "${local.cleanup_log_arn}:*"]
     },
     { Sid = "ReadProfile", Effect = "Allow", Action = ["iam:GetInstanceProfile"], Resource = [aws_iam_instance_profile.devbox.arn] },
     { Sid = "ReadSpotRole", Effect = "Allow", Action = ["iam:GetRole"], Resource = ["arn:aws:iam::${var.account_id}:role/aws-service-role/spot.amazonaws.com/AWSServiceRoleForEC2Spot"] },
@@ -103,18 +110,11 @@ locals {
       })
     },
     {
-      # Retain seven-tag RunInstances recovery for legacy prepared receipts.
-      Sid = "TagOnlyAtLaunch", Effect = "Allow", Action = ["ec2:CreateTags"], Resource = ["${local.ec2}:instance/*", "${local.ec2}:volume/*"]
-      Condition = {
-        StringEquals                = merge(local.request_scope, { "aws:RequestedRegion" = var.region, "aws:RequestTag/Profile" = "agent", "ec2:CreateAction" = "RunInstances" })
-        StringLike                  = { "aws:RequestTag/Name" = "?*", "aws:RequestTag/RequestId" = "?*", "aws:RequestTag/CreatedAt" = "?*" }
-        "ForAllValues:StringEquals" = { "aws:TagKeys" = local.creation_tags }
-      }
-    },
-    {
-      Sid = "TagFleetAtLaunch", Effect = "Allow", Action = ["ec2:CreateTags"], Resource = ["${local.ec2}:fleet/*", "${local.ec2}:instance/*", "${local.ec2}:volume/*"]
+      # Both Fleet and its dependent RunInstances creation require identical
+      # immutable expiry-aware scope/identity tags. No post-creation retagging.
+      Sid = "TagAtCreation", Effect = "Allow", Action = ["ec2:CreateTags"], Resource = ["${local.ec2}:fleet/*", "${local.ec2}:instance/*", "${local.ec2}:volume/*"]
       Condition = merge(local.creation_condition, {
-        StringEquals = merge(local.creation_scope, { "ec2:CreateAction" = "CreateFleet" })
+        StringEquals = merge(local.creation_scope, { "ec2:CreateAction" = ["RunInstances", "CreateFleet"] })
       })
     },
     {

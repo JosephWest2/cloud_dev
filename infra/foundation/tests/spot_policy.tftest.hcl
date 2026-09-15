@@ -75,12 +75,12 @@ run "spot_policy_boundary" {
     error_message = "Every created fleet, instance and volume must have ManagedBy, forcing dependent CreateTags authorization; untagged requests cannot bypass it."
   }
   assert {
-    condition = (length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TagFleetAtLaunch" &&
+    condition = (length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TagAtCreation" &&
       s.Condition.StringEquals["aws:RequestedRegion"] == "us-east-2" && s.Condition.StringEquals["aws:RequestTag/ManagedBy"] == "devbox" &&
       s.Condition.StringEquals["aws:RequestTag/Deployment"] == "test" && s.Condition.StringEquals["aws:RequestTag/Owner"] == "test-owner" &&
       s.Condition.StringEquals["aws:RequestTag/Profile"] == "agent" && s.Condition.StringEquals["aws:RequestTag/NamingVersion"] == "1" &&
-      toset(s.Condition["ForAllValues:StringEquals"]["aws:TagKeys"]) == toset(["ManagedBy", "Deployment", "Owner", "Profile", "Name", "BaseName", "NamingVersion", "RequestId", "BatchId", "AttemptId", "CreatedAt", "Group"]) &&
-      alltrue([for key in ["Name", "BaseName", "RequestId", "BatchId", "AttemptId", "CreatedAt"] : s.Condition.StringLike["aws:RequestTag/${key}"] == "?*"])
+      toset(s.Condition["ForAllValues:StringEquals"]["aws:TagKeys"]) == toset(["ManagedBy", "Deployment", "Owner", "Profile", "Name", "BaseName", "NamingVersion", "RequestId", "BatchId", "AttemptId", "CreatedAt", "ExpiresAt", "Group"]) &&
+      alltrue([for key in ["Name", "BaseName", "RequestId", "BatchId", "AttemptId", "CreatedAt", "ExpiresAt"] : s.Condition.StringLike["aws:RequestTag/${key}"] == "?*"])
     ]) == 1)
     error_message = "Dependent Fleet tag authorization must enforce all scope and batch identity tags while allowing optional Group."
   }
@@ -133,9 +133,8 @@ run "spot_policy_boundary" {
     error_message = "Do not deny every Fleet request using condition keys absent from the CreateFleet authorization model."
   }
   assert {
-    condition = (toset([for s in jsondecode(local.operator_policy).Statement : s.Sid if contains(s.Action, "ec2:CreateTags")]) == toset(["TagOnlyAtLaunch", "TagFleetAtLaunch"]) &&
-      length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TagOnlyAtLaunch" && s.Condition.StringEquals["ec2:CreateAction"] == "RunInstances" && toset(s.Resource) == toset(["arn:aws:ec2:us-east-2:123456789012:instance/*", "arn:aws:ec2:us-east-2:123456789012:volume/*"])]) == 1 &&
-      length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TagFleetAtLaunch" && s.Condition.StringEquals["ec2:CreateAction"] == "CreateFleet" && toset(s.Resource) == toset(["arn:aws:ec2:us-east-2:123456789012:fleet/*", "arn:aws:ec2:us-east-2:123456789012:instance/*", "arn:aws:ec2:us-east-2:123456789012:volume/*"])]) == 1
+    condition = (length([for s in jsondecode(local.operator_policy).Statement : s if contains(s.Action, "ec2:CreateTags")]) == 1 &&
+      length([for s in jsondecode(local.operator_policy).Statement : s if s.Sid == "TagAtCreation" && toset(s.Condition.StringEquals["ec2:CreateAction"]) == toset(["RunInstances", "CreateFleet"]) && toset(s.Resource) == toset(["arn:aws:ec2:us-east-2:123456789012:fleet/*", "arn:aws:ec2:us-east-2:123456789012:instance/*", "arn:aws:ec2:us-east-2:123456789012:volume/*"])]) == 1
     )
     error_message = "Tag permissions must apply only during each supported resource-creation API, never to retag existing resources."
   }
@@ -236,8 +235,16 @@ run "three_az_live_scope_policy_quota" {
     target = aws_ssm_document.execution
     values = { arn = "arn:aws:ssm:us-east-2:123456789012:document/devbox-personal-dev-joseph-execute", latest_version = "1" }
   }
+  override_resource {
+    target = aws_iam_role.cleanup
+    values = { arn = "arn:aws:iam::123456789012:role/devbox-personal-dev-joseph-cleanup" }
+  }
+  override_resource {
+    target = aws_iam_role.cleanup_scheduler
+    values = { arn = "arn:aws:iam::123456789012:role/devbox-personal-dev-joseph-schedule" }
+  }
   assert {
-    condition     = length(local.operator_policy) <= 10240 && length(local.operator_policy) > 10000
+    condition     = length(local.operator_policy) <= 10240 && length(local.operator_policy) > 9500
     error_message = "The full three-AZ live scope must fit IAM's inline-role quota, including repeated subnet and scoped ARNs."
   }
 }
@@ -251,4 +258,17 @@ run "oversized_policy_rejected" {
     owner      = "ooooooooooooooooooooooo"
   }
   expect_failures = [aws_iam_role_policy.operator]
+}
+
+override_resource {
+  target = aws_iam_role.cleanup
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-cleanup" }
+}
+override_resource {
+  target = aws_iam_role.cleanup_scheduler
+  values = { arn = "arn:aws:iam::123456789012:role/devbox-test-test-owner-schedule" }
+}
+override_resource {
+  target = aws_lambda_function.cleanup
+  values = { arn = "arn:aws:lambda:us-east-2:123456789012:function:devbox-test-test-owner-cleanup" }
 }
