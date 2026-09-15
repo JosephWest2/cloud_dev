@@ -1,4 +1,8 @@
-# Stack, region, and networking decisions
+# Design decisions
+
+Latest decision, September 14, 2026: tmux is a baseline dependency for interactive
+coding-agent environments. The session, observation and intervention workflow below
+is selected design; implementation is pending.
 
 Current selections, September 13, 2026 UTC (September 12 US/Central): interactive
 devboxes first; Go/AWS SDK v2 + OpenTofu + TOML; Linux locally; Ohio (`us-east-2`);
@@ -15,10 +19,82 @@ The [parent acceptance gate](docs/acceptance/01-lifecycle.md) records the indepe
 final run. Smoke acceptance explicitly opts into On-Demand; Spot, coding-agent
 automation, TTL and additional networking/platform choices remain later work.
 
-The sections below retain the September 10–12 decision history. Earlier proposals,
-open questions and statements that deployment/access had not yet happened describe
+The historical sections after the tmux decision retain the September 10–12
+decision history. Earlier proposals, open questions and statements that
+deployment/access had not yet happened describe
 those earlier stages; the current selections above and the issue #9 confirmation
 supersede them.
+
+## Interactive agent sessions and observability (September 14, 2026)
+
+Implementation: [#56 — tmux sessions, live observation and input-required notifications](https://github.com/JosephWest2/cloud_dev/issues/56).
+
+### Decision and reasoning
+
+Include tmux in the first agent image and make it available for the initial manual
+agent workflow. Every managed interactive agent run starts in a named, detached
+tmux session under the existing `devbox` user, with a stable job/attempt identity.
+Observe and attach through the existing authenticated SSH-over-SSM access path.
+
+An EC2 instance can be healthy while its agent is blocked on a question. Seeing the
+actual terminal makes prompts, errors and progress inspectable, and interactive
+attachment provides a direct way to answer. A detached session also lets the agent
+continue when the operator disconnects or changes computers. This makes tmux part
+of everyday observability from the first agent workflow onward.
+
+### User-facing workflow
+
+| Interface | Selected behavior |
+| --- | --- |
+| `devbox watch NAME_OR_ID` | Attach read-only to the agent terminal without changing the interactive client's terminal size. |
+| `devbox attach NAME_OR_ID` | Attach interactively to the existing agent session to answer questions and investigate. |
+| `devbox logs JOB_ID` | Retrieve persisted agent output/status by durable job ID, extending the existing command-result interface. |
+| `devbox ls` | Report agent status and waiting duration alongside the separate EC2/SSM/bootstrap observations. |
+
+Resolve friendly names through the existing managed-resource scope checks. Bind
+sessions to job/attempt IDs so repeated issue runs cannot attach to an unrelated
+session or start a second agent accidentally. Define explicit selection if more
+than one session is eligible. Attachment and observation never start a missing job.
+
+### Lifecycle and durable observability
+
+- Keep the agent running across client detach or transport loss. Document detach,
+  Ctrl-C, terminal resize and client-exit behavior. Preserve exited panes for
+  inspection while the machine remains available; record the agent's actual exit
+  status independently of the tmux client/server lifetime.
+- Persist output and job metadata to the existing scoped S3 result storage.
+  Capture output from startup, publish periodically and at completion, and report
+  incomplete uploads accurately. Terminal output may contain control sequences
+  and combined streams; define its format without presenting it as the existing
+  noninteractive exec protocol's separate stdout/stderr streams. Prefer agent
+  event/transcript output where available.
+- Track `working`, `waiting_for_input`, `completed`, `failed`, `timed_out` and
+  `interrupted` explicitly, with timestamps and unknown/stale observations where
+  needed. Obtain question events from the selected agent adapter; silence or pane
+  existence does not establish agent state. Persist the pending question's ID,
+  context and resolution alongside the job record.
+- Notify the operator when input is required, without requiring an attached
+  terminal. Choose a minimal configurable notification channel during
+  implementation and document its delivery/failure behavior. Notification failure
+  must leave the question inspectable; elapsed time is never an answer or approval.
+- Keep logs, checkpoints and pending-question metadata outside EC2. tmux survives
+  a connection loss but does not restore a terminated machine's process or session.
+  Replacement recovery requires the separate checkpoint/resume workflow, including
+  any needed conversation state and uncommitted work beyond a Git branch.
+- Existing worker expiry applies while attached, detached or waiting for input.
+  Preserve diagnostics before expiry when possible; tmux activity never extends TTL.
+
+### Delivery order
+
+Ship tmux availability with the first agent environment, then managed `watch` /
+`attach`, durable logs, explicit state and input-required notifications with the
+initial agent integration. A cross-machine question inbox, GitHub/chat reply
+bridges, automatic checkpoint-and-release while waiting, and supervisor agents
+remain follow-on options. The initial intervention path is interactive attachment.
+
+References: [tmux concepts and disconnect behavior](https://github.com/tmux/tmux/wiki/Getting-Started),
+[read-only attachment, pane output and exit handling](https://man.openbsd.org/tmux.1),
+and the existing [SSH access contract](docs/contracts.md#readiness-and-ssh-access-9).
 
 ## Confirmed during issue #6
 
