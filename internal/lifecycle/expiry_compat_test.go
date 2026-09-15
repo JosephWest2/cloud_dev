@@ -30,8 +30,8 @@ func TestExpiryMigrationPreservesHistoricalBytesAndDigest(t *testing.T) {
 	var legacy Receipt
 	var prepared PreparedAttempt
 	var claim DispatchClaim
-	var response AttemptResponse
-	for name, value := range map[string]any{"plan-v1": &plan, "batch-v2": &batch, "receipt-v1": &legacy, "prepared-v1": &prepared, "claim-v1": &claim, "response-v1": &response} {
+	var response, workerResponse AttemptResponse
+	for name, value := range map[string]any{"plan-v1": &plan, "batch-v2": &batch, "receipt-v1": &legacy, "prepared-v1": &prepared, "claim-v1": &claim, "response-v1": &response, "response-worker-v1": &workerResponse} {
 		b := read(name + ".json")
 		decoder := json.NewDecoder(bytes.NewReader(b))
 		decoder.DisallowUnknownFields()
@@ -64,6 +64,14 @@ func TestExpiryMigrationPreservesHistoricalBytesAndDigest(t *testing.T) {
 	base.Attempts = nil
 	if !validPrepared(base, prepared) || expectedClaim(prepared) != claim || !validResponse(base, prepared, response) {
 		t.Fatal("permanent launch record evidence no longer verifies")
+	}
+	// Keep both zero-worker and successful-worker responses: Instance is embedded
+	// in WorkerOutcome, so only populated fixtures pin its historical wire fields.
+	if len(workerResponse.Workers) != 1 || len(workerResponse.Attempt.InstanceIDs) != 1 || workerResponse.Workers[0].ID != workerResponse.Attempt.InstanceIDs[0] {
+		t.Fatal("successful-worker fixture must retain one matching allocated ID")
+	}
+	if !validResponse(base, prepared, workerResponse) {
+		t.Fatal("historical allocated worker no longer matches expected response evidence")
 	}
 	// The new allocation policy rejects even a historically prepared, otherwise
 	// valid request. Merely decoding/validating its evidence remains supported.
