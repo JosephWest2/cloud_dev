@@ -96,7 +96,7 @@ awsc step-08 pipes describe-pipe --name "$PIPE_NAME" > "$CAMPAIGN_DIR/pipe.origi
 awsc step-09 sqs get-queue-attributes --queue-url "$QUEUE_URL" --attribute-names All > "$CAMPAIGN_DIR/queue.original.json"
 ```
 
-Capture original `describe-alarms`, baseline doctor output/exit status, full function/config digests, queue counts and finite-window logs too. For the first worker-free Case B canary, missing failure stream/recent success and unsettled alarms are expected pending states; verify actual configuration/role/route pins before invoking it. Restore afterward, then require recent genuine scheduled completion and full doctor health before workers. Later failure cases start from that established healthy baseline. Before proceeding, assert all returned ARNs equal the manifest; both failure destinations equal `QUEUE_ARN`; pipe source/target/role/template match the manifest; pipe is actually RUNNING; concurrency is 1; queue has no known backlog; no unrelated actor is changing these resources. Capture all role inline/attached policy inventory when validating the baseline. Expected drift during injection must not be disguised by editing the manifest.
+Capture original `describe-alarms`, baseline doctor output/exit status, full function/config digests, queue counts and finite-window logs too. For the first worker-free Case B canary, missing failure stream/recent success and unsettled alarms are expected pending states; verify actual configuration/role/route pins before invoking it. Finish/disarm the campaign afterward while parked, then require recent genuine scheduled completion and full doctor health before workers. Later failure cases start from that established healthy baseline. Before proceeding, assert all returned ARNs equal the manifest; both failure destinations equal `QUEUE_ARN`; pipe source/target/role/template match the manifest; pipe is actually RUNNING; concurrency is 1; queue has no known backlog; no unrelated actor is changing these resources. Capture all role inline/attached policy inventory when validating the baseline. Expected drift during injection must not be disguised by editing the manifest.
 
 GetRolePolicy may represent the policy as a document or URL-encoded text depending on client handling. Normalize only for editing, preserving the complete original response separately; do not use `unquote_plus`, which changes literal `+`. [GetRolePolicy CLI](https://docs.aws.amazon.com/cli/latest/reference/iam/get-role-policy.html)
 
@@ -154,11 +154,36 @@ including denied repair calls, has its own immutable capture.
 RESTORE_FAILED or RESTORE_PARKED_REVIEW_REQUIRED; neither claims health or normal
 schedule restoration. Inspect the archived readbacks, exact policy bytes, actual
 Pipe CurrentState and original settings before the separately reviewed final
-normal-schedule update. Poll bounded transitions and keep unique captures. Only
-when every required repair/readback agrees may the full schedule.restore.json
-be sent through awsc; its original state/dates must remain intact. Never enable
-an originally disabled schedule. Capture a later genuine scheduled success and
-normal doctor/alarms after the approved enabled configuration is restored.
+normal-schedule update. Poll bounded transitions and keep unique captures.
+
+In the active campaign shell, complete recovery and disarm its traps **before**
+any normal schedule restoration, the canary-to-H1 transition, or offline activation:
+
+```bash
+finish_failure_campaign
+```
+
+This operation runs parked recovery while protection remains armed, verifies the
+complete writable schedule against the parked snapshot, original concurrency,
+and settled original Pipe state, then records `finished.json` and removes the
+campaign traps/lock. A failed repair or mismatched readback returns nonzero and
+keeps recovery armed; do not proceed to activation. After bounded polling resolves
+transitions, retry finish while still parked. Exact policy comparison, delivery
+backlog inspection, and later health checks remain required independently.
+
+Only after finish succeeds and every required repair/readback agrees may the full
+schedule.restore.json be sent through awsc; its original state/dates must remain
+intact. Normal shell exit then cannot send another parking update. Never enable
+an originally disabled schedule through this restoration. The initial canary
+starts disabled: finish it before the separately reviewed enabled foundation
+plan. Capture later genuine scheduled success and normal doctor/alarms.
+
+The standalone restore.sh is emergency parked recovery; it cannot disarm traps in
+another shell and must not be run after approved normal restoration. After shell
+loss, use it and inspect the parked result before separately reviewed restoration
+in a new shell. Start each later failure phase with a **new campaign directory and
+fresh originals**; a finished campaign cannot be rearmed. Preserve the prior
+campaign and its recovery evidence.
 
 Arm the per-resource .armed marker **before** each mutation because a timeout may
 follow AWS acceptance. Normal recovery does not erase markers, originals, errors,

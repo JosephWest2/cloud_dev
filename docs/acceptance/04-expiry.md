@@ -3,8 +3,9 @@
 **Preparation only: live acceptance is pending.** No AWS authentication, API
 observation, migration, launch, scheduled cleanup, or laptop-offline result is
 claimed by this record. #42–#47 are merged and independently reviewed; final #47 at `14bb326` is
-integrated into this acceptance branch. Final checks and the reviewed live
-campaign remain pending. Keep #48 and parent #4 open until every live gate
+integrated into this acceptance branch. All required local/build/infra/race checks
+passed on `30ab076`; subsequent protocol lifecycle checks are recorded separately
+below. The reviewed live campaign remains pending. Keep #48 and parent #4 open until every live gate
 below has actual evidence. Interactive release #5 is a separate gate.
 
 This document is an executable protocol plus an evidence ledger. Commands under
@@ -16,7 +17,7 @@ scheduler delivery, or cleanup while a laptop is offline.
 
 | Item | Actual preparation result |
 | --- | --- |
-| Preparation baseline | `73076ea`, merged #42–#46; final tested revision pending the preparation-fix review and root-owned checks |
+| Tested build revision | `30ab07614cf29b2389f2c997c7035b909a166cc2`; production Go/infra bytes match reviewed main `14bb326c1dcabef92e4a645554da17aee1d7f819` |
 | Date | September 15, 2026 UTC (September 14, US/Central) |
 | Durable evidence directory | `~/.local/state/devbox/acceptance/04-expiry/20260915T023635Z-4d506132`, mode 0700 |
 | Original configuration | User config and referenced manifest copied byte-for-byte to `original-config/`; original paths/hashes recorded privately in `preservation.json`; originals untouched |
@@ -24,10 +25,10 @@ scheduler delivery, or cleanup while a laptop is offline.
 | Initial helper verification | Five controlled tests passed; `commands/helper-tests/` preserves the original preparation result |
 | Capture/activation verification | Thirteen controlled tests passed, including real subprocess signal races, stale activation rejection and sourced-wrapper recovery; `commands/preparation-review-fixes/` preserves stdout/stderr/time/exit/hashes |
 | Tool versions captured | Go `go1.27.1-X:nodwarf5 linux/amd64`; Python `3.14.7`; AWS CLI `2.34.32`; OpenTofu `1.12.6 linux_amd64`; jq `1.8.2` |
-| Locked provider | AWS `6.64.0`; final backendless init/validation pending |
+| Locked provider | AWS `6.64.0`; backendless init/validation and all infrastructure tests passed at `30ab076` |
 | Durable OpenTofu | Parent preserved `tools/tofu-1.12.6` under the run with hash/provenance; use it for migration/recovery after `/tmp` loss |
 | Intermediate integration | Parent reports `make check` and `make build` passing on `73076ea`; this is not the final #48 revision or a live result |
-| Final artifacts/tests | Pending preparation-fix review, exact revision pinning and root-owned final checks |
+| Final artifacts/tests | Passed at `30ab076`; durable `commands/final-*` captures and `artifacts/integrated-build-30ab076.json`; see exact results below |
 | AWS scope and resources | Prior accepted scope below is a planning input; fresh identity/state/inventory checks remain pending |
 
 Prior accepted scope was account `464557813916`, region `us-east-2`, deployment
@@ -47,8 +48,8 @@ state, credential processes, or private keys.
 
 ## Parent requirement and evidence matrix
 
-The named tests below exist in the merged implementation. Their final-revision
-rerun remains pending; child verification is linked separately.
+The named tests below passed with the integrated production implementation at
+`30ab076`; live predicates remain pending. Child verification is linked separately.
 
 | Parent deliverable | Child / meaningful controlled coverage | Required live evidence | Status |
 | --- | --- | --- | --- |
@@ -70,11 +71,11 @@ rerun remains pending; child verification is linked separately.
 
 | Failure gate | Coverage and evidence required | Status |
 | --- | --- | --- |
-| UTC equality, invalid/overflow/long durations | Pure policy tests plus delayed dispatch/final SDK gate tests; label controlled | Final rerun pending |
-| Missing/malformed/duplicate expiry, other owner/deployment/account/region, unmanaged records | Pure/service/CLI fixtures; do not create unrelated live resources solely for this | Final rerun pending |
-| Incomplete scan, wrong-ID response, scope/expiry drift | Service pagination/recheck and real SDK loopback tests; zero unauthorized sends | Final rerun pending |
+| UTC equality, invalid/overflow/long durations | Pure policy tests plus delayed dispatch/final SDK gate tests; label controlled | Controlled tests passed at `30ab076` |
+| Missing/malformed/duplicate expiry, other owner/deployment/account/region, unmanaged records | Pure/service/CLI fixtures; do not create unrelated live resources solely for this | Controlled tests passed at `30ab076` |
+| Incomplete scan, wrong-ID response, scope/expiry drift | Service pagination/recheck and real SDK loopback tests; zero unauthorized sends | Controlled tests passed at `30ab076` |
 | Concurrent invocation, terminal disappearance, exact volume evidence | Service race and terminal-history tests; live benign rerun separately | Pending |
-| Temporary termination API failure and later recovery | Controlled `TestDenialProtectionThrottlingAndLaterScanRecovery`, with actionable event and next-scan success; no live throttling claim | Final rerun pending |
+| Temporary termination API failure and later recovery | Controlled `TestDenialProtectionThrottlingAndLaterScanRecovery`, with actionable event and next-scan success; no live throttling claim | Controlled tests passed at `30ab076` |
 | Disabled/failed schedule detectable and repaired | Captured schedule/health failure, exact preserved restore, later scheduled success | Pending live |
 | Scheduler retry exhaustion before handler starts | Independent retained failure envelope with actual retry/exhaustion fields, original delivery correlation, no handler start; exact mechanism from reviewed #47/#48 failure protocol | Pending live |
 | Lambda async pre-handler failure | Retained OnFailure envelope for a new async event while concurrency is zero, no handler start, exact restore | Pending live |
@@ -129,9 +130,9 @@ preserved output before deciding the next operation; an up error may still have
 allocated workers. Optional `capture --timeout` terminates its process group and
 preserves partial output; it never automatically retries a command.
 
-After these preparation fixes and any demonstrated integration corrections are reviewed, capture
-all final checks once. Parent owns this final run; do not reuse intermediate
-success as final evidence:
+The parent executed the following checks at `30ab076` in the durable tested
+checkout. This is the executed recipe, **not a request to rerun or reuse these
+immutable capture labels**:
 
 ```bash
 capture final-revision git rev-parse HEAD
@@ -145,12 +146,12 @@ capture final-race go test -race ./internal/expiry ./internal/expirycleanup \
 capture final-diff git diff --check
 ```
 
-Use a separate clean checkout of that pinned revision for offline infrastructure
-checks. Unset live `TF_DATA_DIR`; the two module directories get independent,
-backend-disabled data. Disable ambient AWS credential discovery for this check:
+The parent also used a separate clean checkout of `30ab076` for offline
+infrastructure checks, with independent backend-disabled data and ambient AWS
+credential discovery disabled. Executed recipe:
 
 ```bash
-acceptance_revision=$(git rev-parse HEAD)
+acceptance_revision=30ab07614cf29b2389f2c997c7035b909a166cc2
 git worktree add --detach "$acceptance_run/offline-checkout" "$acceptance_revision"
 capture final-infra env -u TF_DATA_DIR -u AWS_PROFILE -u AWS_ACCESS_KEY_ID \
   -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN \
@@ -159,11 +160,44 @@ capture final-infra env -u TF_DATA_DIR -u AWS_PROFILE -u AWS_ACCESS_KEY_ID \
   infra-check TOFU=/tmp/devbox-tools/tofu
 ```
 
-Pin/copy the tested CLI, runner, cleanup ZIP, helper, exact revision and hashes
-under `artifacts/`. `cleanup-check` checks repeated ZIP bytes and content changes;
-record its real output, then confirm copied ZIP hex digest equals the applied
-manifest and the decoded base64 Lambda CodeSha256. If later code changes, rerun
-affected checks and update the tested-revision boundary explicitly.
+### Actual integrated check evidence
+
+All paths below are relative to the private durable run above. No AWS credentials,
+authentication, APIs or cloud mutations were used for these checks.
+
+| Capture | Actual result at `30ab076` (September 15, 2026 UTC) |
+| --- | --- |
+| `commands/final-revision`, `final-worktree`, `final-diff` | Exact revision pinned; clean checkout; diff check passed |
+| `commands/final-helper-tests` | 13 controlled helper tests passed, 03:16:47–03:16:57 |
+| `commands/final-make-check` | Passed, 03:17:20–03:17:36 |
+| `commands/final-make-build` | Passed, 03:17:36–03:17:37 |
+| `commands/final-cleanup-package` | Passed, 03:17:37–03:17:39; architecture, executable, deterministic ZIP and digest-change checks |
+| `commands/final-race` | Six listed packages passed, 03:17:20–03:18:24 |
+| `commands/final-infra` | Bootstrap 1 and foundation 28 tests plus real OpenTofu export/Go digest bridge passed, 03:17:20–03:18:21 |
+
+`artifacts/integrated-build-30ab076.json` records these pinned artifact SHA-256
+values and byte-identical cleanup ZIPs from both isolated checkouts:
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `devbox` | 25782861 | `7ccada5a0ef6c05c160086136165293a8c443b1427f9984c7411186a1157125b` |
+| `devbox-runner-linux-amd64` | 13869412 | `c4237239f21270f85583885582e220515f20157ad683ca79383b4dd9ab655a27` |
+| `devbox-cleanup-linux-amd64.zip` | 8464450 | `6287cf664eab47b2c4ffecd587e020b361cfdb315063f895a9e6713a2d82cdf8` |
+
+The subsequent campaign-finish correction changes only protocol scripts/tests
+and this ledger. Its affected verification is recorded in the commit containing
+this paragraph: 14 controlled helper tests passed in
+`commands/lifecycle-review-fix-tests/`, including real sourced-wrapper,
+generated-recovery and stateful-stand-in lifecycle scenarios; all 23 Bash document
+blocks, wrapper/Python syntax and diff checks passed. The capture also pins the
+exact tested script bytes in `source-revision.json`. These are local controlled results, not live evidence.
+The full Go/build/infra/race results above apply to `30ab076`, not to an unrun
+full suite at the later script revision. Fresh independent preparation review
+remains pending. Preserve the initial helper provenance and each later helper
+revision separately; never overwrite the earlier artifact.
+
+The live migration must still compare the copied cleanup ZIP digest with the
+actual manifest and decoded Lambda CodeSha256. No deployed match is claimed.
 
 ## Planned live protocol — no steps run yet
 
@@ -194,7 +228,8 @@ affected checks and update the tested-revision boundary explicitly.
    after a real event; doctor intentionally cannot verify the missing stream
    before this canary. Verify configuration/role/route pins while recording that
    expected initial health failure, then preserve the real OnFailure record and
-   restore original concurrency/settings. Reuse this Case B evidence in the
+   finish/disarm the campaign while the schedule remains parked, verifying
+   original concurrency/settings before crossing to the enabled-plan step. Reuse this Case B evidence in the
    final matrix; it is live route evidence, not scheduled/offline worker proof.
 7. Parent prepares/reviews/applies the separate saved enabled-schedule plan.
    Capture a genuine successful scheduled invocation, summary/end/correlation,
@@ -446,7 +481,7 @@ permanent launch records as acceptance cleanup.
 
 | Gate | Evidence / result |
 | --- | --- |
-| Final revision and all required local/infra/race checks | Pending |
+| Pinned production build and required local/infra/race checks | Passed at `30ab076`; production source matches reviewed main `14bb326`; protocol-only lifecycle regression results recorded separately above |
 | Concrete migration, independent review, authorization, exact apply/export | Pending |
 | Restricted operator Spot/batch and explicit On-Demand creation | Pending |
 | Recent genuine scheduled success and exact expired dry-run | Pending |

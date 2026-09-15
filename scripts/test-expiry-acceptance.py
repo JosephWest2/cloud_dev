@@ -349,5 +349,93 @@ done
             self.assertIn('partial stderr',(saved/'stderr').read_text())
 
 
+    def test_campaign_finish_disarms_only_after_verified_parked_recovery(self):
+        wrapper=Path(__file__).with_name('expiry-failure-capture.sh').resolve()
+        helper=Path(__file__).with_name('expiry-acceptance.py').resolve()
+        for scenario in ('success','failed-park','unsettled-pipe'):
+            with self.subTest(scenario=scenario), tempfile.TemporaryDirectory() as directory:
+                root=Path(directory); (root/'commands').mkdir(mode=0o700)
+                campaign=root/'campaign'; campaign.mkdir(mode=0o700)
+                parked=acceptance.schedule_update(self.schedule(),'DISABLED')
+                (campaign/'schedule.parked.json').write_text(json.dumps(parked))
+                (campaign/'schedule.restore.json').write_text(json.dumps(dict(parked,State='ENABLED')))
+                (campaign/'concurrency.original.json').write_text('{"ReservedConcurrentExecutions":1}')
+                (campaign/'pipe.original.json').write_text('{"DesiredState":"RUNNING"}')
+                for resource in ('concurrency','pipe'):
+                    (campaign/f'restore-{resource}.armed').touch()
+                state=root/'state.json'
+                state.write_text(json.dumps({'schedule':dict(parked,State='ENABLED'),'concurrency':0,'pipe':'STOPPED'}))
+                stub=root/'aws-stub'
+                stub.write_text('''#!/usr/bin/env python3
+import json,os,pathlib,sys
+root=pathlib.Path(os.environ['STUB_ROOT']); args=sys.argv[1:]
+p=root/'state.json'; state=json.loads(p.read_text()); output={}
+with (root/'calls').open('a') as f:f.write(json.dumps(args)+'\\n')
+def value(flag):return args[args.index(flag)+1]
+if 'update-schedule' in args:
+    request=json.loads(pathlib.Path(value('--cli-input-json').removeprefix('file://')).read_text())
+    if request['State']=='DISABLED' and os.environ['SCENARIO']=='failed-park':sys.exit(7)
+    state['schedule']=request
+elif 'put-function-concurrency' in args:state['concurrency']=int(value('--reserved-concurrent-executions'))
+elif 'delete-function-concurrency' in args:state['concurrency']=None
+elif 'start-pipe' in args:state['pipe']='RUNNING'
+elif 'stop-pipe' in args:state['pipe']='STOPPED'
+elif 'get-schedule' in args:output=dict(state['schedule'],Arn='stand-in')
+elif 'get-function-concurrency' in args:output={'ReservedConcurrentExecutions':state['concurrency']}
+elif 'describe-pipe' in args:
+    output={'DesiredState':state['pipe'],'CurrentState':'STARTING' if os.environ['SCENARIO']=='unsettled-pipe' else state['pipe']}
+else:sys.exit(91)
+p.write_text(json.dumps(state));print(json.dumps(output))
+''')
+                stub.chmod(0o700)
+                sleep=root/'sleep'; sleep.write_text('#!/bin/sh\nexit 0\n'); sleep.chmod(0o700)
+                environment=dict(os.environ,WRAPPER=str(wrapper),ACCEPTANCE_HELPER=str(helper),
+                    ACCEPTANCE_RUN=directory,CAMPAIGN_DIR=str(campaign),SETUP_PROFILE='test',REGION='us-east-2',
+                    AWS_EXECUTABLE=str(stub),STUB_ROOT=directory,SCENARIO=scenario,PATH=directory+':'+os.environ['PATH'],
+                    SCHED_ROLE_NAME='role',SCHED_POLICY='policy',PIPE_NAME='pipe',FUNCTION_ARN='function',
+                    SCHEDULE_NAME='dev',SCHEDULE_GROUP='dev')
+                result=subprocess.run(['bash','-c','''
+set -e
+source "$WRAPPER"
+prepare_failure_restore
+arm_failure_restore
+if finish_failure_campaign; then
+  test "$SCENARIO" = success
+  test "$FAILURE_RECOVERY_ARMED" = 0
+  test -z "$(trap -p EXIT INT TERM HUP)"
+  if arm_failure_restore; then exit 92; fi
+  awsc normal-enable scheduler update-schedule --cli-input-json "file://$CAMPAIGN_DIR/schedule.restore.json"
+  awsc verify-enable scheduler get-schedule --name dev --group-name dev > "$CAMPAIGN_DIR/normal.json"
+  exit 0
+else
+  test "$SCENARIO" != success
+  test "$FAILURE_RECOVERY_ARMED" = 1
+  test -n "$(trap -p EXIT)"
+  test ! -e "$CAMPAIGN_DIR/finished.json"
+  exit 7
+fi
+'''],env=environment,capture_output=True,text=True,timeout=20)
+                self.assertEqual(result.returncode,0 if scenario=='success' else (1 if scenario=='failed-park' else 7),result.stderr)
+                final=json.loads(state.read_text())
+                restores=list((campaign/'cases').glob('restore-*/result.json'))
+                calls=[json.loads(line) for line in (root/'calls').read_text().splitlines()]
+                if scenario=='success':
+                    self.assertEqual(final['schedule']['State'],'ENABLED')
+                    self.assertEqual(json.loads((campaign/'normal.json').read_text())['State'],'ENABLED')
+                    self.assertEqual(len(restores),1,'normal EXIT must not run recovery again')
+                    self.assertEqual(sum('update-schedule' in call for call in calls),2)
+                    self.assertEqual(json.loads((campaign/'finished.json').read_text())['status'],'CAMPAIGN_FINISHED_PARKED')
+                else:
+                    self.assertEqual(len(restores),2,'failed finish must run generated restore on EXIT')
+                    self.assertFalse((campaign/'finished.json').exists())
+                    self.assertFalse((campaign/'normal.json').exists())
+                    if scenario=='failed-park':
+                        self.assertEqual(final['concurrency'],0,'failed parking must retain concurrency guard')
+                        self.assertFalse(any('put-function-concurrency' in call for call in calls))
+                    else:self.assertEqual(final['schedule']['State'],'DISABLED')
+                self.assertTrue((campaign/'restore.sh').is_file())
+                self.assertEqual((campaign/'tools/expiry-failure-capture.sh').read_bytes(),wrapper.read_bytes())
+
+
 if __name__ == "__main__":
     unittest.main()
