@@ -1,26 +1,34 @@
 # Issue #48: pre-handler failure and evidence-route protocol
 
-**Preparation only; every live case is pending.** This researched protocol
-accompanies [the expiry acceptance ledger](04-expiry.md). Its AWS mechanisms have
-been checked against official documentation; actual outcomes have not been
-observed. The #47 interface is merged at `14bb326`; match actual exported IDs and review
-complete restoration artifacts before the authorized live checkpoint. No AWS calls were made while
-preparing this protocol.
+**Live results:** Case B async pre-handler failure and Case C stopped-consumer
+backlog/same-message recovery passed. Case A retained permanent denied delivery
+with zero retries and no exhaustion attribute. Both proposed synchronous/streaming
+A2 mechanisms were rejected by AWS. All fault campaigns are restored; final normal
+scheduled completion,16healthy alarms and doctor24/24 passed.
+
+Literal Scheduler retry exhaustion remains **UNPROVED**. The separately authorized
+physical-offline retry and all worker/root cleanup passed. See the
+[acceptance ledger](04-expiry.md) for exact evidence and revision boundaries.
+PR55 remains draft and #48/#4 remain open pending independent final review and a
+user decision on the unresolved live gate. No waiver or further AWS probe is
+inferred. The procedures below preserve the completed campaign and recovery
+instructions; they are not a request to repeat injections.
 
 ## Recommendations and the important distinction
 
 1. **Scheduler denied delivery:** append an explicit Deny for only `lambda:InvokeFunction` on the exact cleanup function to the Scheduler role's existing inline policy. Retain its trust and exact-queue `sqs:SendMessage` allow. This tests Scheduler delivery failure reaching its DLQ and retained Logs before handler startup. IAM explicit denies override allows. [IAM evaluation](https://docs.aws.amazon.com/IAM/latest/UserGuide/reference_policies_evaluation-logic.html)
 2. **Do not call that retry exhaustion unless the received record proves it.** Scheduler's `EXHAUSTED_RETRY_CONDITION` appears for retryable errors and is absent for permanent errors. A permission rejection may be permanent. Capture its actual classification; never require two retries from the Deny mechanism. [Scheduler DLQ attributes](https://docs.aws.amazon.com/scheduler/latest/UserGuide/configuring-schedule-dlq.html)
-3. **For the literal exhaustion gate**, use the same schedule, role, function and DLQ, temporarily changing its target to universal `lambda:invoke` with `InvocationType=RequestResponse` while function reserved concurrency is zero. Universal Lambda Invoke is documented, and Invoke supports synchronous requests and reports function concurrency exhaustion as `TooManyRequestsException`. This composition should yield retryable 429 delivery failures without starting the handler; require the actual DLQ exhaustion attribute before declaring success. This is an inference from supported APIs, not an already observed result. Preserve the configured retry budget, 2 retries/300 seconds. [Universal target](https://docs.aws.amazon.com/scheduler/latest/UserGuide/managing-targets-universal.html), [Lambda Invoke](https://docs.aws.amazon.com/lambda/latest/api/API_Invoke.html), [Scheduler retry policy](https://docs.aws.amazon.com/scheduler/latest/APIReference/API_RetryPolicy.html)
+3. **The attempted synchronous A2 composition is unsupported.** AWS rejected universal `lambda:invoke` with `InvocationType=RequestResponse` and required `Event`. Do not rerun it, omit InvocationType to rely on a synchronous default, or substitute Lambda async failure for Scheduler exhaustion. A replacement mechanism needs technical validation and actual retained Scheduler retry/exhaustion evidence. Generic Lambda API support does not establish Scheduler integration support. [Lambda Scheduler integration](https://docs.aws.amazon.com/lambda/latest/dg/with-eventbridge-scheduler.html)
 4. **Lambda async pre-handler failure:** reserved concurrency zero is explicitly documented to send **new asynchronous events** directly to the configured OnFailure destination, without retries or function triggering. Restore concurrency afterward; events already delivered to the destination are not automatically replayed. [Lambda retained invocation records](https://docs.aws.amazon.com/lambda/latest/dg/invocation-async-retain-records.html)
 5. **Consumer failure:** prefer `StopPipe`, verify actual `STOPPED`, then generate one new correlated async failure. Observe backlog and failing doctor; `StartPipe`, verify `RUNNING`, and require the original failure record to arrive in retained Logs. This exercises stopped-consumer detection and recovery with fewer moving parts than IAM breakage. Stop/start are supported reversible operations on the exact pipe. [StopPipe](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_StopPipe.html), [StartPipe](https://docs.aws.amazon.com/eventbridge/latest/pipes-reference/API_StartPipe.html)
 
-Run the first Case B canary before H1 health and any workers. Run the remaining cases while the operator is online after verified worker teardown, or with independently confirmed future workers only. Freeze the scope inventory and verify there are no eligible workers to clean up if a control-plane change propagates late. None of these commands allocates a worker or changes any worker tags, TTLs, instances, volumes, Fleet requests, results, or launch ledgers. The separate three-worker/offline campaign remains mandatory; these tests do not replace it.
+Run the first Case B canary before H1 health and any workers. Run the remaining cases while the operator is online after verified worker teardown, or with independently confirmed future workers only. Freeze the scope inventory and verify there are no eligible workers to clean up if a control-plane change propagates late. None of these commands allocates a worker or changes any worker tags, TTLs, instances, volumes, Fleet requests, results, or launch ledgers. Original batch/market evidence and the separately authorized physical-offline retry remain separate gates; these failure tests do not replace them.
 
 ## Current implementation handoff
 
 These paths match merged #47 at `14bb326`. Live exported-manifest verification
-remains pending. Bind actual IDs from the final export instead of guessing names:
+passed for the installed foundation. Bind actual IDs from the current export
+instead of guessing names:
 
 | Resource | Manifest JSON path |
 |---|---|
@@ -44,7 +52,7 @@ Current route is standard SSE-SQS, 14-day retention, 1,800-second visibility; Pi
 
 The #46 Scheduler target has **literal** `<aws.scheduler.*>` transport keywords; its manifest hash is over canonical JSON. Restore the original fetched `Target.Input` string intact. Never replace literal brackets with JSON `\\u003c`/`\\u003e` sequences in the string sent to Scheduler. The final doctor canonicalizes fetched JSON before comparing the input hash.
 
-## Setup and durable capture (commands for the later approved run)
+## Setup and durable capture (reviewed procedure for each authorized phase)
 
 These are staged fragments, not an unattended script. Source the actual wrapper below: every awsc call invokes the capture executable with explicit AWS argv. Captures use unique case/step labels, preserve stderr/status/times/hashes, snapshot file:// and fileb:// inputs, and optionally snapshot output files. Redirected stdout files are convenience copies; immutable commands/ captures are authoritative. Never try to execute a shell function through capture. Use a fresh private directory for each attempt; never overwrite a previous attempt's originals. `MANIFEST` must be the actual v6 export JSON, not the outer `tofu output -json` map. `SETUP_PROFILE` is the already authorized setup identity; the operator/health roles intentionally lack these mutation permissions. Do not add permissions to the operator to run the campaign.
 
@@ -197,6 +205,19 @@ Do not replay destination messages into cleanup during recovery: the Pipe should
 
 ## Case A: exact-role denied Scheduler delivery
 
+Actual `denied-delivery-88667b852400` retained permanent delivery failure for the
+original `04:43:00Z` occurrence: `AccessDeniedException`, RETRY_ATTEMPTS0,
+EXHAUSTED_RETRY_CONDITION absent, payload truncation/invalid flags false. The
+111-predicate proof binds the real Scheduler execution ID across attributes and
+the JSON-string Payload inside AWS's Lambda `Event` request wrapper, with no
+matching handler invocation in the complete bounded window. Source:
+`failure-20260916T043635Z-65620005/cases/denied-delivery-88667b852400/delivery-proof-03.json`.
+**Delivery-route retention passed; literal retry exhaustion remains UNPROVED.**
+Full guarded recovery and final normal health passed; sources are in
+`migration/final-after-faults-proof.json`. Preserve this completed injection;
+do not replay it merely to reproduce the row or reinterpret zero retries.
+
+
 ```bash
 begin_failure_case denied-delivery
 ```
@@ -247,40 +268,48 @@ Required retained-record predicates:
 
 Restore the whole original policy after capturing the event. `TargetErrorCount` and `InvocationsSentToDeadLetterCount` support the result; `InvocationsFailedToBeSentToDeadLetterCount` must have no observed failure. These are `AWS/Scheduler`, dimension `ScheduleGroup=$SCHEDULE_GROUP`, and are best-effort telemetry rather than an event ledger. [Scheduler metrics](https://docs.aws.amazon.com/scheduler/latest/UserGuide/monitoring-cloudwatch.html)
 
-## Case A2: strict Scheduler retry exhaustion without handler startup
+## Case A2: unsupported synchronous target; exhaustion unproved
 
-```bash
-begin_failure_case exhaustion
-```
+The proposed same-function universal `lambda:invoke` target with
+`InvocationType=RequestResponse` was **rejected** during `UpdateSchedule` on
+September 16 at `03:54:21Z`. AWS returned `ValidationException` requiring `Event`.
+The former executable recipe is removed because its integration assumption was
+disproved. No scheduled retry/exhaustion claim follows from this control-plane
+rejection, and the command's exit 254 is retained rather than relabeled success.
 
-Use this when #48 literally requires exhausted retries. Start with the original Scheduler policy restored; leave no Deny in place. Park the schedule, then set and read back reserved concurrency zero. Temporarily use a universal synchronous target, preserving the same RoleArn, DeadLetterConfig and RetryPolicy:
+Raw capture: `commands/exhaustion-f5dceb2c89ff-arm-once-476b61b7/`.
+Case directory: `failure-20260916T035130Z-de6b048a/`.
+EXIT recovery held the 600-second guard, restored exact parked settings/concurrency/
+Pipe by `04:04:25Z`, and the originating shell closed. Independent setting review
+preceded normal restoration at `04:06:14Z`; exact readback and doctor 24/24 passed.
+See `recovery-verified-after-shell-exit.json`, `normal-restoration-review.json`
+and `commands/a2-rejected-normal-{update,readback,doctor-01}/`.
 
-```bash
-touch "$CAMPAIGN_DIR/restore-concurrency.armed"
-awsc step-20 lambda put-function-concurrency --function-name "$FUNCTION_ARN" --reserved-concurrent-executions 0
-awsc step-21 lambda get-function-concurrency --function-name "$FUNCTION_ARN" > "$CASE_DIR/concurrency.zero.json"
-jq -e '.ReservedConcurrentExecutions == 0' "$CASE_DIR/concurrency.zero.json" >/dev/null
-python3 - "$CAMPAIGN_DIR" "$FUNCTION_ARN" "$CASE_DIR" <<'PY'
-import json, pathlib, sys
-p = pathlib.Path(sys.argv[1]); f = sys.argv[2]
-u = json.loads((p/'schedule.parked.json').read_text())
-t = u['Target']
-payload = t['Input']
-t['Arn'] = 'arn:aws:scheduler:::aws-sdk:lambda:invoke'
-t['Input'] = json.dumps({'FunctionName': f, 'InvocationType': 'RequestResponse',
-                         'Payload': payload}, separators=(',', ':'))
-# json.dumps does not HTML-escape literal Scheduler angle brackets.
-(pathlib.Path(sys.argv[3])/'schedule.sync-zero.parked.json').write_text(json.dumps(u)+'\n')
-PY
-```
+The literal exhaustion gate remains open. Any replacement must produce a retained
+**Scheduler** DLQ envelope with exact original delivery correlation, an actual
+retryable error, positive `RETRY_ATTEMPTS`, and `EXHAUSTED_RETRY_CONDITION` equal
+to the documented `MaximumRetryAttempts` or `MaximumEventAgeInSeconds`, with no
+corresponding handler startup. Unknown condition strings fail closed. See the
+[Scheduler DLQ attributes](https://docs.aws.amazon.com/scheduler/latest/UserGuide/configuring-schedule-dlq.html). Age
+exhaustion must not be described as two completed retries unless the event says so.
+Case A permanent denial and Case B async OnFailure remain separate evidence.
+A subsequent disabled capability probe at `04:13:53Z` rejected
+`invokeWithResponseStream` as an invalid Scheduler `aws-sdk:lambda` API.
+`failure-20260916T041206Z-09027586/cases/stream-capability-61b43c070827/`
+retains the rejection and unchanged full DISABLED schedule/concurrency-1 readbacks.
+No scheduled occurrence or function invocation was requested. This streaming
+variant is not an actionable supported fixture. Normal settings were restored at `04:15:09Z`, doctor24/24 passed at `04:15:27Z`,
+and scheduled invocation `636aaa17-cd77-48a3-acd1-b833fb7f3557` completed successfully
+at `04:15:50Z` in the next campaign's baseline capture. Neither rejected mechanism
+calls for production changes.
+No replacement mechanism or scope waiver is established by this record.
 
-Use the complete one-time update above with `CASE_BASE` set to `schedule.sync-zero.parked.json`, then call `scheduler update-schedule --cli-input-json file://...`. Payload is the documented JSON string form, **not base64**; retain its four literal Scheduler keywords. The only target service remains Lambda and only `FunctionName` is the existing cleanup ARN. Do not use a missing/different function or induce account-wide throttling.
-
-Live pass requires a retained **Scheduler** DLQ record whose target is universal Lambda Invoke, whose body points to the exact function with `InvocationType=RequestResponse`, whose error reflects concurrency throttling, and whose `EXHAUSTED_RETRY_CONDITION` is `MaximumRetryAttempts` or `MaximumEventAgeInSeconds`. Capture `RETRY_ATTEMPTS`; to claim retries actually occurred, require a positive observed retry count. A retryable-error age exhaustion still proves the configured retry-policy limit, but do not describe it as two completed retries unless the record says so.
-
-AWS API support for this composition is established above. Whether Scheduler emits the anticipated error classification and completes the path within the campaign timeout must be proved by the live record. If it gives a permanent rejection, accepts an unsupported shape, or emits no retained record, mark the literal exhaustion gate failed/pending and restore; do not silently substitute Case A or async OnFailure evidence.
-
-Keep concurrency zero until the one-time attempts settle and the schedule is parked back to its original target. This prevents a late retry from starting cleanup during restoration. Then restore concurrency and full original schedule. This case produces a Scheduler DLQ message, not a Lambda async destination message, because the request is synchronous.
+`TestOpenTofuExport/scheduler_retry_exhausted_controlled` now verifies full
+attributes/body/correlation retention, explicitly including positive retries and
+an exhaustion condition, using controlled typed substitution in the actual
+rendered Pipe template. Permanent-denial and Lambda async variants remain separate.
+The isolated mock export and Go bridge passed; this is not live AWS classification
+or retry-exhaustion proof.
 
 ## Case B: Lambda asynchronous failure before the handler starts
 
@@ -294,7 +323,16 @@ begin_failure_case async-prehandler
 
 Keep the full original schedule parked to make this a single controlled direct async invocation. This is **live destination-route evidence**, not the scheduled/offline worker proof. An actual normal Scheduler tick while concurrency is zero is a valid additional end-to-end variation: templated Scheduler invokes Lambda asynchronously. [Scheduler with Lambda](https://docs.aws.amazon.com/lambda/latest/dg/with-eventbridge-scheduler.html)
 
-Set/read back concurrency zero as above. Verify `get-function-event-invoke-config` still has the original OnFailure exact queue, maximum age 300 and retry attempts 0. Leave function code, execution role, environment, trust and SQS SendMessage intact. Create one unique, valid correlation-only input:
+Set and read back concurrency zero with restoration armed:
+
+```bash
+touch "$CAMPAIGN_DIR/restore-concurrency.armed"
+awsc step-20 lambda put-function-concurrency --function-name "$FUNCTION_ARN" --reserved-concurrent-executions 0
+awsc step-21 lambda get-function-concurrency --function-name "$FUNCTION_ARN" > "$CASE_DIR/concurrency.zero.json"
+jq -e '.ReservedConcurrentExecutions == 0' "$CASE_DIR/concurrency.zero.json" >/dev/null
+```
+
+Verify `get-function-event-invoke-config` still has the original OnFailure exact queue, maximum age 300 and retry attempts 0. Leave function code, execution role, environment, trust and SQS SendMessage intact. Create one unique, valid correlation-only input:
 
 ```bash
 # CASE_ID and CASE_DIR come from begin_failure_case; Case C reuses these
@@ -316,6 +354,22 @@ Capture the zero-concurrency readback covering the request, absence of its corre
 For the normal Scheduler-tick variant, distinguish envelopes by structure: Scheduler DLQ uses SQS message attributes for delivery errors; Lambda OnFailure body contains `requestContext` and `requestPayload`. A successful Scheduler delivery can coexist with failed Lambda async execution. Preserve both correlation layers.
 
 ## Case C: stopped consumer, real backlog, and recovery of the original event
+
+Actual `pipe-stopped-f5f816f3ad5b` verified the real stopped-consumer backlog,
+visible-queue ALARM and failing doctor, then the original failure message reaching
+retained Logs after restart with its pre-restart failure/SQS timestamps intact.
+The recovered queue was empty; no correlated handler startup appears in the
+complete bounded query. The 177-predicate proof and source hashes are under
+`failure-20260916T041545Z-ae5c055f/cases/pipe-stopped-f5f816f3ad5b/transport-proof-01.json`.
+**Case C transport and full normal recovery passed.** The 600-second guard
+finished and recovery was disarmed; exact original settings and enabled schedule
+were restored. Scheduled request `9c6aaa1c-4860-408b-b89c-b433ff8958d3` completed at
+`04:34:57.448022126Z`, all 16 alarms were OK and doctor24/24 passed.
+`failure-20260916T041545Z-ae5c055f/normal-recovery-proof.json` pins the sources.
+Final health after the last executed fault also passed. See the acceptance ledger
+for exact IDs/times. The procedure below documents the completed injection;
+do not repeat it merely to reproduce a ledger row.
+
 
 ```bash
 begin_failure_case pipe-stopped
@@ -392,7 +446,7 @@ Current alarm mapping to check is exported, not guessed: Scheduler group; Lambda
 - Separate **denied delivery**, **actual Scheduler retry-policy exhaustion**, **Lambda async pre-handler destination delivery**, and **consumer stopped/backlog/recovered** results. Record pending gates honestly.
 - List exact revision/artifact/manifest hashes and immutable AWS resource IDs, snapshots, injection start/end, restore start/end, errors, all observed retry/condition fields, and fixed evidence windows.
 - Link original failure events and separately link recovery summary/alarm/doctor outputs. No worker allocation is necessary for these failure cases.
-- Count the actual synchronous-universal exhaustion case as that transport test, not as evidence that the normal templated async target exhausts delivery retries under concurrency zero. The normal async target instead accepts the event and exercises Lambda's independent destination.
+- Record the synchronous A2 control-plane rejection separately from delivered failures; it proves neither retries nor exhaustion. Reserved concurrency zero on the normal asynchronous target exercises Lambda's independent destination.
 - Complete the separate normal scheduled/offline expired-worker campaign and exact-root verification to establish user-facing cleanup behavior. These failure fixtures do not replace that human/offline gate.
 
-The #48 exhaustion gate is literal: retain A2 and require the live exhaustion attribute, rather than relabeling A's permanent denial as exhaustion. All actual mutations remain at the parent's concrete approval checkpoint.
+The exhaustion gate remains literal: preserve the failed A2 attempt and require actual Scheduler retry/exhaustion evidence from a supported mechanism. Case A permanent denial cannot replace it. The executed campaign is restored. A concrete independent review and user decision are required before changing or deferring the unresolved gate; no further probe is inferred.

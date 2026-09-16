@@ -1,116 +1,329 @@
 # Issue #4 expiry acceptance and recovery (#48)
 
-**Live acceptance is in progress; the initial preparation ledger below remains
-historical.** The September 15 discovery note records subsequent live evidence;
-the original pending rows await the final evidence reconciliation. #42–#47 are merged and independently reviewed; final #47 at `14bb326` is
-integrated into this acceptance branch. All required local/build/infra/race checks
-passed on `30ab076`; subsequent protocol lifecycle checks are recorded separately
-below. The live campaign remains incomplete. Keep #48 and parent #4 open until every live gate
-below has actual evidence. Interactive release #5 is a separate gate.
+**Acceptance is in progress as of September 16, 2026, 04:59 UTC.** Installation,
+market/batch checks, the authorized retry's actual offline cleanup, and all five
+workers' exact root cleanup passed. Cases A/B/C retained their distinct failure
+and recovery evidence; all fault campaigns are restored and final normal health
+passed. The original offline attempt remains **NOT_PERFORMED**.
 
-This document is an executable protocol plus an evidence ledger. Commands under
-**Planned live protocol** are the execution recipe; completed outcomes need
-separate captured evidence as in the discovery note below. Controlled fixtures
-prove code behavior; they do not prove restricted-role AWS authorization,
-scheduler delivery, or cleanup while a laptop is offline.
+**Literal Scheduler retry exhaustion remains UNPROVED.** Both A2 mechanisms were
+unsupported, and Case A recorded permanent denial with zero retries. A user
+decision and independent final acceptance/merge review remain open; no waiver has
+been granted. Keep PR55 draft and #48/#4 open. Interactive release #5 is separate.
 
-## September 15 live discovery: empty Pipe enrichment parameters
+All evidence paths below are relative to the private durable run in the table.
+Controlled tests, scheduled online cleanup and actual laptop-offline proof remain
+distinct. The execution recipe below is retained for context; completed launches
+must not be replayed as new requests.
 
-The authorized disabled installation, real worker-free async failure canary,
-restoration, and separately reviewed schedule enablement completed. Genuine
-scheduled completion and alarm checks passed, but doctor reported
-`cleanup_evidence_route` failure. Fresh exact Pipe/queue/stream captures showed
-the expected running route, empty queue and retained failure stream: AWS returned
-`EnrichmentParameters: {}` without an enrichment ARN. The pinned Pipes SDK
-materializes that empty object as a nonnil struct, which doctor incorrectly
-treated as configured enrichment.
+## Live health discovery and correction
 
-The narrow CLI correction accepts an empty parameter object or a removed (empty)
-input template. It still rejects an enrichment ARN, nonempty input template and
-any HTTP parameter block. `TestEvidenceRoutePipeSDKEnrichmentWireShapes` exercises
-the actual pinned SDK HTTP decoder and these drift cases; the empty-object case
-fails before the correction. Raw discovery evidence is retained privately under
-`commands/h1-route-installed-{pipe,queue,failure-streams}/`.
+After installation and enablement, genuine scheduled completion and alarms passed,
+but doctor rejected `EnrichmentParameters: {}` returned by AWS for an otherwise
+correct Pipe with no enrichment ARN. The pinned SDK allocates a nonnil struct for
+that empty object. Revision `d3967f3` accepts empty parameters/removal templates
+while retaining rejection of enrichment ARNs, nonempty templates and HTTP blocks.
+Ten actual SDK wire cases, `make check`, foundation race tests and CLI build passed;
+the empty-object regression fails against the preceding implementation.
 
-The ten SDK wire cases, `make check` and the foundation race suite passed for
-this correction, captured under `commands/pipe-empty-enrichment-*`. These local
-checks do not substitute for the pending live doctor rerun.
+Independent review approved the exact fix and rebuilt identical CLI bytes.
+`commands/h1-doctor-fixed-01/` then passed **24/24 checks**; `migration/h1-proof.json`
+binds genuine scheduled completion and the successful rerun. The original failure
+and raw route captures remain under `commands/h1-doctor-01/` and
+`commands/h1-route-installed-{pipe,queue,failure-streams}/`. The separately pinned
+CLI is `artifacts/devbox-d3967f3`, SHA-256
+`88d0125e6257cc865b856cd8c583c02c308fcef7a375ef53a07f20409ea025db`.
+Lambda, runner and infrastructure were unchanged by this client fix.
 
-The corrected CLI requires independent review, a separately pinned artifact and
-an actual doctor rerun before full H1 health is claimed. Earlier build hashes
-remain historical; Lambda, runner and infrastructure are unchanged by this fix.
-The three-worker/offline, retry-exhaustion, Pipe-outage, exact-root-cleanup and
-final-review gates remain pending. This discovery does not close #48 or #4.
+## Revision, deployment and preservation record
 
-## Current preparation record
-
-| Item | Actual preparation result |
+| Item | Actual result |
 | --- | --- |
-| Tested build revision | `30ab07614cf29b2389f2c997c7035b909a166cc2`; production Go/infra bytes match reviewed main `14bb326c1dcabef92e4a645554da17aee1d7f819` |
-| Date | September 15, 2026 UTC (September 14, US/Central) |
+| Original tested build | `30ab07614cf29b2389f2c997c7035b909a166cc2`; production Go/infra bytes match reviewed main `14bb326c1dcabef92e4a645554da17aee1d7f819` |
+| Evidence interval | September 15–16, 2026 UTC |
 | Durable evidence directory | `~/.local/state/devbox/acceptance/04-expiry/20260915T023635Z-4d506132`, mode 0700 |
 | Original configuration | User config and referenced manifest copied byte-for-byte to `original-config/`; original paths/hashes recorded privately in `preservation.json`; originals untouched |
-| Final test config/export | Pending reviewed migration; never relabel the preserved schema-3 manifest as v6 |
+| Actual exports | Installed schema 6/template 6: `commands/deployment-after/`; enabled export: `commands/deployment-enabled/`; original schema-3 files untouched |
 | Initial helper verification | Five controlled tests passed; `commands/helper-tests/` preserves the original preparation result |
-| Capture/activation verification | Thirteen controlled tests passed, including real subprocess signal races, stale activation rejection and sourced-wrapper recovery; `commands/preparation-review-fixes/` preserves stdout/stderr/time/exit/hashes |
+| Protocol revision `7a830dc` | 14 controlled helper tests plus shell/document syntax passed; `commands/lifecycle-review-fix-tests/` pins exact tested scripts |
 | Tool versions captured | Go `go1.27.1-X:nodwarf5 linux/amd64`; Python `3.14.7`; AWS CLI `2.34.32`; OpenTofu `1.12.6 linux_amd64`; jq `1.8.2` |
 | Locked provider | AWS `6.64.0`; backendless init/validation and all infrastructure tests passed at `30ab076` |
 | Durable OpenTofu | Parent preserved `tools/tofu-1.12.6` under the run with hash/provenance; use it for migration/recovery after `/tmp` loss |
 | Intermediate integration | Parent reports `make check` and `make build` passing on `73076ea`; this is not the final #48 revision or a live result |
-| Final artifacts/tests | Passed at `30ab076`; durable `commands/final-*` captures and `artifacts/integrated-build-30ab076.json`; see exact results below |
-| AWS scope and resources | Prior accepted scope below is a planning input; fresh identity/state/inventory checks remain pending |
+| CLI correction `d3967f3` | Full `make check`, foundation race, ten SDK wire cases and CLI build passed; `commands/pipe-empty-enrichment-*`; independent review under `reviews/48-h1-client-fix/` |
+| Deployment and IAM | Approved install applied 34 additions/3 changes/1 deletion; 904 actual configuration predicates passed; health policy 3352 bytes and operator policy 9635 bytes |
+| Quota | Explicitly approved Ohio Lambda concurrency increase became effective at 1000 before installation |
+| Separate enablement | Independently reviewed plan applied 0 additions/1 change/0 deletions, only schedule DISABLED→ENABLED; complete canary restoration/disarm preceded it |
 
-Prior accepted scope was account `464557813916`, region `us-east-2`, deployment
+Verified scope is account `464557813916`, region `us-east-2`, deployment
 `personal-dev`, owner `joseph`, setup profile `devbox-setup`, and restricted
-operator `devbox-operator`. Fresh STS must establish the same expected account
-before any live work. Do not derive owner from credentials. Previous `/tmp`
+operator `devbox-operator`. Fresh identity checks continue to bind every live phase to that account. Do not derive owner from credentials. Previous `/tmp`
 acceptance evidence is gone; the [Spot acceptance record](03-spot-groups.md)
 provides historical context, not freshly available raw evidence.
 
-Preserve the actual deployed three AZs (`us-east-2a/b/c`), four approved types
+Installation preserved the actual deployed three AZs (`us-east-2a/b/c`), four approved types
 (`c7i.2xlarge`, `c7a.2xlarge`, `c6i.2xlarge`, `c6a.2xlarge`),
 encrypted disposable 100-GiB gp3 roots, existing image/template pins, networking,
-result retention and permanent launch history. Existing local tfvars omit newer
-fields and cannot be copied as proof of current deployed settings. Inspect the
-current reviewed state/output through setup credentials without printing full
-state, credential processes, or private keys.
+result retention and permanent launch history. The sole deleted object was the
+superseded content-addressed runner; its original bytes were preserved. Genuine
+installed export SHA-256 is `23bddb683b14c366eaeb2fd18ea116d077989104fa7906f2d103c50251f1064b`;
+enabled export is `29f2e6f99e61b8f96cf07f26965d50e674543f15a548d445811120ad15bffe03`.
+Actual preservation/configuration proofs are in `migration/installed-verification-*`.
+
+## Actual live outcomes and current retry
+
+| Evidence | Result and source |
+| --- | --- |
+| Historical results | Same retained command `dc1-00f0dcad46d8e9d1abfee9aaabb25d6f` retrieved before/after installation with verified, identical stdout/stderr; original workload remains execution_timeout/signal 15. `commands/historical-logs-v5-export-{before,after}/` |
+| Worker-free Case B | `async-prehandler-3da38173ee2e`: actual 202 acceptance, concurrency-zero readbacks, retained ZeroReservedConcurrency/count 0 envelope through Pipe, drained queue. AsyncEventsDropped Sum 1; other metric responses had no datapoints, not measured zeros. `failure-20260915T230122Z-58580a09/` |
+| Case B recovery | Exact parked settings/concurrency 1/Pipe RUNNING restored; 604-second recovery finished 23:16:12Z September 15, traps disarmed. `finished.json`, `finish.completed.utc`, independent enablement review |
+| Original matrix | Two Spot workers TTL20m and one On-Demand TTL2h ready; initial/future/expired reports passed 73/85/97 predicates. `observations/worker-matrix-*-01.json` |
+| Original scheduled cleanup | `i-02e3ceb89391f52ab` was Lambda-cleaned within `[00:05:06.474536042Z, 00:06:02.878139384Z]` September 16; exact root NotFound independently captured |
+| Original Spot interruption | `i-0d01e901e6238121d` was service-reclaimed at 00:03:21Z, code Server.SpotInstanceTermination. Its disappearance/root deletion is **not** attributed to Lambda |
+| Original offline result | **NOT_PERFORMED**: user stayed online. Scheduled online proof and harmless manual rerun are retained in `observations/missed-offline-actual-proof.json`; they do not satisfy the physical-offline gate |
+| Original final resources | The original long worker expired and was Lambda-cleaned at the 01:40Z tick. All three original workers and their individually pinned roots are gone. `observations/original-campaign-final-cleanup.json` |
+| Original live manual down | **NOT_RUN**: the original long worker expired naturally before that step; a later down of an absent worker would not satisfy it |
+
+### Authorized retry: two fresh On-Demand workers
+
+The user explicitly approved two new workers after the original future control
+was gone. Retry evidence is isolated under `retry2-20260916T023800Z-02eaa155/`;
+original captures/deadlines and the NOT_PERFORMED record remain unchanged.
+Both count-one requests use `agent`, On-Demand and encrypted disposable 100-GiB
+gp3 roots. No automatic replacement or TTL extension is authorized.
+
+| Role | Request | Instance | Exact root | Original expiry (UTC, September 16) |
+| --- | --- | --- | --- | --- |
+| Short, 20m | `cde1a8edea68153c33eb3c3e1a4c7b0a` | `i-004179009e625a5aa` | `vol-0b9405add4ad5cbe9` | `03:07:53.634971114Z` |
+| Future control, 2h | `3d282c919b75688a6cdbebd48ced1b84` | `i-089036f46ef2d5705` | `vol-04debe75ceb6c318d` | `04:49:13.583693561Z` |
+
+Normal enabled schedule reconciliation and doctor 24/24 passed before retry
+launch. The full schedule was parked with exact readback at 02:47:37Z. Initial,
+future and expired verification passed **63/73/82 predicates**, with immutable
+request/attempt/Fleet/root pins. Prior-delivery drain passed **202 predicates**;
+guarded activation acknowledged and read back the first eligible tick at 03:14Z.
+
+The user confirmed physical offline participation from **10:12–10:35 PM CDT on
+September 15**, with minute precision. The conservative definitely-offline interval
+is **03:13–03:35 UTC on September 16**. Retained invocation
+`aa6aaa09-78ca-45b2-8746-2bd65e23ab46` prepared the exact short worker at
+`03:14:06.403084418Z` and observed termination and its exact root deletion at
+`03:14:33.991416149Z`. This **prepared-to-observed operation bracket** lies wholly
+inside that interval; it is not an exact API dispatch timestamp. Summary and end
+Results agree. Four later ticks had no new candidates or termination preparations.
+The deliberate schedule pause is not evidence of ordinary expiry-to-tick latency.
+
+Retry `observations/offline-cleanup-proof-01.json` passed **487 predicates** and
+pins all source hashes, separate Scheduler/Lambda/service correlations, complete
+logs and individual return reads. Its SHA-256 is
+`254b118beab257a155e8ab7fcb074c223be649fb148cb578a214bbf32602be94`.
+The returned short worker was terminated and its single-ID root read returned
+`InvalidVolume.NotFound`; the control was still running with its unchanged future
+deadline and original in-use root.
+
+The existing 45-minute control task completed successfully at `03:35:42.890Z`
+(`commands/long-work-ssm-returned-01/`). The retained logs response records workload
+exit 0 and complete publication, with verification **not_downloaded**; this is not
+stream-byte verification (`commands/long-work-logs-returned-01/`).
+
+The restricted manual cleanup rerun completed with zero candidates and no new
+termination at `03:38:51Z`. Its terminal count of one describes the already-cleaned
+short worker. Explicit exact-ID down of the still-live, future control then
+completed at `03:39:45Z`, before its original deadline. Independent final reads
+confirmed the control terminated, its exact root `InvalidVolume.NotFound`, and the
+active managed deployment/owner inventory empty. Sources are retry
+`commands/manual-cleanup-rerun-01/`, `control-down-01/`, `control-instance-final/`,
+`control-root-final/` and `final-active-scope/`.
+
+All original and retry workers/roots are now cleaned. Normal schedule settings
+without the temporary StartDate are restored. Scheduler retry exhaustion remains
+unproved. All executed fault campaigns are restored, final health passed, and
+final acceptance review/user disposition of the literal gate remain open. No new worker batch is required.
+
+### A2 unsupported target and completed recovery
+
+On September 16 at `03:54:21Z`, AWS rejected the proposed universal Lambda
+`Invoke` target with `InvocationType=RequestResponse` during `UpdateSchedule`.
+The actual `ValidationException` requires asynchronous `Event` invocation.
+This disproves the assumed integration support; **no Scheduler retry exhaustion
+was demonstrated**. The retained rejection is
+`commands/exhaustion-f5dceb2c89ff-arm-once-476b61b7/`; case status and recovery are
+under `failure-20260916T035130Z-de6b048a/`.
+
+The shell's EXIT recovery completed its full 600-second guard and restored the
+exact parked schedule, original concurrency and Pipe by `04:04:25Z`. The shell
+then closed, preserving the rejection exit 254. Subsequent independent review
+verified the restored settings before the exact normal schedule was reapplied at
+`04:06:14Z`. Complete readback shows ENABLED, `rate(5 minutes)`, the original
+Lambda target/retry/DLQ settings and no temporary StartDate. Doctor passed **24/24**
+at `04:11:40Z` (`commands/a2-rejected-normal-{update,readback,doctor-01}/`).
+This is recovered intermediate health, not final acceptance after all fault tests.
+The [failure protocol](04-expiry-failures.md#case-a2-unsupported-synchronous-target-exhaustion-unproved)
+records the unsupported mechanism and remaining evidence requirement.
+
+A subsequent capability probe at `04:13:53Z` was also rejected: AWS reports that
+`invokeWithResponseStream` is not a valid Scheduler `aws-sdk:lambda` API.
+`failure-20260916T041206Z-09027586/cases/stream-capability-61b43c070827/`
+retains the exact rejection and readbacks. The complete original schedule remained
+DISABLED, reserved concurrency remained 1, and no occurrence/invocation was
+requested. This is unsupported capability evidence, not a second exhaustion test
+or a reason to change production code/infrastructure. Normal settings were
+reapplied at `04:15:09Z`; doctor passed 24/24 at `04:15:27Z`
+(`commands/stream-rejected-normal-{update,doctor-01}/`). The subsequent genuine
+scheduled invocation `636aaa17-cd77-48a3-acd1-b833fb7f3557` completed successfully at
+`04:15:50.189898647Z`, with matching successful summary/end Results in
+`failure-20260916T041545Z-ae5c055f/cases/baseline-107f5cbd7dbe/normal-handler.raw.json`.
+This establishes the healthy baseline for the separate Case C campaign below.
+
+
+### Case C: stopped evidence consumer, retained original failure
+
+Actual `pipe-stopped-f5f816f3ad5b` passed **177 verification predicates**. The
+healthy, empty baseline was preserved, the exact Pipe reached STOPPED, and one
+accepted asynchronous invocation generated a new failure. Queue visible backlog
+became 1, its visible-message alarm reached ALARM, and restricted doctor reported
+`cleanup_evidence_route` failure. The case was absent from failure Logs before
+restart; the fixed stream subsequently retained the original case payload,
+SQS message `fe7d2b99-3f68-4d62-9afa-519c5f476159`, and Lambda destination request
+`e6ce9715-1c18-4703-9792-079941cb92ea`.
+
+The actual failure timestamp `04:18:04.154Z` and SQS SentTimestamp
+`04:18:04.182Z` precede the second-precision restart marker `04:21:56Z`.
+CloudWatch retained that message at `04:22:11.843Z`; its actual condition is
+`ZeroReservedConcurrency`, approximate invoke count 0. The full bounded handler
+query contains no case-correlated invocation, and the recovered queue has zero
+visible/not-visible/delayed messages. Source hashes, raw event metadata and honest
+timestamp precision are in
+`failure-20260916T041545Z-ae5c055f/cases/pipe-stopped-f5f816f3ad5b/transport-proof-01.json`.
+The local verifier also passed five controlled positive/negative timestamp,
+correlation and query-window checks; these are parser checks, not additional live
+failure tests. This evidence does not satisfy Scheduler retry exhaustion.
+
+**Case C full normal recovery also passed.** The complete 600-second guard finished
+and recovery was disarmed. Exact original configuration pins were read back, and
+the original enabled schedule without StartDate was restored at `04:34:16Z`.
+Scheduled request `9c6aaa1c-4860-408b-b89c-b433ff8958d3` completed successfully at
+`04:34:57.448022126Z`; all 16 alarms were OK and `commands/c-normal-doctor-01/`
+passed 24/24 at `04:35:59Z`. Source hashes and full recovery references are in
+`failure-20260916T041545Z-ae5c055f/normal-recovery-proof.json`. Case A's separate
+scoped permission-denial result and final restored health follow.
+
+
+### Case A: permanent denied delivery retained; exhaustion unproved
+
+The one-time `04:43:00Z` occurrence targeted the original cleanup function with
+its original input, retry2/age300 and DLQ settings. The sole policy change denied
+InvokeFunction on that exact function, preserving Scheduler trust and queue-send
+permission. Actual retained message `9894803a-1426-4a9a-9128-a61c4d127eee` at
+`04:43:05.438Z` binds Scheduler execution
+`b66aaa1e-54eb-4e63-803f-3051df4623c0` across its message attributes and nested
+original payload. AWS's body is the Lambda API request wrapper: exact FunctionName,
+InvocationType `Event`, and JSON-string Payload. The local case ID is not the
+Scheduler execution ID.
+
+The actual error is `AccessDeniedException`, naming the exact Scheduler identity,
+function and explicit identity-policy Deny. Payload truncation/invalid flags are
+false, **RETRY_ATTEMPTS is 0 and EXHAUSTED_RETRY_CONDITION is absent**. The complete
+bounded handler query contains no matching invocation. Thus **permanent failed-
+delivery retention passed; literal retry exhaustion remains UNPROVED**.
+`failure-20260916T043635Z-65620005/cases/denied-delivery-88667b852400/delivery-proof-03.json`
+passed 111 predicates and retains raw records/source hashes. Ten controlled
+wrapper/correlation/classification checks also passed; they are not live retries.
+Doctor detected the deliberate drift (`commands/a-denied-doctor-01/`).
+
+Full guarded Case A recovery and final normal health passed as recorded below.
+No further AWS actions are planned before concrete independent review and a user
+decision on the unresolved literal exhaustion gate. No scope waiver or completion
+claim is inferred from the successful denied-delivery route.
+
+A narrowly scoped **controlled** export-bridge fixture now exercises positive
+Scheduler retry/exhaustion attributes through the actual rendered Pipe template,
+alongside permanent denial and Lambda async variants. It checks complete body,
+attributes and correlation preservation, including RETRY_ATTEMPTS2 and
+EXHAUSTED_RETRY_CONDITION `MaximumRetryAttempts`. Five isolated OpenTofu mock tests
+and the non-skipped Go `TestOpenTofuExport` bridge passed; all three envelope
+variants passed for both rendered exports. Captures are
+`commands/case-a-controlled-{tofu-export,export-bridge}/`; the exact working test
+file hash and offline isolation are pinned in
+`migration/controlled-exhausted-envelope-proof.json`. A focused bridge rerun after
+making the fixture attempt counters internally consistent is captured under
+`commands/case-a-controlled-export-bridge-attempt-consistency/` and pinned in
+`migration/controlled-exhausted-envelope-attempt-fidelity.json`. The independent
+body maps use attempt1 for denial and a constructed attempt3/two-retry example for
+exhaustion; no undocumented DLQ attempt-selection rule is asserted. Only test
+fixtures/assertions changed. This proves field preservation under controlled substitution, **not**
+AWS delivery retry classification or actual exhausted retries; the live gate is
+still UNPROVED.
+
+
+### Final restoration, health and retained inventory
+
+All executed fault campaigns finished or recovered. The last campaign completed
+the full 600-second guard, disarmed recovery and closed its shell. Exact original
+policy/trust/function/async/queue/Pipe/scope pins were verified; concurrency is 1,
+the Pipe is RUNNING and all queue counts are zero. The complete original enabled
+five-minute schedule, without temporary StartDate, was restored at `04:56:07Z`.
+Genuine scheduled request `4e6aaa21-67c7-4298-8178-3bc9c3eba5f7` completed at
+`04:56:48.627369576Z`, with equal successful summary/end Results, zero candidates
+and zero newly cleaned workers. All 16 alarms were OK and restricted doctor
+passed 24/24 (`commands/a-normal-doctor-01/`).
+
+The final plan exited 0 with no resource or output changes. Its SHA-256 is
+`11ad7d8a4d352e7ef6d64d42769c31f30b30fee47915916a32d550a8f0ecffb0`.
+All five campaign workers and exact roots remain cleaned; active managed scope
+is empty. **59 managed infrastructure resources are intentionally retained**:
+foundation networking/IAM, runner/results/permanent launch-history storage,
+scheduled cleanup, and its logs/evidence queue/Pipe/alarms. Exact resource addresses,
+source hashes and cleanup references are in `migration/final-retained-inventory.json`
+and `migration/final-after-faults-proof.json`; the final campaign also retains
+`failure-20260916T043635Z-65620005/normal-recovery-proof.json`. The teardown section
+below explains their separate lifecycle.
+
+Earlier independent evidence reviews approved the offline run, Case C recovery
+and actual Case A denied-delivery retention. They do not replace author-independent
+review of this final committed candidate or grant acceptance/merge approval.
+**Keep PR55 draft and #48/#4 open.** Actual literal Scheduler retry exhaustion is
+still UNPROVED. The controlled envelope fixture and permanent zero-retry denial
+cannot waive it; any revision or deferral of that live gate requires a user decision.
+No further AWS probes or scope change are inferred here.
 
 ## Parent requirement and evidence matrix
 
 The named tests below passed with the integrated production implementation at
-`30ab076`; live predicates remain pending. Child verification is linked separately.
+`30ab076`; actual live statuses below include the separately tested CLI correction.
+Child verification is linked separately.
 
 | Parent deliverable | Child / meaningful controlled coverage | Required live evidence | Status |
 | --- | --- | --- | --- |
-| D1 TTL across Spot, On-Demand and batches; visible expiry | #42/#43/#46; `TestTTLGrammarAndPrecedence`, `TestExpiryFleetSingleBatchMarketsActualWireTags`, `TestExpiryRecoveryRetainsOriginalWindowAndHistoricFulfillment`, CLI expiry output tests | Original short/long up JSON, plan/attempt/Fleet IDs, exact EC2 creation tags, `ls` text+JSON | Pending |
-| D2 inspectable dry-run/manual cleanup | #44/#45; `TestDryRunNoWritesOrRechecks`, `TestCleanupAdapterSharedFixtures`, `TestCleanupAdapterDecisionsEqualDirectService` | Complete expired dry-run with exactly the short set and future long worker; later harmless manual rerun | Pending |
-| D3 Go Lambda, schedule and scoped IAM | #46/#47; actual package/export bridge, `TestCleanupHealthRejectsDrift`, strict Lambda decoder/factory tests | Reviewed saved plan/apply, v6 export, role/code pins, recent scheduled successful summary/end | Pending |
-| D4 exact scope, diagnostics and final recheck | #42/#44/#46; `TestEligibilityScopeTagsStatesAndUTC`, `TestFinalRecheckRejectsForgedAndDriftedEvidence`, `TestSDKScopeSerializationAndSingleMutationAttempt` | Restricted operator launch/manual actions; scheduled cleanup role; exact tags/IDs and untouched long worker | Pending |
-| D5 retained decisions, termination/invocation failures, health | #44/#46/#47; journal acknowledgment/rejection tests; `TestBothProducerDestinationsAreVerified`, `TestEvidenceRouteAndAlarmDrift`, `TestCompletionCannotBeInferredFromSilenceOrPartial` | Handler events plus independent Scheduler exhaustion/Lambda pre-handler failure records, health failure/repair and later success | Pending |
-| D6 repeated/concurrent cleanup, later retry, disposable roots | #44/#48; `TestHappyPathAndRepeat`, `TestTrulyConcurrentRunsHaveIndependentAuthority`, `TestDenialProtectionThrottlingAndLaterScanRecovery`, `TestVolumeEvidenceIsExactAndIndependent`, terminal-history regressions | Harmless rerun, exact terminal states, exact root deletion, final empty campaign set | Pending |
+| D1 TTL across Spot, On-Demand and batches; visible expiry | #42/#43/#46; `TestTTLGrammarAndPrecedence`, `TestExpiryFleetSingleBatchMarketsActualWireTags`, `TestExpiryRecoveryRetainsOriginalWindowAndHistoricFulfillment`, CLI expiry output tests | Original short/long up JSON, plan/attempt/Fleet IDs, exact EC2 creation tags, `ls` text+JSON | Passed original and retry matrices |
+| D2 inspectable dry-run/manual cleanup | #44/#45; `TestDryRunNoWritesOrRechecks`, `TestCleanupAdapterSharedFixtures`, `TestCleanupAdapterDecisionsEqualDirectService` | Complete expired dry-run with exactly the short set and future long worker; later harmless manual rerun | Passed original and retry expired dry-runs and harmless reruns |
+| D3 Go Lambda, schedule and scoped IAM | #46/#47; actual package/export bridge, `TestCleanupHealthRejectsDrift`, strict Lambda decoder/factory tests | Reviewed saved plan/apply, v6 export, role/code pins, recent scheduled successful summary/end | Passed installation and H1 |
+| D4 exact scope, diagnostics and final recheck | #42/#44/#46; `TestEligibilityScopeTagsStatesAndUTC`, `TestFinalRecheckRejectsForgedAndDriftedEvidence`, `TestSDKScopeSerializationAndSingleMutationAttempt` | Restricted operator launch/manual actions; scheduled cleanup role; exact tags/IDs and untouched long worker | Passed retry offline exact-short cleanup and future-control exclusion |
+| D5 retained decisions, termination/invocation failures, health | #44/#46/#47; journal acknowledgment/rejection tests; `TestBothProducerDestinationsAreVerified`, `TestEvidenceRouteAndAlarmDrift`, `TestCompletionCannotBeInferredFromSilenceOrPartial` | Handler events plus independent Scheduler exhaustion/Lambda pre-handler failure records, health failure/repair and later success | Case A permanent denial retained; B/C passed; A2 unsupported/recovered, exhaustion unproved; all executed cases restored and final health passed |
+| D6 repeated/concurrent cleanup, later retry, disposable roots | #44/#48; `TestHappyPathAndRepeat`, `TestTrulyConcurrentRunsHaveIndependentAuthority`, `TestDenialProtectionThrottlingAndLaterScanRecovery`, `TestVolumeEvidenceIsExactAndIndependent`, terminal-history regressions | Harmless rerun, exact terminal states, exact root deletion, final empty campaign set | Passed original/retry roots and reruns; explicit live-control down completed |
 
 | Human acceptance step | Evidence predicate and planned capture | Status |
 | --- | --- | --- |
-| H1 provision and recent successful invocation | Saved reviewed migration applied by setup; genuine scheduled `summary` and `invocation_end` both successful, with correlation/request IDs; `doctor` health follows #47 | Pending |
-| H2 short/long and batch/market matrix | Two Spot workers in one 20m request and one explicit On-Demand worker with 2h; original request/attempt/Fleet/instance/root/deadline pins | Pending |
-| H3 inspect and expired dry-run | `ls` table+JSON; complete no-write dry-run after short deadline and before any termination request, exact short candidates only | Pending |
-| H4 actual local client closure/offline interval | User confirms actual offline start/end; AWS schedule request and termination timestamps fall within it; separate API/log observation | Pending |
-| H5 retained decision, root deletion, long worker survives | Exact `termination_prepared` mappings and outcomes; separate EC2 state and per-root DescribeVolumes evidence; long worker running before its deadline | Pending |
-| H6 harmless rerun and explicit remaining cleanup | Manual cleanup makes no new short-worker termination; exact-ID down of long worker, independent roots and final scope inventory | Pending |
+| H1 provision and recent successful invocation | Saved reviewed migration applied by setup; genuine scheduled `summary` and `invocation_end` both successful, with correlation/request IDs; `doctor` health follows #47 | Passed 24/24; normal retry health rechecked before parking |
+| H2 short/long and batch/market matrix | Two Spot workers in one 20m request and one explicit On-Demand worker with 2h; original request/attempt/Fleet/instance/root/deadline pins | Passed original batch/market matrix and retry readiness |
+| H3 inspect and expired dry-run | `ls` table+JSON; complete no-write dry-run after short deadline and before any termination request, exact short candidates only | Passed original 97-predicate and retry 82-predicate expired reports |
+| H4 actual local client closure/offline interval | User confirms actual offline start/end; retained scheduled prepared-to-observed termination bracket falls wholly within it; separate return observations | Passed retry; conservative 03:13–03:35Z offline interval. Original NOT_PERFORMED unchanged |
+| H5 retained decision, root deletion, long worker survives | Exact `termination_prepared` mappings and outcomes; separate EC2 state and per-root DescribeVolumes evidence; long worker running before its deadline | Passed retry exact short/root cleanup and future-control survival; original Spot interruption remains distinct |
+| H6 harmless rerun and explicit remaining cleanup | Manual cleanup makes no new short-worker termination; exact-ID down of long worker, independent roots and final scope inventory | Passed retry zero-candidate rerun, live-control down and exact roots/final empty active inventory; original live manual down NOT_RUN unchanged |
 
 | Failure gate | Coverage and evidence required | Status |
 | --- | --- | --- |
 | UTC equality, invalid/overflow/long durations | Pure policy tests plus delayed dispatch/final SDK gate tests; label controlled | Controlled tests passed at `30ab076` |
 | Missing/malformed/duplicate expiry, other owner/deployment/account/region, unmanaged records | Pure/service/CLI fixtures; do not create unrelated live resources solely for this | Controlled tests passed at `30ab076` |
 | Incomplete scan, wrong-ID response, scope/expiry drift | Service pagination/recheck and real SDK loopback tests; zero unauthorized sends | Controlled tests passed at `30ab076` |
-| Concurrent invocation, terminal disappearance, exact volume evidence | Service race and terminal-history tests; live benign rerun separately | Pending |
+| Concurrent invocation, terminal disappearance, exact volume evidence | Service race and terminal-history tests; live benign rerun separately | Controlled tests passed; original and retry benign reruns passed |
 | Temporary termination API failure and later recovery | Controlled `TestDenialProtectionThrottlingAndLaterScanRecovery`, with actionable event and next-scan success; no live throttling claim | Controlled tests passed at `30ab076` |
-| Disabled/failed schedule detectable and repaired | Captured schedule/health failure, exact preserved restore, later scheduled success | Pending live |
-| Scheduler retry exhaustion before handler starts | Independent retained failure envelope with actual retry/exhaustion fields, original delivery correlation, no handler start; exact mechanism from reviewed #47/#48 failure protocol | Pending live |
-| Lambda async pre-handler failure | Retained OnFailure envelope for a new async event while concurrency is zero, no handler start, exact restore | Pending live |
-| Evidence Pipe failure detected and recovered | Captured unhealthy route/backlog, restored transport, the same retained failure records arrive in Logs | Pending live |
-| Historical records/results and emergency cleanup survive upgrade | Historical serialization/recovery fixtures; actual old manifest/result read if a still-retained command exists; otherwise document the unavailable live case | Pending |
-| Every interrupted/partial launch cleaned | Preserve every known request/Fleet/instance/root; exact observation and explicit recovery even when up fails | Pending live |
+| Disabled/failed schedule detectable and repaired | Captured schedule/health failure, exact preserved restore, later scheduled success | Passed disabled/fault detection, exact restoration and later normal scheduled completion |
+| Scheduler retry exhaustion before handler starts | Independent retained failure envelope with actual retry/exhaustion fields, original delivery correlation, no handler start; exact mechanism from reviewed #47/#48 failure protocol | Controlled exhausted-envelope export fixture passed; both A2 targets rejected and Case A has zero retries/no exhaustion field; live gate unproved |
+| Lambda async pre-handler failure | Retained OnFailure envelope for a new async event while concurrency is zero, no handler start, exact restore | Passed actual Case B and restoration |
+| Evidence Pipe failure detected and recovered | Captured unhealthy route/backlog, restored transport, the same retained failure records arrive in Logs | Case C stopped/backlog/same-message recovery and full normal restoration passed |
+| Historical records/results and emergency cleanup survive upgrade | Historical serialization/recovery fixtures; actual old manifest/result read if a still-retained command exists; otherwise document the unavailable live case | Actual historical output recovery passed; emergency/terminal behavior covered separately |
+| Every interrupted/partial launch cleaned | Preserve every known request/Fleet/instance/root; exact observation and explicit recovery even when up fails | All original and retry exact workers/roots cleaned; active scope empty |
 
 References: [expiry contract](../plans/04-expiry-contract.md),
 [launch verification](43-launch-expiry.md),
@@ -121,7 +334,7 @@ References: [expiry contract](../plans/04-expiry-contract.md),
 Doctor uses the restricted operator, validates the health-role pins, then assumes
 the read-only health role for these checks.
 
-## Capture helper and final local verification
+## Capture helper and local verification provenance
 
 `scripts/expiry-acceptance.py` creates private durable runs, captures explicit
 argv without a shell, records stdout/stderr/start/end/exit/SHA-256, preserves
@@ -213,22 +426,26 @@ values and byte-identical cleanup ZIPs from both isolated checkouts:
 | `devbox-runner-linux-amd64` | 13869412 | `c4237239f21270f85583885582e220515f20157ad683ca79383b4dd9ab655a27` |
 | `devbox-cleanup-linux-amd64.zip` | 8464450 | `6287cf664eab47b2c4ffecd587e020b361cfdb315063f895a9e6713a2d82cdf8` |
 
-The subsequent campaign-finish correction changes only protocol scripts/tests
-and this ledger. Its affected verification is recorded in the commit containing
-this paragraph: 14 controlled helper tests passed in
+The campaign-finish correction at `7a830dc` changed only protocol scripts/tests
+and this ledger. Its affected verification is recorded at `7a830dc`: 14 controlled helper tests passed in
 `commands/lifecycle-review-fix-tests/`, including real sourced-wrapper,
 generated-recovery and stateful-stand-in lifecycle scenarios; all 23 Bash document
 blocks, wrapper/Python syntax and diff checks passed. The capture also pins the
 exact tested script bytes in `source-revision.json`. These are local controlled results, not live evidence.
 The full Go/build/infra/race results above apply to `30ab076`, not to an unrun
-full suite at the later script revision. Fresh independent preparation review
-remains pending. Preserve the initial helper provenance and each later helper
+full suite at the later script revision. Independent preparation and subsequent client-fix reviews passed; final
+acceptance review remains pending. Preserve the initial helper provenance and each later helper
 revision separately; never overwrite the earlier artifact.
 
-The live migration must still compare the copied cleanup ZIP digest with the
-actual manifest and decoded Lambda CodeSha256. No deployed match is claimed.
+The actual installed manifest and decoded Lambda CodeSha256 matched the copied
+cleanup ZIP digest; the 904-predicate installed verification records that live check.
 
-## Planned live protocol — no steps run yet
+## Reviewed execution protocol — retained recipe
+
+The original launch section below has already run. Do not execute it again for
+the retry: the separately authorized two-request retry and its actual identities
+are recorded above. The unresolved exhaustion gate requires a user decision; this
+recipe does not authorize another fault probe or silently waive that requirement.
 
 ### A. Concrete migration and role baseline
 
@@ -287,7 +504,7 @@ replace an expired request or launch another full batch after partial success.
 After the reviewed migration and campaign authorization, the exact CLI syntax is:
 
 ```bash
-acceptance_cli="$acceptance_run/artifacts/devbox"
+acceptance_cli="$acceptance_run/artifacts/devbox-d3967f3"
 acceptance_config="$acceptance_run/config/config.toml"
 capture up-short "$acceptance_cli" --config "$acceptance_config" \
   up agent --count 2 --group expiry-short --ttl 20m --json
@@ -302,12 +519,13 @@ python3 scripts/expiry-acceptance.py identities \
   "$acceptance_run/commands/ls-json/stdout"
 ```
 
-Before any later mutation, fill the actual identity table (currently empty):
+The original identity table is retained here; request/attempt/Fleet and root pins
+are preserved in the immutable original captures and verified matrix reports:
 
 | Request/market | Original request / attempts / Fleet | Exact worker / root / DeleteOnTermination | Created / expires UTC | Outcome |
 | --- | --- | --- | --- | --- |
-| Spot batch | Pending | Pending | Pending | Unrun |
-| On-Demand | Pending | Pending | Pending | Unrun |
+| Spot batch | `09530d865fb961a66546facf3a9b1073`; attempts/Fleet in original up capture | Both original short IDs/roots in original proof | Original expiry `2026-09-15T23:58:02.758500653Z` | One Lambda cleanup, one Spot interruption; both roots deleted |
+| On-Demand | Original up-long capture and receipt | `i-01c13c8414ab8eb3d` / `vol-01b11ec2ae10c2613` | Original expiry `2026-09-16T01:39:13.536814201Z` | Lambda cleanup at expiry; root deleted; live manual down NOT_RUN |
 
 Independently DescribeInstances for **every known exact campaign ID**, retaining
 reservation account, all tags, EC2 state, placement, root device and block-device
@@ -477,7 +695,7 @@ same records arriving after repair. Restore concurrency, schedule target/input,
 DLQ/retries, Pipe state and all other modified settings before declaring success.
 Drain intentional failures and capture a later genuine successful scheduled run.
 No extra worker launch is required for these infrastructure failure cases.
-For a simpler recovery boundary, complete exact teardown of all three campaign
+For a simpler recovery boundary, complete exact teardown of all campaign
 workers first, then run failure injection with an empty eligible scope. If keeping
 the long worker during the failure campaign, its original deadline must remain
 future throughout; otherwise explicitly remove it before introducing drift.
@@ -510,16 +728,17 @@ permanent launch records as acceptance cleanup.
 
 | Gate | Evidence / result |
 | --- | --- |
-| Pinned production build and required local/infra/race checks | Passed at `30ab076`; production source matches reviewed main `14bb326`; protocol-only lifecycle regression results recorded separately above |
-| Concrete migration, independent review, authorization, exact apply/export | Pending |
-| Restricted operator Spot/batch and explicit On-Demand creation | Pending |
-| Recent genuine scheduled success and exact expired dry-run | Pending |
-| User-confirmed actual offline interval plus independent AWS events | Pending |
-| Exact short root deletion and running long worker | Pending |
-| Disabled/failure/exhaustion/pre-handler/Pipe detection, repair and later health | Pending |
-| Harmless cleanup rerun and exact remaining worker/root removal | Pending |
-| Final scope inventory and retained durable resources | Pending |
-| Fresh independent review of final #48 evidence and implementation | Pending |
+| Pinned build/check provenance | Full suite/infra at `30ab076`; helper lifecycle at `7a830dc`; CLI fix full make check/foundation race/wire/build at `d3967f3`; final test-only fixture: isolated mock/export bridge and attempt-consistency rerun passed |
+| Concrete migration, independent review, authorization, exact apply/export | Passed; 904 configuration predicates and preserved resources |
+| Restricted operator Spot/batch and explicit On-Demand creation | Original matrix and approved two-On-Demand retry passed |
+| Genuine scheduled completion and doctor | H1 passed 24/24; retry normal health passed before deliberate parking |
+| Expired dry-run | Original 97-predicate and retry 82-predicate reports passed |
+| Actual offline interval plus independent AWS events | Passed retry; conservative 03:13–03:35Z offline interval. Original NOT_PERFORMED unchanged |
+| Exact roots and future-control survival | Passed retry offline short/root cleanup and future-control survival; all original roots independently deleted |
+| Failure route and recovery | Case A permanent denial retained; B/C fully recovered; A2 unsupported; exhaustion unproved; all executed cases restored and final health passed |
+| Harmless rerun and live manual remaining-worker removal | Passed retry harmless rerun, live-control explicit down and independent root checks; original live down NOT_RUN unchanged |
+| Final scoped inventory, enabled settings, retained resources and health | Passed: exact workers/roots cleaned, active scope empty, 59 managed resources retained, zero-change plan and final health |
+| Fresh independent final #48 acceptance review | Pending; PR55 draft and #48/#4 open |
 
 No idle detector, checkpointing, cost estimate, automatic replacement or TTL
 extension is introduced here. Complete these gates before closing #4; hand off
