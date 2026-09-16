@@ -1,15 +1,20 @@
 # Issue #4 expiry acceptance and recovery (#48)
 
-**Acceptance is in progress as of September 16, 2026, 04:59 UTC.** Installation,
+**Revised #48/#4 acceptance is satisfied, subject only to final independent
+acceptance/merge review.** On September 16, 2026, the user approved deferring the
+one literal live Scheduler retry-exhaustion test to
+[#58](https://github.com/JosephWest2/cloud_dev/issues/58). Installation,
 market/batch checks, the authorized retry's actual offline cleanup, and all five
 workers' exact root cleanup passed. Cases A/B/C retained their distinct failure
-and recovery evidence; all fault campaigns are restored and final normal health
-passed. The original offline attempt remains **NOT_PERFORMED**.
+and recovery evidence; all fault campaigns were restored and final normal health
+passed in the retained observations through 04:59 UTC. The original offline
+attempt remains **NOT_PERFORMED**.
 
-**Literal Scheduler retry exhaustion remains UNPROVED.** Both A2 mechanisms were
-unsupported, and Case A recorded permanent denial with zero retries. A user
-decision and independent final acceptance/merge review remain open; no waiver has
-been granted. Keep PR55 draft and #48/#4 open. Interactive release #5 is separate.
+**Literal live Scheduler retry exhaustion remains UNPROVED and deferred to #58.**
+Both A2 mechanisms were unsupported, and Case A recorded permanent denial with
+zero retries. The deferral changes acceptance scope; it does not turn those results
+or controlled fixtures into a live pass. This record does not claim PR55 is merged,
+#48/#4 are closed, or the separate interactive release #5 is complete.
 
 All evidence paths below are relative to the private durable run in the table.
 Controlled tests, scheduled online cleanup and actual laptop-offline proof remain
@@ -135,10 +140,11 @@ active managed deployment/owner inventory empty. Sources are retry
 `commands/manual-cleanup-rerun-01/`, `control-down-01/`, `control-instance-final/`,
 `control-root-final/` and `final-active-scope/`.
 
-All original and retry workers/roots are now cleaned. Normal schedule settings
-without the temporary StartDate are restored. Scheduler retry exhaustion remains
-unproved. All executed fault campaigns are restored, final health passed, and
-final acceptance review/user disposition of the literal gate remain open. No new worker batch is required.
+All original and retry workers/roots were verified cleaned. Normal schedule settings
+without the temporary StartDate were restored. All executed fault campaigns were
+restored and final health passed. Literal live Scheduler retry exhaustion remains
+**UNPROVED**, deferred by the user to #58; final independent acceptance/merge review
+remains pending. No new worker batch is required.
 
 ### A2 unsupported target and completed recovery
 
@@ -232,9 +238,8 @@ wrapper/correlation/classification checks also passed; they are not live retries
 Doctor detected the deliberate drift (`commands/a-denied-doctor-01/`).
 
 Full guarded Case A recovery and final normal health passed as recorded below.
-No further AWS actions are planned before concrete independent review and a user
-decision on the unresolved literal exhaustion gate. No scope waiver or completion
-claim is inferred from the successful denied-delivery route.
+The user-approved deferral to #58 requires no further AWS actions for #48/#4
+acceptance. Successful denied-delivery retention does not prove retry exhaustion.
 
 A narrowly scoped **controlled** export-bridge fixture now exercises positive
 Scheduler retry/exhaustion attributes through the actual rendered Pipe template,
@@ -252,11 +257,14 @@ making the fixture attempt counters internally consistent is captured under
 body maps use attempt1 for denial and a constructed attempt3/two-retry example for
 exhaustion; no undocumented DLQ attempt-selection rule is asserted. Only test
 fixtures/assertions changed. This proves field preservation under controlled substitution, **not**
-AWS delivery retry classification or actual exhausted retries; the live gate is
-still UNPROVED.
+AWS delivery retry classification or actual exhausted retries; the live test is
+still **UNPROVED**, deferred to #58.
 
 
 ### Final restoration, health and retained inventory
+
+These are the retained September 16 observations through 04:59 UTC, not a new
+health measurement at the time of the acceptance amendment.
 
 All executed fault campaigns finished or recovered. The last campaign completed
 the full 600-second guard, disarmed recovery and closed its shell. Exact original
@@ -281,11 +289,12 @@ below explains their separate lifecycle.
 
 Earlier independent evidence reviews approved the offline run, Case C recovery
 and actual Case A denied-delivery retention. They do not replace author-independent
-review of this final committed candidate or grant acceptance/merge approval.
-**Keep PR55 draft and #48/#4 open.** Actual literal Scheduler retry exhaustion is
-still UNPROVED. The controlled envelope fixture and permanent zero-retry denial
-cannot waive it; any revision or deferral of that live gate requires a user decision.
-No further AWS probes or scope change are inferred here.
+review of this final amended candidate. The user approved the sole scope change on
+September 16: defer literal live Scheduler retry exhaustion to #58. Revised #48/#4
+acceptance is satisfied subject only to that final independent acceptance/merge
+review. The deferred test remains **UNPROVED**; controlled fixtures and permanent
+zero-retry denial do not satisfy it. No merge, issue closure or further AWS probe
+is claimed by this record.
 
 ## Parent requirement and evidence matrix
 
@@ -299,7 +308,7 @@ Child verification is linked separately.
 | D2 inspectable dry-run/manual cleanup | #44/#45; `TestDryRunNoWritesOrRechecks`, `TestCleanupAdapterSharedFixtures`, `TestCleanupAdapterDecisionsEqualDirectService` | Complete expired dry-run with exactly the short set and future long worker; later harmless manual rerun | Passed original and retry expired dry-runs and harmless reruns |
 | D3 Go Lambda, schedule and scoped IAM | #46/#47; actual package/export bridge, `TestCleanupHealthRejectsDrift`, strict Lambda decoder/factory tests | Reviewed saved plan/apply, v6 export, role/code pins, recent scheduled successful summary/end | Passed installation and H1 |
 | D4 exact scope, diagnostics and final recheck | #42/#44/#46; `TestEligibilityScopeTagsStatesAndUTC`, `TestFinalRecheckRejectsForgedAndDriftedEvidence`, `TestSDKScopeSerializationAndSingleMutationAttempt` | Restricted operator launch/manual actions; scheduled cleanup role; exact tags/IDs and untouched long worker | Passed retry offline exact-short cleanup and future-control exclusion |
-| D5 retained decisions, termination/invocation failures, health | #44/#46/#47; journal acknowledgment/rejection tests; `TestBothProducerDestinationsAreVerified`, `TestEvidenceRouteAndAlarmDrift`, `TestCompletionCannotBeInferredFromSilenceOrPartial` | Handler events plus independent Scheduler exhaustion/Lambda pre-handler failure records, health failure/repair and later success | Case A permanent denial retained; B/C passed; A2 unsupported/recovered, exhaustion unproved; all executed cases restored and final health passed |
+| D5 retained decisions, termination/invocation failures, health | #44/#46/#47; journal acknowledgment/rejection tests; `TestBothProducerDestinationsAreVerified`, `TestEvidenceRouteAndAlarmDrift`, `TestCompletionCannotBeInferredFromSilenceOrPartial` | Handler events, Lambda pre-handler failure records, health failure/repair and later success; literal live Scheduler exhaustion deferred to #58 | Revised scope satisfied: Case A permanent denial retained; B/C passed; A2 unsupported/recovered; literal live exhaustion UNPROVED/deferred to #58; all executed cases restored and final health passed |
 | D6 repeated/concurrent cleanup, later retry, disposable roots | #44/#48; `TestHappyPathAndRepeat`, `TestTrulyConcurrentRunsHaveIndependentAuthority`, `TestDenialProtectionThrottlingAndLaterScanRecovery`, `TestVolumeEvidenceIsExactAndIndependent`, terminal-history regressions | Harmless rerun, exact terminal states, exact root deletion, final empty campaign set | Passed original/retry roots and reruns; explicit live-control down completed |
 
 | Human acceptance step | Evidence predicate and planned capture | Status |
@@ -319,7 +328,7 @@ Child verification is linked separately.
 | Concurrent invocation, terminal disappearance, exact volume evidence | Service race and terminal-history tests; live benign rerun separately | Controlled tests passed; original and retry benign reruns passed |
 | Temporary termination API failure and later recovery | Controlled `TestDenialProtectionThrottlingAndLaterScanRecovery`, with actionable event and next-scan success; no live throttling claim | Controlled tests passed at `30ab076` |
 | Disabled/failed schedule detectable and repaired | Captured schedule/health failure, exact preserved restore, later scheduled success | Passed disabled/fault detection, exact restoration and later normal scheduled completion |
-| Scheduler retry exhaustion before handler starts | Independent retained failure envelope with actual retry/exhaustion fields, original delivery correlation, no handler start; exact mechanism from reviewed #47/#48 failure protocol | Controlled exhausted-envelope export fixture passed; both A2 targets rejected and Case A has zero retries/no exhaustion field; live gate unproved |
+| Scheduler retry exhaustion before handler starts | Independent retained failure envelope with actual retry/exhaustion fields, original delivery correlation, no handler start; exact mechanism from reviewed #47/#48 failure protocol | Controlled exhausted-envelope export fixture passed; both A2 targets rejected and Case A has zero retries/no exhaustion field; literal live test UNPROVED, user-approved deferral to #58 on September 16, 2026 |
 | Lambda async pre-handler failure | Retained OnFailure envelope for a new async event while concurrency is zero, no handler start, exact restore | Passed actual Case B and restoration |
 | Evidence Pipe failure detected and recovered | Captured unhealthy route/backlog, restored transport, the same retained failure records arrive in Logs | Case C stopped/backlog/same-message recovery and full normal restoration passed |
 | Historical records/results and emergency cleanup survive upgrade | Historical serialization/recovery fixtures; actual old manifest/result read if a still-retained command exists; otherwise document the unavailable live case | Actual historical output recovery passed; emergency/terminal behavior covered separately |
@@ -444,8 +453,9 @@ cleanup ZIP digest; the 904-predicate installed verification records that live c
 
 The original launch section below has already run. Do not execute it again for
 the retry: the separately authorized two-request retry and its actual identities
-are recorded above. The unresolved exhaustion gate requires a user decision; this
-recipe does not authorize another fault probe or silently waive that requirement.
+are recorded above. The user deferred the one literal live Scheduler exhaustion
+test to #58 on September 16, 2026. This retained recipe does not authorize another
+fault probe.
 
 ### A. Concrete migration and role baseline
 
@@ -688,11 +698,13 @@ finite observation windows, full-setting restoration requirements and separate
 pass predicates. Actual exported-manifest verification and concrete saved recovery
 artifacts still precede its live use; this gate is not waived.
 
-Required cases are Scheduler retry exhaustion without handler startup, a new
-Lambda async event sent directly to OnFailure with reserved concurrency zero,
-and stopped/broken evidence transport with detectable backlog followed by the
-same records arriving after repair. Restore concurrency, schedule target/input,
-DLQ/retries, Pipe state and all other modified settings before declaring success.
+The original required cases were Scheduler retry exhaustion without handler
+startup, a new Lambda async event sent directly to OnFailure with reserved
+concurrency zero, and stopped/broken evidence transport with detectable backlog
+followed by the same records arriving after repair. The latter two passed;
+the user deferred only the literal live Scheduler retry-exhaustion test to #58.
+Restore concurrency, schedule target/input, DLQ/retries, Pipe state and all other
+modified settings before declaring success.
 Drain intentional failures and capture a later genuine successful scheduled run.
 No extra worker launch is required for these infrastructure failure cases.
 For a simpler recovery boundary, complete exact teardown of all campaign
@@ -735,11 +747,13 @@ permanent launch records as acceptance cleanup.
 | Expired dry-run | Original 97-predicate and retry 82-predicate reports passed |
 | Actual offline interval plus independent AWS events | Passed retry; conservative 03:13–03:35Z offline interval. Original NOT_PERFORMED unchanged |
 | Exact roots and future-control survival | Passed retry offline short/root cleanup and future-control survival; all original roots independently deleted |
-| Failure route and recovery | Case A permanent denial retained; B/C fully recovered; A2 unsupported; exhaustion unproved; all executed cases restored and final health passed |
+| Failure route and recovery | Revised scope satisfied: Case A permanent denial retained; B/C fully recovered; A2 unsupported; literal live exhaustion UNPROVED/deferred to #58; all executed cases restored and final health passed |
+| Sole acceptance-scope amendment | User approved September 16, 2026: defer the literal live Scheduler retry-exhaustion test to [#58](https://github.com/JosephWest2/cloud_dev/issues/58); no live pass claimed |
 | Harmless rerun and live manual remaining-worker removal | Passed retry harmless rerun, live-control explicit down and independent root checks; original live down NOT_RUN unchanged |
 | Final scoped inventory, enabled settings, retained resources and health | Passed: exact workers/roots cleaned, active scope empty, 59 managed resources retained, zero-change plan and final health |
-| Fresh independent final #48 acceptance review | Pending; PR55 draft and #48/#4 open |
+| Fresh independent final #48 acceptance/merge review | Sole remaining prerequisite for merging PR55 and closing #48/#4; revised acceptance scope otherwise satisfied |
 
 No idle detector, checkpointing, cost estimate, automatic replacement or TTL
-extension is introduced here. Complete these gates before closing #4; hand off
-to interactive MVP release #5 without claiming its separate acceptance passed.
+extension is introduced here. Complete the final independent acceptance/merge
+review before merging PR55 and closing #48/#4. Interactive MVP release #5 remains
+a separate handoff; its acceptance has not been claimed here.

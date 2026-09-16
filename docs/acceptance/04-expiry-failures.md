@@ -3,16 +3,20 @@
 **Live results:** Case B async pre-handler failure and Case C stopped-consumer
 backlog/same-message recovery passed. Case A retained permanent denied delivery
 with zero retries and no exhaustion attribute. Both proposed synchronous/streaming
-A2 mechanisms were rejected by AWS. All fault campaigns are restored; final normal
-scheduled completion,16healthy alarms and doctor24/24 passed.
+A2 mechanisms were rejected by AWS. All fault campaigns were restored; final normal
+scheduled completion, 16 healthy alarms and doctor 24/24 passed in the retained
+September 16, 2026 observations through 04:59 UTC, not a new health measurement.
 
-Literal Scheduler retry exhaustion remains **UNPROVED**. The separately authorized
-physical-offline retry and all worker/root cleanup passed. See the
+Literal live Scheduler retry exhaustion remains **UNPROVED**. On September 16,
+2026, the user approved deferring that one live test to
+[#58](https://github.com/JosephWest2/cloud_dev/issues/58). The separately authorized
+physical-offline retry and all five workers' exact root cleanup passed. See the
 [acceptance ledger](04-expiry.md) for exact evidence and revision boundaries.
-PR55 remains draft and #48/#4 remain open pending independent final review and a
-user decision on the unresolved live gate. No waiver or further AWS probe is
-inferred. The procedures below preserve the completed campaign and recovery
-instructions; they are not a request to repeat injections.
+Revised #48/#4 acceptance is satisfied subject only to final independent
+acceptance/merge review. The deferral is not a live pass; this record does not
+claim PR55 is merged, #48/#4 are closed, or separate release #5 is complete.
+The procedures below preserve the completed campaign and recovery instructions;
+they are not a request to repeat injections.
 
 ## Recommendations and the important distinction
 
@@ -241,7 +245,7 @@ Verify the trust is unchanged and SQS SendMessage still allowed; do not replace 
 
 Prepare one attempt on the **same schedule** using the complete captured input: copy the full original update, set `ScheduleExpression=at(T)` at a future UTC minute, timezone UTC, `State=ENABLED`, `ActionAfterCompletion=NONE`, retaining the complete original Target/DLQ/role/retries/input. The existing schedule ARN and group remain unchanged. An already approved finite existing schedule window is also usable, but may generate multiple events. No new schedule, role, function or queue is needed.
 
-Concrete update, with the reviewed `CASE_AT_UTC` supplied as `YYYY-MM-DDTHH:MM:SS` (UTC, no trailing Z), sufficiently in the future for the controls to settle. Set `CASE_BASE` to the absolute captured `schedule.parked.json` for A or the current case's `schedule.sync-zero.parked.json` for A2. The original StartDate/EndDate stay captured and are ignored by the temporary `at` expression; the final restoration recovers them exactly.
+Concrete update, with the reviewed `CASE_AT_UTC` supplied as `YYYY-MM-DDTHH:MM:SS` (UTC, no trailing Z), sufficiently in the future for the controls to settle. Set `CASE_BASE` to the absolute captured `schedule.parked.json` for Case A. The original StartDate/EndDate stay captured and are ignored by the temporary `at` expression; the final restoration recovers them exactly.
 
 ```bash
 : "${CASE_AT_UTC:?future UTC one-time instant from approved timing helper}"
@@ -264,7 +268,7 @@ Required retained-record predicates:
 - `messageAttributes.SCHEDULE_ARN` matches the real schedule; scheduled time lies in the armed window; capture `EXECUTION_ID`, `ERROR_CODE`, `ERROR_MESSAGE`, `RETRY_ATTEMPTS`, truncation status and any exhaustion condition. In Pipes' event representation, attribute value members may be `stringValue`; preserve the raw representation and normalize only the predicate reader.
 - Body represents the original target input; capture substituted correlation and actual target ARN representation. Do not assume the attribute uses the concrete Lambda function ARN: universal target attributes can use `arn:aws:scheduler:::aws-sdk:lambda:invoke`.
 - No correlated handler `invocation_start` exists in the bounded handler log window, and the error is a pre-invocation authorization rejection. Log absence alone is insufficient proof.
-- If `EXHAUSTED_RETRY_CONDITION` is absent, record **permanent denied-delivery retention passed; retry-exhaustion gate still pending**. If present, retain its actual value and actual retry count, without rewriting them.
+- If `EXHAUSTED_RETRY_CONDITION` is absent, record **permanent denied-delivery retention passed; literal retry exhaustion UNPROVED (deferred to #58)**. If present, retain its actual value and actual retry count, without rewriting them.
 
 Restore the whole original policy after capturing the event. `TargetErrorCount` and `InvocationsSentToDeadLetterCount` support the result; `InvocationsFailedToBeSentToDeadLetterCount` must have no observed failure. These are `AWS/Scheduler`, dimension `ScheduleGroup=$SCHEDULE_GROUP`, and are best-effort telemetry rather than an event ledger. [Scheduler metrics](https://docs.aws.amazon.com/scheduler/latest/UserGuide/monitoring-cloudwatch.html)
 
@@ -285,7 +289,8 @@ preceded normal restoration at `04:06:14Z`; exact readback and doctor 24/24 pass
 See `recovery-verified-after-shell-exit.json`, `normal-restoration-review.json`
 and `commands/a2-rejected-normal-{update,readback,doctor-01}/`.
 
-The literal exhaustion gate remains open. Any replacement must produce a retained
+The literal live exhaustion test remains **UNPROVED**, deferred by the user to
+[#58](https://github.com/JosephWest2/cloud_dev/issues/58). Any replacement must produce a retained
 **Scheduler** DLQ envelope with exact original delivery correlation, an actual
 retryable error, positive `RETRY_ATTEMPTS`, and `EXHAUSTED_RETRY_CONDITION` equal
 to the documented `MaximumRetryAttempts` or `MaximumEventAgeInSeconds`, with no
@@ -302,7 +307,9 @@ variant is not an actionable supported fixture. Normal settings were restored at
 and scheduled invocation `636aaa17-cd77-48a3-acd1-b833fb7f3557` completed successfully
 at `04:15:50Z` in the next campaign's baseline capture. Neither rejected mechanism
 calls for production changes.
-No replacement mechanism or scope waiver is established by this record.
+Neither rejection establishes a supported replacement mechanism. The separate
+September 16 user decision defers the live test to #58; it does not change these
+historical outcomes.
 
 `TestOpenTofuExport/scheduler_retry_exhausted_controlled` now verifies full
 attributes/body/correlation retention, explicitly including positive retries and
@@ -443,10 +450,16 @@ Current alarm mapping to check is exported, not guessed: Scheduler group; Lambda
 
 ## What the final acceptance record must say
 
-- Separate **denied delivery**, **actual Scheduler retry-policy exhaustion**, **Lambda async pre-handler destination delivery**, and **consumer stopped/backlog/recovered** results. Record pending gates honestly.
+- Separate **denied delivery**, **actual Scheduler retry-policy exhaustion**, **Lambda async pre-handler destination delivery**, and **consumer stopped/backlog/recovered** results. Record the user-approved deferral to #58 as UNPROVED, never as a live pass.
 - List exact revision/artifact/manifest hashes and immutable AWS resource IDs, snapshots, injection start/end, restore start/end, errors, all observed retry/condition fields, and fixed evidence windows.
 - Link original failure events and separately link recovery summary/alarm/doctor outputs. No worker allocation is necessary for these failure cases.
 - Record the synchronous A2 control-plane rejection separately from delivered failures; it proves neither retries nor exhaustion. Reserved concurrency zero on the normal asynchronous target exercises Lambda's independent destination.
 - Complete the separate normal scheduled/offline expired-worker campaign and exact-root verification to establish user-facing cleanup behavior. These failure fixtures do not replace that human/offline gate.
 
-The exhaustion gate remains literal: preserve the failed A2 attempt and require actual Scheduler retry/exhaustion evidence from a supported mechanism. Case A permanent denial cannot replace it. The executed campaign is restored. A concrete independent review and user decision are required before changing or deferring the unresolved gate; no further probe is inferred.
+The follow-up #58 retains the literal live requirement: preserve both rejected A2
+mechanisms and require actual Scheduler retry/exhaustion evidence from a supported
+mechanism. Case A permanent denial and controlled fixtures cannot replace it.
+The executed campaign was restored. The user-approved September 16 deferral makes
+revised #48/#4 acceptance satisfied subject only to final independent
+acceptance/merge review; it does not authorize a new probe or claim the deferred
+test passed.
