@@ -7,19 +7,23 @@ transfer use the generated OpenSSH configuration. No inbound ports are opened.
 
 Start with installation and identity below, then follow the
 [foundation setup guide](docs/setup.md) for state bootstrap/migration, a dedicated
-SSH key, provisioning and manifest-v5 export. The
+SSH key, provisioning and manifest-v6 export. The
 [MVP 1 acceptance runbook and results](docs/acceptance/01-lifecycle.md) connect the
 complete lifecycle workflow, failure checks and cleanup evidence. The
 [MVP 2 acceptance runbook](docs/acceptance/02-exec-logs.md) covers remote checks,
 literal arguments, complete output, detachment and recovery after teardown.
 Existing deployments need the [multi-AZ foundation upgrade](docs/setup.md#upgrade-to-the-multi-az-spot-foundation-29)
-and its manifest-v5 export for existing batch recovery. **This client requires
-the expiry-capable manifest v6 from #46 for all new launches**, including explicit
-On-Demand and count one. The current foundation source still exports v5; do not
-change the version number by hand. Scoped inventory, teardown, saved logs and
-legacy receipt observation remain available. Scheduled expiry deployment and
-live acceptance are pending. Use `cleanup --dry-run` to inspect expiry and
-`cleanup` for manual expiry removal; use explicit `down` for deliberate teardown.
+and [scheduled-expiry foundation](docs/setup.md#scheduled-expiry-foundation-manifest-v6).
+**The current foundation exports manifest v6, required for all new launches**,
+including explicit On-Demand and count one. Apply the actual infrastructure and
+export its manifest; do not change the version number by hand. Scoped inventory,
+teardown, saved logs and legacy receipt observation remain available.
+[Expiry acceptance](docs/acceptance/04-expiry.md) records deployed scheduled cleanup
+and a successful laptop-offline run; literal live Scheduler retry exhaustion
+remains unproved in [#58](https://github.com/JosephWest2/cloud_dev/issues/58).
+New installations default to a disabled schedule and require their own enablement
+and health verification. Use `cleanup --dry-run` to inspect expiry, `cleanup` for
+manual expiry removal, and explicit `down` for deliberate teardown.
 
 The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
 Ubuntu 24.04 LTS x86-64, approved public subnets across selected AZs with public IPv4, outbound TCP 80/443,
@@ -241,12 +245,13 @@ comes from AWS even after local state loss. Missing, invalid or duplicate expiry
 never hides a worker or blocks deliberate `down`. Legacy requests have no expiry
 and cannot allocate more workers; they remain inspectable and removable.
 
-Cleanup is planned every five minutes. Expiry is an eligibility boundary, not
+The scheduled cleanup cadence is every five minutes. Expiry is an eligibility boundary, not
 an exact termination guarantee; scheduling, throttling and AWS completion add
-delay. **Manual cleanup is available; scheduled deployment and live acceptance
-remain pending.** The v6
-reader reserves the `cleanup` descriptor for #46; cleanup health/failure evidence
-is verified separately. Do not infer unattended readiness from a version number.
+delay. **Manual and scheduled cleanup are implemented.** The v6 manifest exports
+the cleanup deployment and independent failure-evidence descriptors. Verify the
+enabled schedule and recent scoped completion with `doctor`; the
+[acceptance record](docs/acceptance/04-expiry.md) documents the tested deployment
+and deferred failure case. Do not infer your deployment's health from a version number.
 S3 results keep their independent retention; permanent `launches/v2/` records
 and dispatch claims are retained. See the [expiry contract](docs/plans/04-expiry-contract.md)
 and [offline verification notes](docs/acceptance/43-launch-expiry.md).
@@ -382,8 +387,8 @@ root deletion. Missing root mappings never prove deletion. If deletion is
 complete. A later repeated teardown can lack volume mappings even when deletion
 was previously verified. Full [manual cleanup](docs/acceptance/01-lifecycle.md#teardown-and-independent-cleanup-verification)
 includes independent EC2/EBS inventory. Workers remain billable after shell exit,
-timeout or connection failure; remove them even when acceptance fails. There is
-no claim of unattended TTL cleanup until the MVP 4 live gate passes. Manual
+timeout or connection failure; remove them even when acceptance fails. Scheduled
+expiry is a fallback with deployment/health requirements, not immediate teardown. Manual
 `cleanup` removes expired workers; explicit `down` deliberately removes selected
 workers. Worker teardown retains networking, IAM,
 the launch template, readiness document and the S3 backend; [full durable teardown](docs/setup.md#recovery-and-teardown)
@@ -431,6 +436,29 @@ and [parent acceptance record](docs/acceptance/01-lifecycle.md) for failure
 coverage, volume verification, and the final gate status. Historical
 [#8 lifecycle](docs/acceptance/08-lifecycle.md) and
 [#9 SSH/editor](docs/acceptance/09-readiness-shell.md) acceptance passed.
+
+## Interactive sessions: selected next step
+
+The next interactive-workflow step is baseline tmux for general development
+machines, including manual experiments, monitoring and scripts that intentionally
+ask for input. This is a **plan**, not a shipped dependency or new CLI command:
+current bootstrap does not explicitly install/pin tmux, and `agent`, `watch` and
+`attach` are not implemented. The only current workload profile is `agent`;
+repository-ready and benchmark images remain planned.
+
+The [interactive-session plan](docs/plans/05-interactive-sessions.md) delivers
+manual sessions through existing SSH first, followed by managed observation,
+attachment and durable agent integration in [#56](https://github.com/JosephWest2/cloud_dev/issues/56).
+An interactive script must start in a terminal session to accept later input.
+Existing `exec` supplies stdin EOF and cannot be attached afterward. It captures
+stdout/stderr locally and uploads them after execution; `logs --stream` retrieves
+recorded output and is not a live tail. Manual tmux output will not automatically
+become a `devbox logs` result.
+
+Keep automated benchmarks noninteractive with explicit inputs and recorded
+results; use an independent terminal for optional monitoring. Session attachment
+never extends TTL, and worker loss destroys the live terminal. Possible Herdr
+integration is deferred research in [#59](https://github.com/JosephWest2/cloud_dev/issues/59).
 
 ## Run a noninteractive command
 

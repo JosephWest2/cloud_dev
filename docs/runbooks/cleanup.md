@@ -1,8 +1,12 @@
 # Scheduled cleanup health and recovery
 
 This runbook describes the v6 foundation's `cleanup.evidence` version 1 capability.
-It is also the future live failure-test procedure for #48. **No live results are
-claimed here.** Use the reviewed setup identity for repairs and controlled fault
+It also retains the controlled failure-test procedures used for #48. Actual
+deployment/offline cleanup and failure outcomes are recorded in the
+[acceptance ledger](../acceptance/04-expiry.md); literal live Scheduler retry
+exhaustion is unproved and deferred to [#58](https://github.com/JosephWest2/cloud_dev/issues/58).
+These procedures are not instructions to repeat the completed campaign.
+Use the reviewed setup identity for repairs and controlled fault
 injection; the operator and health roles intentionally cannot perform them.
 
 ## What success means
@@ -137,8 +141,9 @@ reviewed code/runtime/environment, concurrency 1 and exact async destination;
 Pipe desired **and current** RUNNING, `StateReason`, exact role/source/target,
 stream/template, batch 1 and no filter/enrichment; encrypted standard queue,
 retention/visibility and visible/in-flight/delayed backlog; both log retentions.
-Doctor reports missing stream as unverified until #48's first controlled failure
-has materialized the target stream. `skip_destroy` is a Terraform lifecycle setting,
+Doctor reports a missing stream as unverified until a controlled failure has
+materialized the target stream; #48 records this for the accepted deployment.
+`skip_destroy` is a Terraform lifecycle setting,
 not an AWS log-group attribute; verify it in the reviewed configuration/state.
 
 All sixteen exported alarms must be configured correctly and OK. Scheduler uses
@@ -247,7 +252,14 @@ with setup, export the manifest and enable the intended schedule. Require a **la
 successful scheduled terminal record and cleared alarms/backlog; earlier success
 before the outage is insufficient. Retain the failure and recovery event IDs.
 
-## Future #48 controlled live demonstrations (not executed)
+<a id="future-48-controlled-live-demonstrations-not-executed"></a>
+
+## Controlled live failure procedures
+
+This preserves the original #48 procedure, including cases that were not proved
+live. Consult the [acceptance ledger](../acceptance/04-expiry.md) for the final
+case-by-case outcomes and #58 for deferred literal retry exhaustion. The historical
+heading anchor above remains for links from earlier implementation records.
 
 Run only after migration review, in the acceptance deployment with no valuable
 active work. Use `devbox-setup` for deliberate faults and repairs; health reads stay
@@ -392,7 +404,8 @@ aws --profile devbox-setup --region "$region" pipes start-pipe --name "$pipe_nam
    unattended operation if approved. Wait for a later scheduled success, including
    a no-candidate run, and at least three healthy 5-minute periods. Re-run doctor,
    metric/log/retention reads and independent exact-ID EC2/EBS observations. Keep
-   #48 incomplete if any route, root deletion or laptop-offline evidence is missing.
+   a new acceptance campaign incomplete if required route, root deletion or
+   laptop-offline evidence is missing; do not reinterpret #48's recorded outcomes.
 
 ```bash
 aws --profile devbox-setup --region "$region" scheduler update-schedule --cli-input-json "file://$case_dir/schedule-restore.json"

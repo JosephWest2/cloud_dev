@@ -6,9 +6,12 @@ If you do not have those yet, stop before the apply steps and set up AWS access;
 do not paste passwords, access keys or tokens into this repository or a chat.
 
 The implemented starting choices are Ohio (`us-east-2`), Canonical Ubuntu 24.04
-LTS on x86-64, a dedicated public subnet, outbound TCP 80/443, no inbound rules,
+LTS on x86-64, approved public subnets across selected AZs, outbound TCP 80/443, no inbound rules,
 and Linux locally. These choices were exercised in the selected test deployment
-during [#7](acceptance/07-foundation.md) and [#9](acceptance/09-readiness-shell.md).
+during [#7](acceptance/07-foundation.md) and [#9](acceptance/09-readiness-shell.md),
+then extended by [Spot groups](acceptance/03-spot-groups.md) and
+[scheduled expiry](acceptance/04-expiry.md). Current exports use manifest v6;
+new schedules default to disabled until enabled and verified for their deployment.
 The exact regional AMI is selected and recorded
 locally below. Other regions, partitions, architectures and private networking
 need a separate change. Owner and deployment each allow 1–23 letters, digits,
@@ -133,14 +136,15 @@ First follow the [dedicated SSH key setup](acceptance/09-readiness-shell.md#conf
 Set `ssh_public_key` in foundation.tfvars to the public key's first two fields
 (type and base64, without comment/newline). Private keys never enter OpenTofu.
 Prepare the account-wide [Spot service-linked role](#prepare-the-accounts-spot-role)
-with the setup identity before running `doctor`. This update exports manifest v5,
-the multi-AZ placement and launch-ledger contract, and a new pinned template version. Existing workers do
+with the setup identity before running `doctor`. The current source exports manifest v6,
+including multi-AZ placement, the launch ledger, cleanup and failure evidence,
+and a pinned template version. Existing workers do
 not acquire the runner, updated agent requirement, or rotated public key;
 inspect and manually remove them before replacing them with a new launch.
-Build the real Linux/amd64 runner before planning:
+Build the real Linux/amd64 runner and packaged cleanup function before planning:
 
 ```sh
-make runner
+make runner cleanup-check
 ```
 
 The default `runner_path` is `../../bin/devbox-runner-linux-amd64`, relative to
@@ -151,6 +155,11 @@ installation. An artifact update replaces the previously managed artifact;
 finish or remove all bootstrapping workers before updating. Old template versions
 must not launch after that replacement. Already installed workers retain their
 local binary; launch replacements using the new export.
+
+The cleanup artifact is `bin/devbox-cleanup-linux-amd64.zip`; keep both artifacts
+unchanged through apply. Review the [v6 deployment requirements](#scheduled-expiry-foundation-manifest-v6),
+including Lambda concurrency capacity and independent failure evidence, before
+planning. Enable the initially disabled schedule only after deployment verification.
 
 
 ```sh
@@ -171,19 +180,22 @@ tofu output -json deployment_manifest > "${XDG_CONFIG_HOME:-$HOME/.config}/devbo
 ```
 
 Only export the named output. Do not export full state or all provider diagnostics.
-This schema-v5 JSON is non-secret, but contains account/resource identifiers; keep
+This schema-v6 JSON is non-secret, but contains account/resource identifiers; keep
 it local. The manifest is trusted configuration: protect it from unauthorized
 edits. It is not signed and is not an IAM authorization token. Existing schema-v1/v2
-exports must be replaced with a real schema-v5 export. Re-export existing v3
+exports must be replaced with a real schema-v6 export. Re-export existing v3
 deployments after applying this foundation update.
 
-Durable resources are VPC/subnet/IGW/routing, security group, two IAM roles and
-policies, instance profile, launch template, fixed SSM readiness/execution
-documents, and a private result/artifact bucket separate from the S3 backend.
+Durable resources include VPC/subnets/IGW/routing, security group, instance/operator
+and cleanup/evidence IAM roles, instance profile, launch template, fixed SSM
+readiness/execution documents, and a private result/artifact bucket separate from
+the S3 backend. Scheduled cleanup adds Lambda, Scheduler, failure queue/Pipe,
+retained CloudWatch logs, metric filters and alarms.
 Removing a worker leaves these resources in place. The foundation
 allocates **no EC2 instance, EBS volume, public IPv4 allocation, NAT gateway or paid
 VPC endpoint**. S3 state storage, versions and requests are billable durable
-usage; result objects, runner artifacts and their requests are also billable.
+usage; result objects, artifacts, cleanup execution and evidence services also
+have their own usage charges even when no worker is running.
 Worker compute, disk, public IPv4 and applicable transfer charges begin
 only when a worker is launched; consult your AWS account's pricing before that
 later lifecycle test.
@@ -449,11 +461,11 @@ delete it during deployment/worker cleanup. Instant Fleet does **not** require
 ### Plan and apply the upgrade
 
 From a separate live checkout of the reviewed revision, copy only the trusted
-`foundation.tfvars` and `backend.hcl`, build the pinned runner, and use the setup
+`foundation.tfvars` and `backend.hcl`, build the pinned runner and cleanup package, and use the setup
 profile explicitly:
 
 ```sh
-make runner
+make runner cleanup-check
 AWS_PROFILE=devbox-setup tofu -chdir=infra/foundation init -backend-config=backend.hcl
 AWS_PROFILE=devbox-setup tofu -chdir=infra/foundation plan -var-file=foundation.tfvars -out=spot-upgrade.tfplan
 tofu -chdir=infra/foundation show -no-color spot-upgrade.tfplan
@@ -462,7 +474,9 @@ tofu -chdir=infra/foundation show -no-color spot-upgrade.tfplan
 Review the exact plan before applying. Expect added selected subnets and route
 associations, updated operator policy, the shared storage policy, the current
 runner artifact if its hash changed, and a new template version with its
-resolved bootstrap. Investigate unexpected resource replacement, result/state
+resolved bootstrap. Current source also includes the v6 cleanup/evidence resources;
+review the [scheduled-expiry upgrade](#scheduled-expiry-foundation-manifest-v6)
+alongside this historical v5 placement change. Investigate unexpected resource replacement, result/state
 storage deletion, changed retention, foreign scope or mutable template pins.
 Keep the built runner unchanged between plan and apply. The setup commands are:
 
@@ -477,10 +491,11 @@ select an earlier template. Keep an old trusted results-only descriptor for
 completed logs. V5 adds exact subnet/AZ mappings, compatible type pools, AMI root
 minimum/template disk defaults and `launch_ledger`; it preserves runner,
 execution, readiness and result-storage exports. Legacy inventory/cleanup and
-completed logs remain available without batch prerequisites. With the v5 export,
-`devbox up agent --count 2 --group smoke-batch` uses the integrated allocator and
-permanent shared recovery. Apply and verify the reviewed foundation before
-running it; fresh live acceptance and cleanup remain the #34 gate.
+completed logs remain available without batch prerequisites. **Current fresh
+launches require the v6 expiry-capable export**, including
+`devbox up agent --count 2 --group smoke-batch`. Apply and verify the complete
+reviewed foundation before launching. [Spot acceptance](acceptance/03-spot-groups.md)
+records #34's results; each new deployment still needs its own verification.
 
 The shared ledger uses the existing private result bucket under the separate
 `launches/v2/ACCOUNT/REGION/DEPLOYMENT/OWNER/` prefix. Its conditional dispatch
@@ -495,18 +510,24 @@ with setup authority; deleting them invalidates stale receipts' retry guarantees
 `doctor` verifies actual resources and pins, not effective allocation permissions.
 Static policy/mock tests do not prove Spot authorization. Actual restricted-role
 Spot/On-Demand launch, independent worker use, and exact disposable-root cleanup
-are the fresh acceptance gate in #34. Never force live Spot scarcity to test
+were demonstrated in #34 and must be verified for deployment changes. Never force live Spot scarcity to test
 partial/unknown capacity; controlled SDK tests own those failure cases.
 
 ## Scheduled expiry foundation (manifest v6)
 
-The v6 foundation adds a Go cleanup function and an explicitly disabled schedule,
+The current v6 foundation includes a Go cleanup function and a schedule disabled by default,
 and requires `ExpiresAt` in current Fleet creation tags. Existing v4/v5 records
 remain available for observation and explicit teardown. Build `make runner
 cleanup-check` before planning. Follow the [scheduled-expiry migration and
 verification instructions](acceptance/46-scheduled-expiry.md); install independent
 failure evidence before enabling automatic cleanup. A matching deployment or a
 zero-error counter alone does not establish a recent successful cleanup run.
+[The #48 acceptance record](acceptance/04-expiry.md) documents installation,
+enabled scheduling, actual laptop-offline cleanup and independent root deletion.
+PR #55 merged and #48/#4 closed on September 16, 2026. Literal live Scheduler
+retry exhaustion is still unproved and deferred to
+[#58](https://github.com/JosephWest2/cloud_dev/issues/58); do not replay the
+historical acceptance campaign as part of routine setup.
 
 ### Retained cleanup evidence and health (#47)
 
@@ -515,6 +536,7 @@ transport, independent Pipe-to-Logs retention, alarms and a read-only health rol
 The operator assumes that exact role only for bounded doctor checks; manual
 cleanup, explicit teardown, observation and durable results retain their independent
 operator path. Review the [cleanup recovery runbook](runbooks/cleanup.md) before
-enabling the schedule. It includes exact reads, repair procedures and the future
-#48 pre-handler/route failure demonstrations. Existing v6 exports without the
+enabling the schedule. It includes exact reads, repair procedures and the controlled
+failure-test procedures; the acceptance record identifies actual outcomes and
+the deferred case. Existing v6 exports without the
 capability cannot establish unattended health; re-export after the reviewed apply.
