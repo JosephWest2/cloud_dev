@@ -1,7 +1,8 @@
 # Issue #4 expiry acceptance and recovery (#48)
 
-**Revised #48/#4 acceptance is satisfied, subject only to final independent
-acceptance/merge review.** On September 16, 2026, the user approved deferring the
+**Revised #48/#4 acceptance is satisfied; PR #55 merged and #48/#4 closed on
+September 16, 2026.** This status update adds no new live test claim. The retained
+campaign evidence below remains unchanged. On September 16, 2026, the user approved deferring the
 one literal live Scheduler retry-exhaustion test to
 [#58](https://github.com/JosephWest2/cloud_dev/issues/58). Installation,
 market/batch checks, the authorized retry's actual offline cleanup, and all five
@@ -13,8 +14,8 @@ attempt remains **NOT_PERFORMED**.
 **Literal live Scheduler retry exhaustion remains UNPROVED and deferred to #58.**
 Both A2 mechanisms were unsupported, and Case A recorded permanent denial with
 zero retries. The deferral changes acceptance scope; it does not turn those results
-or controlled fixtures into a live pass. This record does not claim PR55 is merged,
-#48/#4 are closed, or the separate interactive release #5 is complete.
+or controlled fixtures into a live pass. The separate interactive release #5
+remains open; expiry acceptance alone does not complete its release handoff.
 
 All evidence paths below are relative to the private durable run in the table.
 Controlled tests, scheduled online cleanup and actual laptop-offline proof remain
@@ -751,9 +752,9 @@ permanent launch records as acceptance cleanup.
 | Sole acceptance-scope amendment | User approved September 16, 2026: defer the literal live Scheduler retry-exhaustion test to [#58](https://github.com/JosephWest2/cloud_dev/issues/58); no live pass claimed |
 | Harmless rerun and live manual remaining-worker removal | Passed retry harmless rerun, live-control explicit down and independent root checks; original live down NOT_RUN unchanged |
 | Final scoped inventory, enabled settings, retained resources and health | Passed: exact workers/roots cleaned, active scope empty, 59 managed resources retained, zero-change plan and final health |
-| Fresh independent final #48 acceptance/merge review | Sole remaining prerequisite for merging PR55 and closing #48/#4; revised acceptance scope otherwise satisfied |
+| Final merge status | PR #55 merged and #48/#4 closed September 16, 2026; this updates the former pre-merge gate without adding live evidence |
 
 No idle detector, checkpointing, cost estimate, automatic replacement or TTL
-extension is introduced here. Complete the final independent acceptance/merge
-review before merging PR55 and closing #48/#4. Interactive MVP release #5 remains
+extension is introduced here. PR #55 and #48/#4 are complete within the revised
+acceptance scope. Interactive MVP release #5 remains
 a separate handoff; its acceptance has not been claimed here.

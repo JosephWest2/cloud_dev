@@ -24,12 +24,14 @@ add required nullable `expires_at` and `expiry_status`; batch output adds nullab
 so old response-v1 bytes stay stable. Raw malformed expiry is never printed.
 Expiry diagnostics are separate from strict scope-tag checks and explicit down.
 
-The v6 manifest uses all existing v5 fields/pins, plus reserved top-level
-`cleanup` (opaque JSON at this reader boundary). Top-level `roles` remains exactly
-instance/operator. #46 defines/validates the nested cleanup descriptor and
-exports v6 only with the required creation-tag IAM authorization. Existing
+The v6 manifest uses all existing v5 fields/pins, plus top-level
+`cleanup` (decoded separately from the launch reader). Top-level `roles` remains exactly
+instance/operator. #46/#47 define and validate the cleanup/evidence descriptors;
+the foundation exports v6 with the required creation-tag IAM authorization. Existing
 launch pin/IAM hash verification applies to v6. Inventory/manual down/saved logs
-do not require cleanup health. This reader alone proves no live scheduled support.
+do not require cleanup health. A manifest alone proves no live scheduled health;
+see [the actual expiry acceptance](acceptance/04-expiry.md) and `doctor` for
+deployment observations. Literal live Scheduler retry exhaustion remains #58.
 
 
 The [Spot batch contract](#spot-batch-contract-28) adds profile v2, deployment
@@ -70,12 +72,15 @@ override, not a doctor option. There is no automatic market fallback.
 
 ## Deployment manifest
 
-The current foundation exports a non-secret schema-v5 JSON object using
+The current foundation exports a non-secret schema-v6 JSON object using
 `tofu output -json deployment_manifest`. Schemas 1–3 are deliberately rejected:
 apply the runner/storage foundation, re-export and replace old workers for new
 execution support. Unknown fields and trailing JSON are
 rejected. User config and command-result storage stay at version 1. Legacy
-manifest v4 remains accepted; the v5 additions for batch launch are specified below.
+manifests v4/v5 remain accepted for applicable non-launch operations. The table
+below describes the legacy v4 base; the [v5 batch additions](#spot-batch-contract-28)
+and [v6 expiry requirements](#expiry-integration-43) extend it. All new launches
+require v6, including explicit On-Demand and count one.
 
 | Manifest field | Contract |
 | --- | --- |
@@ -905,7 +910,7 @@ Profile v1 still loads, normalizing architecture/disk defaults to the supported
 values. V2-only TOML fields in v1 fail, including explicit empty/false values.
 Upgrade such a profile's version before adding those fields.
 Placement restrictions also require manifest v5; the legacy single-subnet path
-rejects them rather than ignoring them. New v5 launches use the shared batch
+rejects them rather than ignoring them. Historical v5 launches used the shared batch
 allocator and recovery service; the legacy allocator cannot bypass that path.
 
 Manifest v5 retains all v4 execution, results, IAM, image and network fields and
@@ -1204,11 +1209,14 @@ exact-ID revalidation, eligible states, scope, errors, volume evidence, and shar
 text/JSON/exit contracts. Pure APIs and fixtures live in `internal/expiry`; pinned
 historical bytes are under `internal/lifecycle/testdata/expiry-legacy`.
 
-This is a staged rollout: #43 implements TTL flags/configuration, immutable
-expiry and allocation gates as described above. #44–#48 own cleanup service,
-cloud deployment and live evidence. #45 supplies manual `cleanup` and its
-no-write dry-run; explicit `down` remains available for deliberate teardown.
-The current v5 foundation cannot authorize this client's new launches.
+The rollout is implemented: #43 supplies TTL flags/configuration, immutable
+expiry and allocation gates; #44–#48 supply cleanup service, cloud deployment and
+recorded live evidence. #45 supplies manual `cleanup` and its no-write dry-run;
+explicit `down` remains available for deliberate teardown. The current foundation
+exports v6. Old v5 deployments cannot authorize this client's new launches and
+must apply/re-export the actual upgrade. Revised expiry acceptance is recorded in
+[the #48 ledger](acceptance/04-expiry.md); literal Scheduler retry exhaustion is
+unproved and deferred to [#58](https://github.com/JosephWest2/cloud_dev/issues/58).
 
 ## Manual expiry cleanup (#45)
 

@@ -11,7 +11,7 @@ max_count = 10
 # Fresh launch lifetime; no environment/profile override. Requires foundation v6.
 default_ttl = "2h" # up --ttl overrides; positive Go duration, maximum 168h.
 # One deadline per request; active work and retries do not extend it.
-# Manual down remains required until scheduled cleanup is deployed/verified.
+# Verify scheduled cleanup for this deployment; use down for deliberate teardown.
 # profile_file = "agent.toml" # Optional; defaults to the embedded agent profile.
 
 # Dedicated Ed25519 private key stays local; retain its matching .pub file.

@@ -1,5 +1,16 @@
 # Cloud Dev Infrastructure Tool Plan
 
+Status, September 16, 2026: this document includes the long-term product proposal,
+not only shipped interfaces. The current CLI implements the `agent` machine
+profile, lifecycle/SSH, noninteractive exec and durable logs, Spot groups, and
+manual/scheduled expiry. Foundation export is v6. See the [README](README.md) for
+implemented commands and the [implementation plan](implementation-plan.md) for
+delivery status and acceptance. Repository-ready images, agent automation,
+benchmark/runner profiles and managed terminal commands remain planned.
+The next interactive step is [manual tmux on development machines](docs/plans/05-interactive-sessions.md).
+Possible [Herdr integration](https://github.com/JosephWest2/cloud_dev/issues/59)
+is deferred research.
+
 ## 1. Purpose
 
 Build a small developer-focused tool for launching, connecting to, managing, and destroying repeatable AWS EC2 machines.
@@ -53,6 +64,11 @@ The AWS infrastructure itself should not be a Git submodule of the dotfiles repo
 - Make instances disposable by keeping persistent state outside the VM.
 - Allow multiple concurrent instances without cumbersome manual management.
 - Provide clear lifecycle commands for listing and terminating machines.
+- Make intentional interactive work observable and reconnectable through tmux,
+  including ordinary scripts and manual experiments. Managed agents additionally
+  need explicit input-wait status, durable logs and input-required notifications.
+- Expire workers automatically while the operator is disconnected.
+- Provide versioned structured JSON output for scripting.
 
 ### Nice to Have
 
@@ -61,10 +77,8 @@ The AWS infrastructure itself should not be a Git submodule of the dotfiles repo
 - Automatic agent startup based on GitHub issue or branch.
 - GitHub Actions integration for ephemeral self-hosted runners.
 - S3-backed benchmark artifacts and CI caches.
-- Machine TTL / automatic cleanup.
 - Cost estimates and running-cost display.
 - Optional AMI image building with Packer.
-- Structured JSON output for scripting.
 
 ---
 
@@ -168,6 +182,19 @@ The implementation should resolve the friendly name to the EC2 instance ID autom
 ```bash
 devbox exec issue-142 -- cargo test
 ```
+
+### Observe or answer an interactive agent
+
+```bash
+devbox watch issue-142
+devbox attach issue-142
+devbox logs JOB_ID
+```
+
+`watch` attaches read-only; `attach` allows interaction with the existing tmux
+session. Both use SSH over SSM. Agent logs use a durable job ID so output can be
+retrieved after the machine is gone; preserve the existing command-ID `logs`
+interface when adding agent support. These agent interfaces are planned work.
 
 ### Destroy a machine
 
@@ -331,6 +358,12 @@ Do not bake secrets into AMIs.
 
 Optimized for coding work.
 
+Include a recorded tmux version as a baseline for development images, including
+manual scripts, monitoring and agents before automated issue execution exists.
+The initial manual workflow can ship on the existing foundation before this full
+image. Include the baseline in future benchmark images for optional manual work;
+automated benchmark execution remains noninteractive.
+
 ### Runner AMI
 
 Optimized for CI.
@@ -411,7 +444,9 @@ Prefer workload identity or short-lived credentials over long-lived secrets wher
 
 ## 12. Remote Access
 
-Use **AWS Systems Manager Session Manager** as the primary access mechanism.
+Use **SSH over AWS Systems Manager Session Manager**, following the selected
+[authentication and host-trust contract](design-decisions.md), as the primary
+interactive access mechanism.
 
 Requirements:
 
@@ -440,7 +475,15 @@ instance ID
 SSM session
 ```
 
-Optional future support may allow normal OpenSSH syntax tunneled through SSM.
+Use the existing SSH-over-SSM connection for tmux observation and attachment under
+the `devbox` user. Disconnecting the local terminal leaves the detached agent
+session running. Agent process lifetime must be independent of the attached client.
+
+The same manual session workflow applies to ordinary scripts and experiments.
+Start intentional interactive work inside tmux; existing noninteractive `exec`
+cannot later accept terminal input. Current logs upload after execution and are
+not live following; manual tmux sessions do not automatically gain durable result
+IDs or S3 publication. Follow the [interactive-session plan](docs/plans/05-interactive-sessions.md).
 
 ---
 
@@ -545,8 +588,8 @@ Possible process:
 5. Clone repository
 6. Fetch GitHub issue #142
 7. Create branch issue-142
-8. Start coding agent
-9. Agent works
+8. Start coding agent in a named detached tmux session
+9. Agent works; report and notify when waiting for input, then accept an attached answer
 10. Agent commits and pushes regularly
 11. Agent opens PR
 12. Instance is terminated after completion
@@ -561,6 +604,26 @@ devbox agent 142 143 144 145
 should launch independent machines.
 
 Isolation should be machine-level, not only process-level.
+
+### Interactive sessions and questions
+
+Implementation is tracked in [#56](https://github.com/JosephWest2/cloud_dev/issues/56).
+
+Each managed interactive run has a durable job/attempt ID and a corresponding
+tmux session. `watch` provides read-only observation and `attach` permits direct
+answers. Preserve exited panes for diagnostics while the instance remains alive.
+
+The selected agent adapter must report explicit work/input-wait/terminal states
+and pending-question metadata; terminal silence is not evidence of a question.
+Notify on input-required events without an attached terminal, and record delivery
+failures without losing the question. Initial answers use interactive attachment;
+a durable question inbox and GitHub/chat reply bridges are follow-on options.
+
+tmux does not preserve a process after instance termination. Persist logs, job
+state, questions and required checkpoints outside EC2; replacement/resume must
+restore any necessary conversation and workspace state. Waiting or attachment
+does not extend TTL, and unanswered questions never imply approval. See the
+[selected decision](design-decisions.md#interactive-agent-sessions-and-observability-september-14-2026).
 
 ---
 
@@ -711,6 +774,7 @@ Use for:
 - flamegraphs
 - build artifacts
 - CI caches
+- agent output/transcripts, durable job status and pending-question metadata
 - optional agent artifacts
 
 ### Secrets Manager
@@ -795,8 +859,12 @@ Next:
 
 ```text
 devbox agent
+devbox watch
+devbox attach
 devbox benchmark
 ```
+
+Extend the existing `devbox logs` command to retrieve agent results by job ID.
 
 Later:
 
@@ -863,7 +931,7 @@ Required safeguards:
 
 - all resources tagged `ManagedBy=devbox`
 - `devbox down --all` confirmation
-- optional TTL on instances
+- mandatory bounded TTL on new workers, with verified scheduled cleanup
 - automatic cleanup support
 - clear display of Spot vs On-Demand
 - display instance type before launch
@@ -908,13 +976,23 @@ should expose:
 - age
 - group
 - optional issue/PR
+- agent job/attempt ID and status when agent integration is enabled
+- input-wait start time/duration and pending question reference
+- freshness/availability of the agent observation
+
+Agent integration must include live read-only tmux observation, interactive
+attachment, durable output retrieval and input-required notifications. Persist
+output from startup through completion with periodic uploads and explicit
+completeness status. Terminal captures can contain control sequences and combined
+streams; prefer native agent transcripts/events where supported and document the
+stored format. Keep EC2 readiness and agent status separate, and report stale or
+unknown status honestly.
 
 Future versions may expose:
 
 - approximate accumulated cost
 - current public/private IP
 - Spot interruption/rebalance state
-- agent status
 - CI job status
 
 ---
@@ -1005,7 +1083,10 @@ Create:
 - agent image
 - benchmark image
 
-Preinstall expensive tooling.
+Preinstall expensive tooling and carry the baseline tmux version into development
+images. Prove that a manually started ordinary script and, once selected, an agent
+can be detached and reattached through SSH over SSM. Manual tmux support can ship
+before this image phase.
 
 Success criterion:
 
@@ -1041,12 +1122,17 @@ Add:
 - branch creation
 - GitHub issue retrieval
 - coding-agent startup
+- named tmux sessions, read-only `watch` and interactive `attach`
+- durable agent logs/status and pending-question metadata
+- explicit input-wait state and notifications without an attached terminal
 - periodic Git checkpointing
 - interruption handling
 
 Success criterion:
 
-> One command launches an isolated agent machine for a GitHub issue.
+> One command launches an isolated agent machine for a GitHub issue. The operator
+> can observe it, disconnect/reconnect, receive an input-required notification and
+> answer through attachment. Persisted logs/status remain available after teardown.
 
 ---
 
@@ -1098,7 +1184,7 @@ Add:
 
 - Spot capacity-aware selection
 - On-Demand fallback
-- automatic TTL cleanup
+- further cleanup reliability improvements beyond the implemented scheduled TTL
 - cost estimates
 - S3/sccache optimization
 - interruption/rebalance handling

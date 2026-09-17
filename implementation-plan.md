@@ -1,6 +1,13 @@
 # Cloud dev implementation plan
 
-Status: implementation plan based on [the product proposal](cloud-dev-tool-plan.md). The CLI/configuration foundation is implemented in issue #6; no AWS deployment has been performed.
+Status, September 16, 2026: chunks 1–4 are implemented with recorded live acceptance:
+[lifecycle](docs/acceptance/01-lifecycle.md), [exec/logs](docs/acceptance/02-exec-logs.md),
+[Spot groups](docs/acceptance/03-spot-groups.md), and [scheduled expiry](docs/acceptance/04-expiry.md).
+The current foundation exports v6. Literal live Scheduler retry exhaustion is
+unproved and deferred to [#58](https://github.com/JosephWest2/cloud_dev/issues/58);
+the separate release handoff #5 remains open. Chunks 5 onward are planned.
+Baseline manual tmux on existing development machines is the next interactive
+deliverable; it can precede the complete repository image and managed agent adapter.
 
 Each numbered chunk delivers a usable workflow through infrastructure, CLI, configuration, and documentation. Its human acceptance test is the completion gate. Internal PRs may be smaller, but an infrastructure-only or CLI-only PR does not complete a chunk.
 
@@ -13,41 +20,53 @@ Track the interactive release in [#5](https://github.com/JosephWest2/cloud_dev/i
 3. [#3 — Launch and manage groups of Spot devboxes](https://github.com/JosephWest2/cloud_dev/issues/3)
 4. [#4 — Expire devboxes automatically while the local client is offline](https://github.com/JosephWest2/cloud_dev/issues/4)
 
+Interactive follow-on work for chunks 5–6:
+
+- [#56 — tmux sessions, live observation and input-required notifications](https://github.com/JosephWest2/cloud_dev/issues/56)
+- [Manual and managed interactive-session delivery plan](docs/plans/05-interactive-sessions.md)
+- [#59 — possible Herdr integration research](https://github.com/JosephWest2/cloud_dev/issues/59) (deferred; tmux proceeds independently)
+
 ## Decisions to settle
 
-| Decision | Proposed starting point | Needed before |
+| Decision | Current selection or remaining proposal | Status / needed before |
 | --- | --- | --- |
 | First release | **Confirmed:** interactive devboxes, followed by coding agents | Decided |
 | Stack | **Confirmed:** Go CLI using the AWS SDK for Go v2, OpenTofu for durable infrastructure, TOML for user configuration and machine profiles | Decided |
 | AWS scope | **Confirmed:** one personal account and region per configuration; explicit profile and stable owner identifier | Decided in #6 |
-| Region | User prefers central US near Chicago; propose Ohio (`us-east-2`), pending selection | Chunk 1 |
-| Networking | Dedicated VPC; public IPv4 for outbound access; no inbound security-group rules | Chunk 1 |
-| Remote access | **Confirmed:** real SSH over SSM, including editor and file-transfer support; SSM Run Command remains proposed for noninteractive `exec` | Decided in #6; implement sshd, authentication, host-key verification and proxy in #7/#9 |
+| Region | **Confirmed:** Ohio (`us-east-2`) | Decided |
+| Networking | **Implemented:** dedicated VPC, approved public subnets across AZs, public IPv4, outbound TCP 80/443, no inbound rules | Decided |
+| Remote access | **Implemented:** real SSH over SSM for terminals/editors/transfers; separate SSM Run Command for noninteractive `exec` | Chunks 1–2 complete |
 | Local platform | **Confirmed:** Linux, starting with Arch Linux | Decided in #6 |
 | Base OS | **Confirmed:** Ubuntu LTS | Decided |
-| Image and architecture | Propose x86-64; select the Ubuntu LTS release and pin the actual AMI ID with provenance | Chunk 1 |
-| Spend controls | Explicit On-Demand opt-in, configurable instance count limit, proposed 2-hour default TTL once cleanup ships | Chunks 1–4 |
+| Image and architecture | **Confirmed:** Canonical Ubuntu 24.04 LTS x86-64; exact AMI/template pins in manifest | Decided |
+| Spend controls | **Implemented:** explicit On-Demand opt-in, count limit, 2h default TTL (max 168h), 5-minute scheduled cleanup | Chunks 1–4 complete; verify each deployment |
+| Interactive sessions | **Confirmed plan:** tmux for general manual work first; managed `watch`/`attach`, durable agent logs/state and notifications next | Manual baseline before/full image in chunk 5; managed integration in chunk 6 |
 | Agent contract | Select one agent, repository, authentication method, and representative issue | Chunk 5 |
 | Agent authority | Proposed: push a dedicated branch and open a draft PR; no merge; clarify checkpoint contents and failure retention | Chunk 6 |
 | GitHub identity | Select GitHub App or limited token; separate agent and runner credentials | Chunks 5 and 9 |
 | CI trust and trigger | Trusted repository jobs first; decide whether fork PRs are supported; hosted launcher workflow before webhook autoscaling | Chunk 9 |
 
-The first-release priority, Go + OpenTofu + TOML stack, Ubuntu LTS base OS, personal account scope, Linux/Arch local target, and SSH-over-SSM editor/file-transfer access are confirmed. Other entries remain proposals. The user has no existing VPC or authentication constraints and requested an explanation of networking tradeoffs before choosing. See [decision notes](design-decisions.md) for confirmed decisions and network comparisons.
+The table separates implemented infrastructure from remaining workload choices.
+The baseline tmux workflow is selected but not implemented. See
+[decision notes](design-decisions.md) for rationale and historical alternatives.
 
 ## Shared implementation contracts
 
-- OpenTofu owns durable resources: networking, IAM, launch templates, storage, and later scheduled cleanup. The CLI owns disposable EC2 instances. Instance lifecycles do not run through an infrastructure apply.
+- OpenTofu owns durable resources: networking, IAM, launch templates, storage, and scheduled cleanup. The CLI and scoped cleanup service manage disposable EC2 instances. Instance lifecycles do not run through an infrastructure apply.
 - Implement the CLI in Go using the AWS SDK for Go v2. Go was selected for implementation and maintenance simplicity. Use TOML for user configuration and versioned machine profiles; OpenTofu infrastructure definitions use HCL. Keep AWS SDK mutations separate from infrastructure properties managed by OpenTofu.
 - Versioned profile files describe workload choices. OpenTofu publishes a versioned, non-secret deployment manifest with resource identifiers; the CLI reads it without parsing infrastructure state. Resolve profile/image aliases to an exact AMI ID and launch-template version before launch and record both.
 - Use the normal AWS credential chain. Scope inventory and mutations by account, region, deployment, and owner. Validate the expected account before a mutation. Tags identify resources but do not replace IAM enforcement.
-- Tag at creation: `ManagedBy`, `Deployment`, `Owner`, `Profile`, `Name`, `RequestId`, creation time, and optional group/expiry/workload metadata. Tag attached resources where supported. EC2 inventory remains authoritative; local cache loss must not lose machines.
+- Tag at creation: `ManagedBy`, `Deployment`, `Owner`, `Profile`, `Name`, `RequestId`, `CreatedAt`, required `ExpiresAt`, and applicable group/attempt metadata. Fresh requests tag workers, root volumes and Fleet with the same immutable expiry. EC2 inventory remains authoritative; local cache loss must not lose machines.
 - Use immutable instance/request identifiers internally. Reject ambiguous friendly names and accept explicit instance IDs only after validating managed-resource scope. EC2 tags cannot guarantee atomic name uniqueness; concurrent name collisions must remain safe to inspect and resolve.
 - Report EC2 state, SSM connectivity, and workload/bootstrap readiness separately. Bound retries and waits. A failed wait must print recoverable instance/request IDs and teardown instructions.
-- Reuse an idempotency token for retries of the same launch request. Reconcile uncertain outcomes by request tags before launching again. Never describe a partial launch as full success or silently switch purchasing markets.
+- Reconcile uncertain allocation using permanent shared attempt records and AWS evidence; never resend a claimed attempt. `--resume` only observes, and `--retry-missing` explicitly requests proven missing capacity under the original expiry. Never describe a partial launch as full success or silently switch purchasing markets.
 - Require confirmation for `down --all` unless `--yes` is supplied; noninteractive use without `--yes` fails. Revalidate resource scope at termination. Root volumes are encrypted and delete on termination; require IMDSv2. Keep secrets out of state, images, user data, command arguments, and logs.
 - Introduce structured output with each command; diagnostics go to stderr. Define distinct outcomes for success, usage/config errors, remote command failure, timeout, and partial completion.
 
 ## 1. Launch, connect to, and remove one machine
+
+Implemented; the scope below records the original delivery slice. See current CLI
+syntax in the README and the linked acceptance record above.
 
 **User outcome:** From a fresh checkout and an authenticated AWS profile, launch a disposable Linux machine, use a shell, and remove it without the AWS Console.
 
@@ -55,7 +74,7 @@ Deliver together:
 
 - Minimal CLI packaging, user config, one `agent` profile, and `doctor` checks for identity, configuration, and local Session Manager prerequisites.
 - OpenTofu state bootstrap and documented migration to an encrypted, versioned S3 backend with locking; ignore local state. One VPC/subnet, IAM roles, security group, and launch template. Export the deployment manifest.
-- `up agent --on-demand --name smoke`, `ls`, `ssh smoke`, and `down smoke`. On-Demand is an explicit smoke-test choice until Spot support lands in chunk 3; no implicit change to the intended agent default.
+- `up agent --on-demand --name smoke`, `ls`, `ssh RETURNED_NAME_OR_ID`, and `down RETURNED_NAME_OR_ID`. On-Demand is an explicit smoke-test choice; current launches default to Spot. Names include the instance-ID suffix; use the actual returned name.
 - A pinned distribution AMI with SSM, minimal bootstrap, and a consistent development user. Basic CLI readiness and teardown diagnostics.
 
 **Human acceptance test:** Follow the README from a clean configuration; launch `smoke`; open its shell and run `uname -a`; list its ID/type/market/readiness; terminate it and confirm EC2 termination and root-volume deletion through CLI/API output. Verify no inbound security-group rules exist. Repeat `down` and receive an intelligible already-gone result.
@@ -64,15 +83,23 @@ Deliver together:
 
 ## 2. Run real development commands and recover diagnostics
 
+Implemented; see the exec/log acceptance record above.
+
 **User outcome:** Run a build or test command remotely and trust its result.
 
-Deliver `exec NAME -- COMMAND [ARGS...]` using SSM Run Command, with an explicit remote user and working directory, preserved argument boundaries, remote exit status, execution timeout, and command ID. Add S3 storage and permissions for complete output plus a `logs` command. Document that this first transport is noninteractive and output is retrieved asynchronously; establish what Ctrl-C cancels and report when cancellation is only requested.
+Delivered `exec NAME -- COMMAND [ARGS...]` using SSM Run Command, with an explicit
+remote user and working directory, preserved arguments, workload exit status,
+separate timeouts, and durable command ID. S3 stores status and complete output
+for `logs` retrieval. This transport is noninteractive; Ctrl-C detaches local
+observation without requesting remote cancellation. Streams upload after execution.
 
 **Human acceptance test:** Clone a small public fixture repository through the shell, then run its successful and failing checks with `exec`. Confirm the local exit code matches the remote result. Pass an argument containing spaces and shell metacharacters and confirm literal handling. Generate a large log and retrieve its complete stored output.
 
 **Failure test:** Disconnect the local client during execution; reconnect and retrieve the result using its command ID. Force a timeout and distinguish it from a failed test. No command should report success while execution status is unknown.
 
 ## 3. Manage a group of Spot development machines
+
+Implemented for the `agent` profile; an exact-type benchmark profile remains chunk 8.
 
 **User outcome:** Launch several disposable workers and manage them independently or as a group.
 
@@ -86,9 +113,15 @@ For partial fulfillment, preserve successfully launched machines, return a nonze
 
 ## 4. Leave machines unattended with automatic expiry
 
+Implemented with revised live acceptance; only literal Scheduler retry exhaustion
+is deferred to #58. Existing historical failure records remain unchanged.
+
 **User outcome:** A machine expires even if the local CLI is no longer running.
 
-Deliver `--ttl`, visible expiry timestamps, `cleanup --dry-run`, and manual cleanup. Add an AWS-scheduled cleanup function, IAM scoped to the deployment, and logs describing decisions. Proposed defaults: a 2-hour TTL and checks every 5 minutes; document the cleanup delay and that this is not a hard spending cap. Explicitly configure longer lifetimes when required.
+Delivered `--ttl`, visible expiry timestamps, `cleanup --dry-run`, manual cleanup,
+an AWS-scheduled cleanup function, scoped IAM, and retained decision/failure evidence.
+Defaults are a 2-hour TTL and checks every 5 minutes; expiry is not a hard spending
+cap. New installations default to a disabled schedule until enabled and verified.
 
 **Human acceptance test:** Launch a machine with a short TTL and another with a longer TTL; inspect dry-run output; close the CLI; confirm only the expired machine terminates and find its cleanup log. Repeat a cleanup invocation and confirm it is harmless.
 
@@ -102,6 +135,15 @@ Deliver `--ttl`, visible expiry timestamps, `cleanup --dry-run`, and manual clea
 
 Deliver one Packer image with pinned tool versions, an image manifest, and the selected repository bootstrap. Add runtime Secrets Manager access limited to the workload, non-secret Parameter Store configuration where useful, and a defined credential renewal strategy. Store only secret references in configuration and infrastructure state. Create/update secret values out of band.
 
+First deliver a recorded tmux version through the existing development bootstrap
+and a named manual session under `devbox`, reached through SSH over SSM. Cover an
+ordinary script that intentionally requests input, detach/reconnect, read-only
+observation and retained exited panes. This can ship before the full Packer image
+and selected repository setup. Include the same baseline in subsequent development
+and benchmark images. Follow the [interactive-session plan](docs/plans/05-interactive-sessions.md).
+Managed session commands and agent status arrive with chunk 6; manual sessions do
+not automatically gain durable `logs` retrieval or input-required notifications.
+
 Build an image once, reference its exact AMI ID, and launch through the existing workflow. Keep a previous manifest for rollback. Record image and bootstrap revisions on the machine; failures remain inspectable within TTL. Set a useful boot-readiness target after measuring this representative workload.
 
 **Human acceptance test:** Launch, connect, and run the actual repository's smallest useful build/test. Terminate and recreate it; verify the same image/tool versions and successful bootstrap. Rotate a test credential without rebuilding the AMI and confirm a new machine uses it. Roll back to the previous image manifest.
@@ -112,11 +154,32 @@ Build an image once, reference its exact AMI ID, and launch through the existing
 
 **User outcome:** `devbox agent 142` starts a real issue on an isolated machine and leaves reviewable work in GitHub.
 
-Deliver one selected agent adapter, repository/issue lookup, a unique branch, runtime authentication, a supervised job, status/log retrieval, durable result metadata, and draft-PR creation. `agent` returns a durable job ID; status remains retrievable after the machine terminates. Implement explicit completion/failure/timeout states.
+Deliver one selected agent adapter, repository/issue lookup, a unique branch, runtime authentication, a supervised job in a named detached tmux session, status/log retrieval, durable result metadata, and draft-PR creation. `agent` returns a durable job ID; status remains retrievable after the machine terminates. Implement explicit working/input-wait/completion/failure/timeout/interruption states, timestamps and unknown/stale observations.
+
+Add read-only `devbox watch NAME_OR_ID` and interactive `devbox attach NAME_OR_ID`
+through the existing SSH-over-SSM scope/authentication/host-trust path. Bind each
+session to its job/attempt and retain exited panes for inspection within TTL.
+Extend `devbox logs` for durable agent job IDs while preserving existing command-ID
+retrieval. Publish terminal output with an explicit stream format and completeness
+status; persist agent events/transcripts where supported. Show agent state and
+waiting duration separately from machine readiness in `ls`.
+
+Use structured adapter events for questions; retain pending-question metadata and
+send an input-required notification through a documented configurable channel even
+when no terminal is attached. Answer through `attach` initially. Notification
+failure must remain observable, and neither waiting nor active attachment extends
+worker expiry. Follow the [selected tmux design](design-decisions.md#interactive-agent-sessions-and-observability-september-14-2026).
 
 Apply the agreed checkpoint and publishing policy. Terminate after verified persistence on success; proposed failure behavior is to retain the machine for inspection until its TTL. Do not assume that a local commit or an agent process exit means a successful GitHub push. Put independent concurrency limits around agent launches.
 
 **Human acceptance test:** Create a small issue in a test repository; launch it; monitor status; inspect the pushed branch and draft PR; verify logs/results survive machine teardown. Then start two issues and confirm separate machines, branches, and result records.
+
+Also watch a run read-only, disconnect and reattach to the same agent process.
+Trigger a real agent question, observe `waiting_for_input` and a notification with
+no terminal attached, then answer interactively and observe work continue. Verify
+exit status and diagnostics for a failed agent, durable output after teardown,
+and unchanged expiry throughout. Instance loss must report an interrupted/unknown
+attempt accurately; tmux alone does not establish recoverable progress.
 
 **Failure test:** Reject a missing issue before allocating a machine. Exercise invalid agent credentials, a failing agent command, and a failed push; none may be reported as successful completion. Repeating an issue launch must not overwrite another active branch/job.
 
@@ -133,6 +196,13 @@ Deliver periodic checkpointing, best-effort interruption handling, `agent resume
 ## 8. Run and retain a repeatable benchmark
 
 **User outcome:** Recreate a benchmark environment and retrieve results after its machine is gone.
+
+Keep automated benchmark execution noninteractive with explicit inputs; unexpected
+questions should fail clearly rather than silently wait for an operator. Baseline
+tmux supports manual experiments and separate monitoring, not a mandatory wrapper
+around the measured process. Record observer configuration and measure overhead
+where relevant. Periodic durable output/progress is a separate extension of exec;
+current output uploads after execution and `logs --stream` is not a live tail.
 
 Deliver a pinned benchmark image/profile and `benchmark run --repetitions N --output results.json SCRIPT`. Package a defined source revision and script; reject dirty source by default or require an explicit recorded snapshot. Record exact AMI/type/architecture, region/AZ, actual CPU/kernel/tool versions, storage settings, source and script hashes, repetition results, and timing method. Pin dependencies and specify any warm-up procedure.
 
