@@ -1,545 +1,124 @@
 # devbox
 
-A Go CLI for disposable AWS development machines: provision a durable foundation,
-launch an Ubuntu devbox, run noninteractive commands, connect with real SSH over
-SSM, rediscover it after a restart, and remove it with root-volume verification. Remote editors and file
-transfer use the generated OpenSSH configuration. No inbound ports are opened.
+devbox is a command-line tool for disposable AWS development machines. Launch an
+Ubuntu machine, connect with SSH or a remote editor, run commands and retrieve
+their output, then remove the machine and verify its root disk was deleted.
+SSH travels through AWS Systems Manager (SSM), so no inbound ports are opened.
 
-Start with installation and identity below, then follow the
-[foundation setup guide](docs/setup.md) for state bootstrap/migration, a dedicated
-SSH key, provisioning and manifest-v6 export. The
-[MVP 1 acceptance runbook and results](docs/acceptance/01-lifecycle.md) connect the
-complete lifecycle workflow, failure checks and cleanup evidence. The
-[MVP 2 acceptance runbook](docs/acceptance/02-exec-logs.md) covers remote checks,
-literal arguments, complete output, detachment and recovery after teardown.
-Existing deployments need the [multi-AZ foundation upgrade](docs/setup.md#upgrade-to-the-multi-az-spot-foundation-29)
-and [scheduled-expiry foundation](docs/setup.md#scheduled-expiry-foundation-manifest-v6).
-**The current foundation exports manifest v6, required for all new launches**,
-including explicit On-Demand and count one. Apply the actual infrastructure and
-export its manifest; do not change the version number by hand. Scoped inventory,
-teardown, saved logs and legacy receipt observation remain available.
-[Expiry acceptance](docs/acceptance/04-expiry.md) records deployed scheduled cleanup
-and a successful laptop-offline run; literal live Scheduler retry exhaustion
-remains unproved in [#58](https://github.com/JosephWest2/cloud_dev/issues/58).
-New installations default to a disabled schedule and require their own enablement
-and health verification. Use `cleanup --dry-run` to inspect expiry, `cleanup` for
-manual expiry removal, and explicit `down` for deliberate teardown.
+The current target is **Linux locally** (starting with Arch Linux) and **Ubuntu
+24.04 LTS x86-64 in AWS Ohio (`us-east-2`)**. Workers use public subnets and public
+IPv4. The bundled `agent` machine profile uses Spot instances by default;
+`--on-demand` opts into On-Demand. There is no automatic fallback or replacement
+of interrupted workers.
 
-The selected first-release scope is Linux locally, Ohio (`us-east-2`), Canonical
-Ubuntu 24.04 LTS x86-64, approved public subnets across selected AZs with public IPv4, outbound TCP 80/443,
-and zero security-group ingress. AMI and launch-template versions are explicitly
-pinned during setup. The bundled profile defaults to Spot through an instant
-Fleet. Explicit `--on-demand` selects On-Demand; there is no automatic fallback
-or replacement of interrupted workers.
+## Install
 
-## Install from a checkout
-
-The initial local target is **Linux, starting with Arch Linux**. Other local
-platforms are not claimed supported. Install Go 1.24 or newer, Git and Make. On Arch:
+You need Go 1.24 or newer, Git and Make. On Arch Linux:
 
 ```sh
 sudo pacman -S --needed go git make openssh jq
+```
+
+Build and install from a checkout:
+
+```sh
 git clone https://github.com/JosephWest2/cloud_dev.git
 cd cloud_dev
 go mod download
-make check
 make build
-./bin/devbox version
-```
-
-Provisioning also needs AWS CLI v2, OpenTofu **1.12.6** and the committed AWS
-provider **6.64.0** lockfiles. SSH access also needs the AWS Session Manager plugin
-**>=1.2.764.0** and keep its logging disabled; verify
-`session-manager-plugin --version` and `ssh -V`. The pinned AMI must provide SSM
-Agent **>=3.3.2746.0**, which bootstrap checks. Installation links and identity setup
-are below and in [setup](docs/setup.md#tools-and-identities).
-
-Run `make infra-check TOFU=/path/to/tofu` in a separate clean checkout for
-OpenTofu formatting, validation, mock-provider tests and manifest-export checks.
-It uses `init -backend=false`; keep that checkout separate from live S3-backend
-initialization and local deployment inputs. These offline checks do not apply
-infrastructure or establish live acceptance.
-
-`make runner` builds the pinned Linux/amd64 execution-runner artifact used by
-foundation provisioning; `infra-check` builds it automatically. The foundation
-now includes private command-result storage with 30-day retention from submission
-and a separate execution document. `exec` submits commands and observes durable
-results and the exact SSM invocation, with distinct timeout and detach outcomes.
-`logs` retrieves recorded status and verifies complete output exports by ID. See the
-[execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16).
-
-Install into a directory on your PATH:
-
-```sh
 mkdir -p "$HOME/.local/bin"
 GOBIN="$HOME/.local/bin" make install
 export PATH="$HOME/.local/bin:$PATH"
 devbox --help
 ```
 
-Persist that PATH setting in your shell configuration. Without `make`, use
-`go build -trimpath -buildvcs=false -o bin/devbox ./cmd/devbox` and
-`GOBIN="$HOME/.local/bin" go install -trimpath -buildvcs=false ./cmd/devbox`.
-The embedded agent profile installs with the binary; runtime use does not require
-this checkout. `go.mod` and `go.sum` pin dependencies. To reproduce a binary,
-use the same commit, Go toolchain version (`go version`), GOOS and GOARCH;
-the build excludes checkout paths and VCS metadata. Keep `go.sum` unchanged.
+Persist that PATH setting in your shell configuration. The machine profile is
+embedded in the binary; ordinary CLI use does not require the checkout.
 
-## Configure your identity and scope
+## Set up AWS once
 
-Use one personal AWS account and region per configuration, a selected AWS
-profile, and a stable owner ID. Separate config files can select different
-deployments. The owner is a fixed identifier you choose, not an inferred local
-username or a changing SSO/role session name. Keep it across reinstalls and
-credential refreshes so future inventory can find the same machines.
+You need an AWS account and an authenticated AWS profile. Follow the
+[foundation setup guide](docs/setup.md) before launching your first worker. It
+walks through installing AWS CLI v2 and OpenTofu 1.12.6, provisioning shared AWS
+resources, creating a dedicated SSH key, and exporting the deployment manifest.
+All new launches require the current **v6 foundation**.
 
-Authenticate using your normal AWS setup. For IAM Identity Center profiles,
-the AWS CLI can configure and refresh a login:
+For SSH access, install OpenSSH and the
+[AWS Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
+(version 1.2.764.0 or newer, with plugin logging disabled).
+See [local access tools](docs/configuration.md#local-access-tools) for details.
 
-```sh
-aws configure sso --profile devbox
-aws sso login --profile devbox
-```
+The setup guide also walks through copying [the example config](examples/config.toml)
+to `~/.config/devbox/config.toml` (or `$XDG_CONFIG_HOME/devbox/config.toml`) and
+setting your account, region, deployment, stable owner ID, operator profile and
+SSH key path. Credentials stay in your normal AWS configuration.
 
-AWS CLI installation is needed if your login workflow uses it; `devbox` itself
-uses the AWS SDK for Go v2. Follow the official
-[AWS CLI installation guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html)
-and [SSO setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sso.html).
-Existing shared profiles, assume-role profiles, SSO, credential processes and
-SDK environment/workload credential sources are handled by the SDK.
+After setup, verify the deployment with the restricted operator profile:
 
 ```sh
-mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/devbox"
-cp examples/config.toml "${XDG_CONFIG_HOME:-$HOME/.config}/devbox/config.toml"
+devbox doctor --aws-profile devbox-operator --timeout 60s
 ```
 
-Edit that file: replace `expected_account`, `aws_profile`, `deployment`, and
-`owner`. The implemented foundation supports Ohio (`us-east-2`); use the same
-scope as your foundation export. Never put access keys, secret keys, session
-tokens or other credentials in devbox TOML or deployment manifests.
+Use your operator profile's name if different. The explicit flag takes precedence
+over any `AWS_PROFILE` left over from setup. For existing deployments, follow the
+[upgrade instructions](docs/setup.md#upgrade-to-the-multi-az-spot-foundation-29).
 
-Configuration precedence:
+## Use a devbox
 
-| Setting | Highest to lowest priority |
-| --- | --- |
-| Config path | `--config PATH`; `$XDG_CONFIG_HOME/devbox/config.toml`; `~/.config/devbox/config.toml` |
-| AWS profile | `--aws-profile NAME`; nonempty `AWS_PROFILE`; TOML `aws_profile`; SDK default credential chain |
-| Region | `--region REGION`; TOML `region` (required; ambient AWS region variables do not override it) |
-| Expected account, deployment, owner | Required TOML fields; never inferred from credentials or local username |
-| Manifest | TOML `manifest`; `deployment.json` beside the config |
-| Agent profile | TOML `profile_file`; embedded `profiles/agent.toml` |
-
-Relative manifest/profile paths resolve against the config file's directory,
-not the current working directory. Paths in TOML do not expand `~` or variables.
-Options can appear before or after the command and accept `--option=value`.
-Empty option values are errors. Repeated lifecycle options are rejected;
-other repeated value options use the last value. `cleanup` rejects every repeated
-option, including global options.
-
-A selected profile is passed explicitly to the SDK. In the pinned SDK version,
-that profile takes precedence over ambient access-key environment variables;
-a nonexistent selected profile fails instead of falling back to another identity.
-A role profile may explicitly use `credential_source=Environment`. If no profile
-is selected, the normal SDK default chain applies, including environment
-credentials. `doctor` always verifies the resulting account with STS
-`GetCallerIdentity`. The selection behavior is tested against the pinned SDK.
-Browser-based `aws login` profiles need the documented [process bridge](docs/setup.md#4-configure-the-restricted-operator-and-run-doctor) when used as the operator role's source with the pinned Go SDK; `doctor` provides an actionable error.
-See [AWS SDK configuration](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-gosdk.html).
-
-## Run prerequisite checks
+Launch one worker and list it:
 
 ```sh
-devbox doctor
-devbox doctor --aws-profile devbox --json
-devbox --config ./my-config.toml doctor --timeout 60s
+devbox up agent --aws-profile devbox-operator
+devbox ls --aws-profile devbox-operator
 ```
 
-`doctor` checks user config, the agent profile, deployment manifest structure and
-scope, AWS credentials and expected account, deployed network/image/template/IAM
-and readiness-document settings, Linux, and the Session Manager
-plugin and OpenSSH client. Independent local checks still run if the config or
-identity fails, unless the deadline expires or the command is canceled; remaining
-executable probes are then explicitly skipped.
-Invalid configuration/profile schemas prevent even the STS identity call.
-A missing/wrong-scope/unsupported manifest or failed identity check prevents
-deployed-resource calls. `doctor` is read-only; `up` and `down` perform lifecycle
-mutations, and `exec` submits a remote command and its durable request.
-
-Install the **AWS Session Manager plugin**, then verify
-`session-manager-plugin --version`. Follow AWS's
-[plugin installation instructions](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html).
-Arch may require a separately packaged or source-built plugin; a package being
-available does not establish AWS vendor support for Arch. `doctor` checks that
-the executable starts; it does not claim a live remote session works.
-
-Access uses **SSH over SSM**, supporting real SSH, remote editors and file
-transfer. Follow the [dedicated key instructions](docs/acceptance/09-readiness-shell.md#configure-the-dedicated-key):
-keep an Ed25519 private key locally, load an encrypted key with `ssh-add`, put only
-its public key in foundation inputs, and set the absolute `ssh_identity_file`
-path in devbox TOML. Bootstrap configures sshd and the sudo-capable `devbox` user.
-The pinned SSM probe supplies the public host key; OpenSSH enforces strict trust
-in private per-instance files. Local probe success alone does not validate remote
-authentication or editor/file-transfer integration.
-OpenTofu is a foundation setup tool, not an installed prerequisite for ordinary
-CLI commands; installation and provisioning are covered by the setup guide.
-
-From a clean configuration, expect actionable failures for missing configuration
-and the plugin. After configuring identity, expect a **missing deployment
-manifest** until the foundation exists. Follow [setup](docs/setup.md) to provision
-and export it; do not invent IDs to make real setup pass. Doctor checks the
-actual resources against that export. It does not launch a machine, exercise
-runtime bootstrap/SSH, or prove effective IAM authorization. Historical foundation
-acceptance is [documented separately](docs/acceptance/07-foundation.md).
-
-Checks default to a 20-second deadline (`--timeout` accepts up to 5 minutes).
-Each local executable probe is capped at 5 seconds within that deadline. Refresh expired
-credentials outside devbox, then retry. Credential helpers must be ready to run
-without an interactive prompt: their stderr is discarded to keep arbitrary
-provider output and secrets out of devbox diagnostics. Raw TOML/JSON parser
-errors, SDK errors, account ARNs, and credential values are never printed.
-On Linux, a supervised worker process keeps credential helpers and their shell
-descendants in one process group; that group is stopped when the command exits,
-including after a deadline. Credential helpers must not daemonize or detach
-from that group. SSH sessions transfer terminal ownership to the worker and
-restore it on exit; their lifetime is independent of the setup deadline.
-
-See [schema and output contracts](docs/contracts.md) for fields, exit statuses,
-Spot behavior and structured-output rules, and
-[foundation validation evidence](docs/acceptance/07-foundation.md) and
-[IAM boundaries](docs/iam.md).
-
-## Worker lifetime and expiry rollout
-
-Fresh requests use `up --ttl DURATION`, then config-v1 `default_ttl`, then **2h**.
-The maximum is **168h (7 days)**. Use unsigned Go durations such as `30m`,
-`1h30m`, `.5h`, or `36h`; no signs, whitespace, `7d`, zero, or unlimited values.
-An explicitly empty value is invalid. A configured duration is validated even
-when overridden. There is no environment or workload-profile TTL override.
-Invalid launch durations do not disable inventory, explicit teardown, or saved logs.
-
-```toml
-# config.toml (schema_version remains 1)
-default_ttl = "2h"
-```
+Copy the instance ID from the result, then connect:
 
 ```sh
-# Requires the real expiry-capable v6 foundation/tag policies from #46:
-devbox up agent --count 2 --ttl 36h --json > batch.json
-devbox ls --json
-devbox down i-0123456789abcdef0
+worker=i-REPLACE_WITH_RETURNED_INSTANCE_ID
+devbox ssh "$worker" --aws-profile devbox-operator
 ```
 
-The preview prints effective `ttl` and exact UTC `expires_at` before dispatch.
-Every worker, root volume and Fleet in a request receives identical `CreatedAt`
-and `ExpiresAt` creation tags. The original timestamps are durably persisted
-before sending. Restart, resume, missing-capacity retries, readiness failures,
-active SSH/exec and detached work never extend expiry. At `now >= expires_at`,
-new allocation is rejected; known workers and permanent fulfillment remain
-observable. Removed or terminated workers do not become replacement capacity.
-All explicit launch overrides, including an identical `--ttl`, are rejected on
-`--resume` and `--retry-missing`. Create a new request for a different lifetime.
+Run your interactive work in that shell, then type `exit` to return locally.
+**Exiting SSH leaves the worker running.** For remote editors and file transfers,
+see [SSH configuration and group usage](docs/usage.md#ssh-and-remote-editors).
 
-`ls` and per-worker launch results show `expires_at` (UTC string or null) and
-`expiry_status` (`future`, `expired`, `missing`, `invalid`, `duplicate`). Inventory
-comes from AWS even after local state loss. Missing, invalid or duplicate expiry
-never hides a worker or blocks deliberate `down`. Legacy requests have no expiry
-and cannot allocate more workers; they remain inspectable and removable.
-
-The scheduled cleanup cadence is every five minutes. Expiry is an eligibility boundary, not
-an exact termination guarantee; scheduling, throttling and AWS completion add
-delay. **Manual and scheduled cleanup are implemented.** The v6 manifest exports
-the cleanup deployment and independent failure-evidence descriptors. Verify the
-enabled schedule and recent scoped completion with `doctor`; the
-[acceptance record](docs/acceptance/04-expiry.md) documents the tested deployment
-and deferred failure case. Do not infer your deployment's health from a version number.
-S3 results keep their independent retention; permanent `launches/v2/` records
-and dispatch claims are retained. See the [expiry contract](docs/plans/04-expiry-contract.md)
-and [offline verification notes](docs/acceptance/43-launch-expiry.md).
-
-## Inspect and run expiry cleanup
+You can also run a noninteractive command from your local terminal:
 
 ```sh
-devbox --config ./my-config.toml cleanup --dry-run --aws-profile devbox-operator --json
-devbox --config ./my-config.toml cleanup --aws-profile devbox-operator --json
+devbox exec "$worker" --aws-profile devbox-operator -- uname -a
 ```
 
-`cleanup --dry-run` reads the configured account, region, deployment and exact
-owner and shows candidate IDs, deadlines and skip reasons. It performs no writes.
-`cleanup` authorizes expiry-based removal without another prompt; it rescans and
-rechecks each exact ID immediately before termination. Both commands need only
-valid config scope and AWS credentials. A missing manifest, launch profile, SSH
-key/tool, receipt, OpenTofu, SSM or healthy scheduler does not prevent cleanup;
-an invalid launch-only `default_ttl` does not prevent it either.
-
-The deadline defaults to 165 seconds. `--timeout` accepts a positive duration up
-to five minutes, while the shared service retains its 165-second ceiling. Cleanup
-accepts global config/profile/region flags, `--dry-run`, `--json` and `--timeout`;
-it rejects targets, group/all selectors, `--yes`, TTL flags and repeated options.
-
-Future deadlines and missing expiry on legacy workers are skipped. Malformed or
-duplicate expiry produces a diagnostic and no termination for that worker. Use
-`ls --json` to inspect `expires_at` and `expiry_status`; deliberate legacy teardown
-uses `down INSTANCE_ID`. A clean empty selection succeeds without asserting that
-any worker or disk was removed. Mixed outcomes retain every known instance and
-root-volume ID. Termination and observed root deletion are separate fields;
-missing historical root mappings never prove deletion.
-
-Exit codes are **0** complete/no candidates, **1** failed, **2** invalid arguments
-or configuration, **3** partial completion, and **4** interrupted/timed out. Rerun
-cleanup safely after checking errors: every run discovers current state and
-observes prior/concurrent termination. Failed scans authorize no candidates.
-With `--json`, stdout has one schema-1 result; stderr preserves structured scope,
-instance and root-volume evidence before mutation. Retain both when investigating
-incomplete removal. See [manual cleanup recovery](docs/acceptance/45-manual-cleanup.md).
-This command does not establish scheduled deployment or laptop-offline acceptance.
-
-## Launch, rediscover and use a group
+`exec` reports command status and prints a `dc1-...` command ID; it does not print
+the command's output. Copy that ID to retrieve the output:
 
 ```sh
-devbox up agent --count 2 --group smoke-batch --aws-profile devbox-operator --timeout 5m --json > batch.json
-# Inspect batch.json even if up returns a partial result or timeout.
-devbox ls --group smoke-batch --aws-profile devbox-operator --json
-first_worker=$(jq -r '.instances[0].instance_id' batch.json)
-second_worker=$(jq -r '.instances[1].instance_id' batch.json)
-# Use IDs returned by the actual result; a partial batch may have only one.
-devbox ssh "$first_worker" --aws-profile devbox-operator
-# In the remote shell: uname -a; whoami; exit 0
-devbox exec "$first_worker" --aws-profile devbox-operator -- uname -a
-devbox exec "$second_worker" --aws-profile devbox-operator -- /usr/bin/printf 'second worker\n'
-devbox down "$first_worker" --aws-profile devbox-operator --timeout 5m --json
-devbox down --group smoke-batch --aws-profile devbox-operator --timeout 5m --json
+command_id=dc1-REPLACE_WITH_RETURNED_COMMAND_ID
+devbox logs "$command_id" --aws-profile devbox-operator --stream stdout
 ```
 
-These examples explicitly select the restricted operator profile, preventing a
-setup `AWS_PROFILE` environment variable from overriding TOML. Substitute your
-operator profile's name if it differs from `devbox-operator`.
-`up` verifies the foundation and prints profile, region, market, instance count,
-base/group and eligible type/subnet/AZ choices before allocating. Actual placement
-appears per worker. Set `max_count` in the local TOML (default 10, range 1–100);
-there is no CLI or environment override. Use `--on-demand` explicitly when
-needed; it selects the first profile type across its approved subnets.
-
-Names derive from the base and full instance ID, such as
-`smoke-batch-i-0123456789abcdef0`. Use the exact generated name or ID for `ssh`,
-`ssh-config`, `exec` and individual `down`. Names remain stable after partial
-capacity, retries and peer removal. One group can contain several independent
-launch requests. Group discovery uses AWS tags and does not need local receipts.
-
-Full readiness requires EC2 running, SSM online and bootstrap complete. Up to
-four workers are observed concurrently under one overall deadline, default 5m;
-failed or slow workers retain their IDs and do not cancel healthy peers.
-
-Successful schema-v2 JSON `up` has `ok=true`, `exit_code=0`, and workers with
-`ec2_state=running`, `ssm=online`, `bootstrap=complete`, `readiness=ready` and
-the actual `market`. Progress and recovery instructions go to stderr; stdout is
-one JSON envelope. Record the request/instance/root-volume IDs before teardown.
-See [the acceptance procedure](docs/acceptance/01-lifecycle.md#launch-shell-and-rediscovery)
-for exact evidence commands and expected fields.
-
-`ssh` opens an interactive OpenSSH shell as `devbox`, not a native SSM shell.
-`--timeout` bounds connection setup (default 5m), not the established session.
-Ctrl-C interrupts the remote foreground command; terminal resizing is forwarded;
-`exit` or Ctrl-D returns locally. SSH exit statuses are preserved: an explicit
-`exit 0` succeeds, 1–254 report `remote_exit`, and 255 indicates an SSH failure.
-Exiting immediately after an interrupted command can return 130. Interactive
-`ssh` and `ssm-proxy` reject `--json` before AWS calls.
-
-`devbox ssh-config "$first_worker" --aws-profile devbox-operator --json` returns `ssh_config_path` and `ssh_host` for
-`ssh -F CONFIG_PATH SSH_HOST`, scp/sftp and remote editors. It does not edit
-`~/.ssh/config`. Follow [transfer/editor examples](docs/acceptance/09-readiness-shell.md#launch-observe-connect-and-transfer).
-Regenerate configuration after moving the CLI/config. A changed host key requires
-inspection; it is never silently trusted. SSH tunnel contents are not logged by
-[Session Manager](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-getting-started-enable-ssh-connections.html).
-
-`ls` rediscovers instances from AWS after a restart, without local instance IDs.
-Teardown accepts one exclusive selector: names/IDs, a group, or all workers in
-the selected account/region/deployment/owner scope:
+When finished, remove the worker and its root disk:
 
 ```sh
-devbox down NAME_OR_ID OTHER_NAME_OR_ID --aws-profile devbox-operator --timeout 5m --json
-devbox down --group smoke-batch --aws-profile devbox-operator --timeout 5m --json
-devbox down --all --aws-profile devbox-operator --timeout 5m --json
-# Noninteractive cleanup requires explicit consent; the preview still appears:
-devbox down --all --yes --aws-profile devbox-operator --timeout 5m --json
+devbox down "$worker" --aws-profile devbox-operator --timeout 5m
 ```
 
-`--all` previews the exact scope, count and IDs on stderr and asks for a complete
-`y` or `yes` response from a terminal. Decline returns 0 with no terminations;
-EOF or noninteractive input without `--yes` returns 2. Ctrl-C/timeout returns 4.
-Selection, confirmation and cleanup share the command deadline (20s default,
-up to 5m with `--timeout`). IDs are frozen before the prompt, so workers arriving
-during confirmation cannot enter the approved set.
+Check that teardown reports both termination and root-volume deletion. Saved
+command results survive worker removal (30-day retention by default). Shared
+foundation resources remain and can still incur charges; see
+[full foundation teardown](docs/setup.md#recovery-and-teardown).
 
-Each exact ID is revalidated for scope and selected name/group immediately
-before termination. Duplicate friendly names require explicit IDs. Independent
-valid targets may be cleaned up while invalid, ambiguous or changed targets
-report errors. Cleanup uses up to four workers concurrently and preserves each
-instance and root-volume result. A repeated teardown observes already-terminated
-workers; `no_managed_match` does not verify any particular deletion.
+Workers default to a **2-hour lifetime**; use `up agent --ttl 4h` to choose another
+(up to 168h). Active work never extends that deadline. Scheduled cleanup starts
+**disabled** and must be enabled and verified through setup; expiry is not an
+exact termination guarantee. Use `down` when finished rather than waiting for expiry.
+If a launch times out or has an uncertain result, retain its request ID and follow
+[launch recovery](docs/usage.md#launch-recovery) before starting another launch.
 
-For complete teardown, expect `status=teardown_complete`, matching
-`selected_count`, `terminated_count` and `cleaned_count`, and per-worker
-`ec2_state=terminated` and `root_volume_deletion=deleted`. Some verified cleanup
-with other failures returns `teardown_partial`, exit 3; no verified cleanup
-returns exit 1. Termination requested/unknown/denied/observed is separate from
-root deletion. Missing root mappings never prove deletion. If deletion is
-`unavailable`, verify the recorded volume ID through EC2 before marking cleanup
-complete. A later repeated teardown can lack volume mappings even when deletion
-was previously verified. Full [manual cleanup](docs/acceptance/01-lifecycle.md#teardown-and-independent-cleanup-verification)
-includes independent EC2/EBS inventory. Workers remain billable after shell exit,
-timeout or connection failure; remove them even when acceptance fails. Scheduled
-expiry is a fallback with deployment/health requirements, not immediate teardown. Manual
-`cleanup` removes expired workers; explicit `down` deliberately removes selected
-workers. Worker teardown retains networking, IAM,
-the launch template, readiness document and the S3 backend; [full durable teardown](docs/setup.md#recovery-and-teardown)
-is a separate explicit operation.
+## More information
 
-Before launching, devbox durably saves a non-secret request receipt and prints its
-request ID to stderr. If the process exits or the launch outcome is uncertain:
-
-```sh
-devbox up --resume REQUEST_ID --aws-profile devbox-operator --timeout 5m --json
-```
-
-Use the original config/scope. Do not retry an uncertain launch with a fresh `up`.
-Receipts live under `${XDG_STATE_HOME:-$HOME/.local/state}/devbox/requests`.
-Batch resume observes shared S3 records and AWS; it never sends another launch,
-including for a prepared request. An outcome can remain unresolved, including a
-crash immediately before sending. Losing the local receipt cannot prevent
-shared recovery, `ls`, access or cleanup by `down INSTANCE_ID`.
-
-A definitive one-of-two allocation reports `partial_capacity`, exit 3 and a
-retry command for exactly one missing worker. A complete allocation with only
-one ready worker instead reports `readiness_failed`, exit 3. Unknown allocation
-reports `missing_count: null` and exit 1; timeout/interruption returns exit 4.
-Explicit missing-capacity consent is a separate command:
-
-```sh
-devbox up --retry-missing REQUEST_ID --after ATTEMPT_ID --aws-profile devbox-operator --json
-```
-
-Repeating the same retry, even on a second computer, observes its existing
-successor. It never replaces interrupted or removed workers. Missing capacity
-uses historical fulfillment from permanent shared records, and cannot be
-inferred from an empty inventory. The pool and market stay pinned. To change
-them, inspect the old request and deliberately start an independent new request.
-No-capacity results explain these choices without launching automatically.
-After an allocated timeout, inspect with `ls --json`, retry the same receipt or
-SSH by instance ID if readiness permits, and remove the worker with
-`down INSTANCE_ID --timeout 5m --json`, using the original config/profile/region.
-Failed bootstrap blocks SSH; fix the foundation and replace the disposable
-worker after cleanup. If credentials expire during cleanup, refresh the selected
-source profile and retry the exact ID; keep cleanup marked incomplete until
-EC2 termination and root deletion are observed.
-Read the [batch recovery/output contract](docs/contracts.md#spot-batch-contract-28)
-and [parent acceptance record](docs/acceptance/01-lifecycle.md) for failure
-coverage, volume verification, and the final gate status. Historical
-[#8 lifecycle](docs/acceptance/08-lifecycle.md) and
-[#9 SSH/editor](docs/acceptance/09-readiness-shell.md) acceptance passed.
-
-## Interactive sessions: selected next step
-
-The next interactive-workflow step is baseline tmux for general development
-machines, including manual experiments, monitoring and scripts that intentionally
-ask for input. This is a **plan**, not a shipped dependency or new CLI command:
-current bootstrap does not explicitly install/pin tmux, and `agent`, `watch` and
-`attach` are not implemented. The only current workload profile is `agent`;
-repository-ready and benchmark images remain planned.
-
-The [interactive-session plan](docs/plans/05-interactive-sessions.md) delivers
-manual sessions through existing SSH first, followed by managed observation,
-attachment and durable agent integration in [#56](https://github.com/JosephWest2/cloud_dev/issues/56).
-An interactive script must start in a terminal session to accept later input.
-Existing `exec` supplies stdin EOF and cannot be attached afterward. It captures
-stdout/stderr locally and uploads them after execution; `logs --stream` retrieves
-recorded output and is not a live tail. Manual tmux output will not automatically
-become a `devbox logs` result.
-
-Keep automated benchmarks noninteractive with explicit inputs and recorded
-results; use an independent terminal for optional monitoring. Session attachment
-never extends TTL, and worker loss destroys the live terminal. Possible Herdr
-integration is deferred research in [#59](https://github.com/JosephWest2/cloud_dev/issues/59).
-
-## Run a noninteractive command
-
-Use a newly bootstrapped worker and its matching manifest v4, v5 or v6:
-
-```sh
-devbox exec "$first_worker" -- /usr/bin/printf '%s\n' '' 'two words' '$(id)' '--json'
-devbox exec "$first_worker" --cwd project --exec-timeout 10m -- sh -c 'make check'
-devbox --json exec "$first_worker" --wait-timeout 2m -- /usr/bin/false
-```
-
-Everything after the first `--` is passed literally, including remote `--help`,
-`--json` and `--timeout`. Use `sh -c` explicitly for shell evaluation. Commands run
-as `devbox`, with stdin EOF, a fixed environment and default cwd `/home/devbox`.
-Relative `--cwd` values resolve from that home directory. Exec uses the AWS SDK;
-it requires no local SSH key, OpenSSH, Session Manager plugin, launch-profile file
-or OpenTofu executable.
-
-The CLI prints a `dc1-...` recovery ID on stderr before submission and announces
-the acknowledged SSM ID immediately. Its stdout contains status metadata, or one
-JSON envelope with `--json`, and no workload bytes. A complete final record
-preserves the workload's exact exit code, including 1, 2, 4 and 255; `outcome`
-distinguishes those codes from local failures. Publication failure retains the
-workload status but prevents success. Exec validates the publisher's metadata;
-full output-byte verification belongs to explicit retrieval.
-
-Setup defaults to 5m, SSM delivery to 5m, remote runtime to 1h, and the independent
-local result wait to 1h. Ctrl-C detaches and leaves the remote command running
-within `--exec-timeout`. A lost SendCommand response is `submission_unknown`, with
-its public ID preserved; never rerun it automatically. Results use the configured
-30-day retention and survive worker teardown.
-
-Exec observes durable started/outcome/final metadata and the exact SSM invocation.
-It tolerates delayed visibility and bounded temporary API failures, and separates
-SSM delivery/runner timeouts from a recorded workload timeout and the local wait
-deadline. JSON `ssm` fields describe the last verified wrapper observation;
-`ssm.response_code` never replaces `workload.exit_code`. Text uses
-`ssm_response_code` and `remote_exit_code` for the same distinction. Completed
-durable results can succeed while optional SSM observation is unavailable.
-
-Ctrl-C/SIGTERM return `interrupted` with exit 4 and the known IDs; they request no
-remote cancellation. An already established completion retains its actual exit,
-even if interruption races with local process exit. Use the printed `logs` recovery
-command after detachment. Retain the public ID and trusted storage export. The
-[execution contract](docs/contracts.md#selected-exec-and-durable-result-protocol-16)
-describes timing bounds, observation fields and incomplete-result behavior.
-
-## Retrieve command results
-
-Use the command ID and the original deployment configuration:
-
-```sh
-devbox --config ~/.config/devbox/config.toml logs dc1-0123456789abcdef0123456789abcdef --json
-devbox logs dc1-0123456789abcdef0123456789abcdef --stdout-file ./stdout.bin --stderr-file ./stderr.bin --json
-sha256sum stdout.bin stderr.bin
-devbox logs dc1-0123456789abcdef0123456789abcdef --stream stderr > stderr-copy.bin
-```
-
-Default `logs` prints status and stream lengths/checksums. It reports the
-publisher's completeness with `verification=not_downloaded`. File exports and
-`--stream stdout|stderr` download exact bytes and verify length, SHA-256 and EOF;
-they preserve binary data and genuine empty streams. Stream mode writes bytes
-to stdout and metadata to stderr, and cannot combine with JSON or exports.
-File exports may use JSON, require distinct new paths, and never replace an
-existing file. A failed export removes its temporary file; if the first of two
-exports succeeded before the second failed, JSON identifies the first verified
-file separately.
-
-Retrieval exits **0 even if the original workload failed or timed out**. Check
-`workload.exit_code` or `workload.status` for the remote result. Invalid input
-exits 2; local timeout/interruption exits 4; missing, pending, denied, incomplete,
-corrupt or failed output retrieval exits 1. Known workload status survives an
-output error. A failed raw stream may already have emitted unverified bytes;
-discard them or retry into a new file. Explicit workload output is user data and
-may contain sensitive information; it is not redacted.
-
-The default `--timeout 20s` covers one retrieval, including downloads. Use up to
-`--timeout 5m` for larger output or a slower connection. Logs takes a status
-snapshot; repeat the same command ID to check a running command later. It never
-resubmits or cancels the workload. Completed recovery needs only AWS identity and
-the retained storage descriptor, with no SSH tools, local receipts, live worker,
-current runtime resources or SSM history. It works after `down` within the
-configured retention period. Keep the old deployment's trusted storage config
-across upgrades; see [retention and full teardown](docs/setup.md#retaining-result-access).
+- [Documentation index](docs/README.md): guides, references and development plans.
+- [Configuration and diagnostics](docs/configuration.md): profiles, paths and `doctor`.
+- [Usage guide](docs/usage.md): groups, recovery, expiry cleanup and command results.
+- [Development guide](docs/development.md): repository layout, builds and checks.
+- [Agent instructions](AGENTS.md): project guidance for coding agents.

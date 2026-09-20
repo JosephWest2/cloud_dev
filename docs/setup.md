@@ -20,7 +20,8 @@ underscores or hyphens, starting with a letter/digit.
 ## Tools and identities
 
 Use **OpenTofu 1.12.6**, **hashicorp/aws 6.64.0** (both roots enforce these exact
-versions), Go 1.24+, AWS CLI v2, and `jq`. Keep the committed provider lockfiles.
+versions), Go 1.24+, AWS CLI v2, Python 3 (artifact packaging), and `jq`. Keep the
+committed provider lockfiles.
 Install OpenTofu from its [official releases](https://github.com/opentofu/opentofu/releases/tag/v1.12.6)
 and verify release signatures/checksums using the
 [installation instructions](https://opentofu.org/docs/intro/install/).
@@ -46,6 +47,11 @@ role. An STS `assumed-role/.../session` ARN is not that IAM role ARN: use the IA
 role shown in your AWS profile/account configuration. Choose a short deployment
 name (e.g. `personal-dev`) and stable owner (e.g. `joseph`). No public-IP address
 or worker is allocated by this setup.
+
+Before provisioning, [create your local devbox configuration](configuration.md#configure-your-identity-and-scope)
+from the checkout root if you do not already have one. Reuse that file throughout
+setup: the dedicated-key instructions in step 3 add its SSH identity, and step 4
+updates its AWS operator profile. Do not replace it with the example again.
 
 ## 1. Bootstrap local state, then migrate it
 
@@ -276,8 +282,9 @@ that exact role; a permissions boundary or organization policy may additionally
 restrict it. For an SSO source profile, log in to that source profile first.
 Do not attach administrator policies to make the operator pass.
 
-Edit devbox `config.toml` (copy `examples/config.toml` if needed) to match account,
-region, deployment and owner from the export; set `aws_profile="devbox-operator"`.
+Edit the existing devbox `config.toml` to match account, region, deployment and
+owner from the export; set `aws_profile="devbox-operator"`. Keep
+`ssh_identity_file` set to the absolute dedicated private-key path from step 3.
 Then, from the checkout root:
 
 ```sh
@@ -287,7 +294,8 @@ make build
 ```
 
 The explicit flag avoids the setup `AWS_PROFILE` environment overriding TOML.
-Install the local OpenSSH client and Session Manager plugin per the README.
+Install the local OpenSSH client and Session Manager plugin per the
+[local access tools guide](configuration.md#local-access-tools).
 Use a currently supported plugin (at least 1.2.764.0 as of this implementation;
 see AWS's [release history](https://docs.aws.amazon.com/systems-manager/latest/userguide/plugin-version-history.html)).
 Doctor checks executability; the human setup check must verify the version.

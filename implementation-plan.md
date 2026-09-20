@@ -66,7 +66,7 @@ The baseline tmux workflow is selected but not implemented. See
 ## 1. Launch, connect to, and remove one machine
 
 Implemented; the scope below records the original delivery slice. See current CLI
-syntax in the README and the linked acceptance record above.
+syntax in the [usage guide](docs/usage.md) and the linked acceptance record above.
 
 **User outcome:** From a fresh checkout and an authenticated AWS profile, launch a disposable Linux machine, use a shell, and remove it without the AWS Console.
 
