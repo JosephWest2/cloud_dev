@@ -48,6 +48,11 @@ role shown in your AWS profile/account configuration. Choose a short deployment
 name (e.g. `personal-dev`) and stable owner (e.g. `joseph`). No public-IP address
 or worker is allocated by this setup.
 
+Before provisioning, [create your local devbox configuration](configuration.md#configure-your-identity-and-scope)
+from the checkout root if you do not already have one. Reuse that file throughout
+setup: the dedicated-key instructions in step 3 add its SSH identity, and step 4
+updates its AWS operator profile. Do not replace it with the example again.
+
 ## 1. Bootstrap local state, then migrate it
 
 Run from the checkout root. Keep local state/plans on an encrypted disk and
@@ -277,9 +282,9 @@ that exact role; a permissions boundary or organization policy may additionally
 restrict it. For an SSO source profile, log in to that source profile first.
 Do not attach administrator policies to make the operator pass.
 
-Edit devbox `config.toml` (see
-[copying the example configuration](configuration.md#configure-your-identity-and-scope))
-to match account, region, deployment and owner from the export; set `aws_profile="devbox-operator"`.
+Edit the existing devbox `config.toml` to match account, region, deployment and
+owner from the export; set `aws_profile="devbox-operator"`. Keep
+`ssh_identity_file` set to the absolute dedicated private-key path from step 3.
 Then, from the checkout root:
 
 ```sh

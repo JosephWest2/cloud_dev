@@ -41,6 +41,10 @@ and [SSO setup guide](https://docs.aws.amazon.com/cli/latest/userguide/cli-confi
 Existing shared profiles, assume-role profiles, SSO, credential processes and
 SDK environment/workload credential sources are handled by the SDK.
 
+For a new configuration, run from the checkout root. If the config file already
+exists, edit it instead of copying the example over it; preserve your SSH key path
+and deployment settings.
+
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/devbox"
 cp examples/config.toml "${XDG_CONFIG_HOME:-$HOME/.config}/devbox/config.toml"
