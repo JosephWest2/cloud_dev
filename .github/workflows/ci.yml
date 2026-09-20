@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-and-helpers:
+    name: Go and helpers
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Show tool versions
+        run: |
+          go version
+          python3 --version
+      - name: Download Go modules
+        run: go mod download
+      - name: Check Go formatting, modules, build, vet, and tests
+        run: make check
+      - name: Build and smoke-test the CLI
+        run: |
+          make build
+          ./bin/devbox version
+          ./bin/devbox --help
+      - name: Test acceptance helpers
+        run: python3 scripts/test-expiry-acceptance.py
+
+  infrastructure-and-runtimes:
+    name: Infrastructure and runtimes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      TF_IN_AUTOMATION: "true"
+      AWS_EC2_METADATA_DISABLED: "true"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache-dependency-path: go.sum
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: "1.12.6"
+          tofu_wrapper: false
+      - name: Show tool versions
+        run: |
+          go version
+          python3 --version
+          tofu version
+      - name: Check infrastructure and runtime artifacts
+        run: make infra-check TOFU=tofu
