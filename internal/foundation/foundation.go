@@ -10,9 +10,11 @@ import (
 	"errors"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/JosephWest2/cloud_dev/internal/config"
 	"github.com/JosephWest2/cloud_dev/internal/identity"
+	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -29,6 +31,18 @@ type Clients struct {
 	IAM IAM
 	SSM SSM
 	S3  S3
+}
+
+// VerifySetup uses already verified operator credentials. Configuration-only
+// checks permit a disabled schedule and missing initial health observations,
+// but still verify all deployment, alarm/filter and evidence configuration.
+// Ordinary doctor always retains its full runtime-health requirements.
+func VerifySetup(ctx context.Context, a aws.Config, m config.Manifest, p config.Profile, configurationOnly bool, after time.Time) []Check {
+	checks := Verify(ctx, Clients{EC2: ec2.NewFromConfig(a), IAM: iam.NewFromConfig(a), SSM: ssm.NewFromConfig(a), S3: s3.NewFromConfig(a)}, m, p)
+	if m.SchemaVersion == 6 {
+		checks = append(checks, checkCleanupDeploymentMode(ctx, a, m, configurationOnly, after)...)
+	}
+	return checks
 }
 
 func CheckDeployment(ctx context.Context, c config.Config, m config.Manifest, p config.Profile) []Check {

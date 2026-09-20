@@ -43,6 +43,10 @@ func healthConfig(ctx context.Context, api healthSTS, operatorIAM IAM, a aws.Con
 	return a, nil
 }
 func checkCleanupDeployment(ctx context.Context, a aws.Config, m config.Manifest) []Check {
+	return checkCleanupDeploymentMode(ctx, a, m, false, time.Time{})
+}
+
+func checkCleanupDeploymentMode(ctx context.Context, a aws.Config, m config.Manifest, configurationOnly bool, after time.Time) []Check {
 	c, err := config.DecodeCleanup(m.Cleanup, m)
 	if err != nil {
 		return []Check{{"cleanup_configuration", err}}
@@ -58,5 +62,5 @@ func checkCleanupDeployment(ctx context.Context, a aws.Config, m config.Manifest
 		return []Check{{"cleanup_health_access", err}}
 	}
 	logs := cloudwatchlogs.NewFromConfig(health)
-	return VerifyCleanup(bounded, CleanupClients{Lambda: lambda.NewFromConfig(health), Scheduler: scheduler.NewFromConfig(health), Logs: logs, IAM: iam.NewFromConfig(health), Pipe: pipes.NewFromConfig(health), Queue: sqs.NewFromConfig(health), CloudWatch: cloudwatch.NewFromConfig(health), EvidenceLogs: logs}, m, m.Cleanup)
+	return verifyCleanup(bounded, CleanupClients{Lambda: lambda.NewFromConfig(health), Scheduler: scheduler.NewFromConfig(health), Logs: logs, IAM: iam.NewFromConfig(health), Pipe: pipes.NewFromConfig(health), Queue: sqs.NewFromConfig(health), CloudWatch: cloudwatch.NewFromConfig(health), EvidenceLogs: logs, CompletedAfter: after}, m, m.Cleanup, configurationOnly)
 }

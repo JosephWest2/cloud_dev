@@ -20,6 +20,8 @@ import (
 )
 
 const help = `Usage: devbox [options] doctor
+       devbox setup [--manifest PATH | --resume SETUP_ID] [setup options]
+       devbox setup status SETUP_ID [--json]
        devbox [options] up agent [--count N] [--group GROUP] [--name BASE] [--on-demand] [--ttl DURATION]
        devbox [options] up --resume REQUEST_ID
        devbox [options] up --retry-missing REQUEST_ID --after ATTEMPT_ID
@@ -135,6 +137,9 @@ func runWithExecution(ctx context.Context, args []string, stdout, stderr io.Writ
 }
 
 func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Writer, deps doctor.Dependencies, life lifecycle.Dependencies, runExec execRunner, runLogs logsRunner) int {
+	if IsSetupCommand(args) {
+		return runSetupCommand(ctx, args, stdout, stderr, nil)
+	}
 	if IsCleanupCommand(args) {
 		return runCleanupCommand(ctx, args, stdout, stderr, nil)
 	}

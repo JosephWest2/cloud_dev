@@ -1289,3 +1289,68 @@ account/profile scope, absent launch prerequisites, invalid syntax, malformed an
 mixed outcomes, uncertain roots, interruption/timeout, evidence failure and
 stdout failure. See the [manual recovery runbook](acceptance/45-manual-cleanup.md).
 These checks do not deploy a scheduler or replace #48's live/manual/offline gate.
+
+## Guided setup (#64)
+
+`devbox setup` is a separate interactive adapter for new foundations and local
+connection to an existing trusted manifest (`--manifest PATH`). `--resume ID`
+uses a private journal; `setup status ID --json` reads recorded progress without
+credentials or AWS. Duplicate/unknown options, incompatible selectors and invalid
+scope fail before setup. Setup requires a terminal for mutation and has no
+`--yes`. Ordinary commands retain their existing parsing, deadlines and semantics.
+
+Setup result schema 1 contains `command="setup"`, `cli_version`, `scope`, `setup_id` when assigned, `ok`,
+`exit_code`, safe `code`/`message`, `phase`, `partial`, `recorded`, `completed`,
+`installation`, `foundation`, `scheduling`, `recovery` when assigned, and `checks`
+(`name`, `ok`). Arrays are always emitted. Status reports recorded progress rather
+than fresh health. Installation/foundation/scheduling outcomes are separate;
+legacy manifests can produce `foundation="legacy_recovery_only"`. Disabled
+scheduling is explicit. Requested scheduling with pending health cannot return
+complete success. Exit 0 is requested completion, 1 a prerequisite/operation
+failure, 2 invalid input or missing confirmation, and 4 timeout/interruption.
+Errors keep known phase, progress and setup ID; output errors return 1.
+
+Journal schema 1 records ID, CLI version, bundle and OpenTofu digests, confirmed
+inputs and their digest, mode, phase/state, pending mutation, completed stages,
+update time, scheduling choice/observation boundary and any approved local-file
+transaction. It contains no credential values or private-key bytes. Input fields
+are account/region/deployment/owner, source/setup/operator profiles, effective
+setup IAM principal, SSH path/public key, state bucket, exact AMI, selected config/
+manifest/AWS file paths, and whether an existing operator profile is used directly.
+Journals are recovery aids, not evidence that a cloud mutation did or did not
+succeed. Intent is durably stored before mutation; failed intent storage prevents
+dispatch. Unknown schemas/fields, changed input digests and incompatible CLI
+versions prevent automated resume. Native state remains opaque to Go.
+
+Bundle schema 1 contains version, source commit and exact relative-file SHA-256
+mapping. It includes both infrastructure roots/provider locks and matching runner
+and cleanup artifacts. Additional files, links, traversal, missing files and digest
+mismatches are rejected. Bundle/workspace/generated inputs, the OpenTofu executable
+and saved plan bytes are checked before an approved apply. Destructive or replacement
+plans are rejected. Schedule enablement permits only the expected state transition;
+unrelated changes require manual review. Setup exports and validates only the named
+manifest output and never invents resource IDs or upgrades schemas in place.
+
+Local publication records private staged bytes and backups, previews changed
+scope/profile/configuration values, and checks all target digests before replacing
+any. Resume completes only the exact approved transaction; concurrent edits fail.
+Unrelated configuration is preserved. Existing credential-file sections cannot
+shadow generated profiles, and source chains cannot recurse through generated
+profiles. SDK, AWS CLI, provider and backend use explicit profile selection.
+Source CLI and bridge SDK identities must match; provisioning revalidates the
+confirmed account/principal. Final resource checks require the exact manifest
+operator role and session name. Credentials remain in normal AWS sources.
+
+Setup configuration verification reuses foundation checks, excluding schedule
+activity and observed alarm/completion health before enablement. It still verifies
+alarm/filter, function, IAM and evidence configuration. Full doctor behavior is
+unchanged. After enablement, successful evidence must be scope-matched, satisfy
+normal health checks and come from a scheduled time after the recorded enablement
+attempt. A health timeout leaves the schedule enabled; resume observes it.
+
+Setup tool deadlines default to 20 minutes (maximum 1 hour); initial health wait
+is 15 minutes (maximum 30 minutes). Prompt time is separate. Noninteractive tools
+run in separate process groups so physical Ctrl-C reaches the worker first; the
+worker delivers one graceful interrupt, drains up to 90 seconds, and then cleans
+up the child group. Setup's supervisor allows that drain. Existing exec detach,
+SSH terminal handling and cleanup output behavior retain their own contracts.

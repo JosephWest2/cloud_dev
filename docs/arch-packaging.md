@@ -24,6 +24,8 @@ publication, download these assets from the selected
 - `cloud-dev-VERSION.tar.gz`
 - `cloud-dev-VERSION-aur.tar.gz`
 - `SOURCE_COMMIT` and `SHA256SUMS`
+- For releases including guided setup: `install.sh` and
+  `cloud-dev-VERSION-setup-linux-amd64.tar.gz`
 
 In the directory containing those files, verify and install (replace `VERSION`):
 
@@ -81,10 +83,10 @@ old, follow [AWS's plugin installation instructions](https://docs.aws.amazon.com
 for a supported version. Keep plugin logging disabled as described in
 [local access tools](configuration.md#local-access-tools).
 
-Then follow [foundation setup](setup.md). It requires **OpenTofu 1.12.6** and
-the matching source checkout, Go, Python and `jq`; the CLI does not execute
-OpenTofu. Installation alone does not provide a deployment manifest or AWS
-foundation. Use the source archive matching the installed release for setup.
+For new foundations, use [guided setup](guided-setup.md) and the matching release
+setup bundle; `devbox setup` invokes pinned OpenTofu after plan approval. The
+[manual foundation path](setup.md) still uses a matching source checkout, Go,
+Python and `jq`. Installation alone creates no deployment manifest or AWS resources.
 
 ## Packaging checks
 

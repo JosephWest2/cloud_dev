@@ -9,6 +9,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/JosephWest2/cloud_dev/internal/cli"
+	"github.com/JosephWest2/cloud_dev/internal/setup"
 )
 
 // The SDK's credential cache deliberately lets retrieval outlive a caller's
@@ -34,7 +37,13 @@ func supervise(args []string) int {
 			return os.ErrProcessDone
 		}
 		// Let the worker emit its structured cancellation result before cleanup.
-		err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
+		target := -cmd.Process.Pid
+		// Setup's worker sends one graceful interrupt to OpenTofu and drains
+		// its state writes. Signaling the whole group here would send it twice.
+		if cli.IsSetupCommand(args) {
+			target = cmd.Process.Pid
+		}
+		err := syscall.Kill(target, syscall.SIGINT)
 		if errors.Is(err, syscall.ESRCH) {
 			return os.ErrProcessDone
 		}
@@ -42,6 +51,9 @@ func supervise(args []string) int {
 	}
 	// Allow the access proxy's independent 5s SSM cleanup before force-kill.
 	cmd.WaitDelay = 7 * time.Second
+	if cli.IsSetupCommand(args) {
+		cmd.WaitDelay = setup.DrainTimeout + 10*time.Second
+	}
 	if err = cmd.Start(); err != nil {
 		fmt.Fprintln(os.Stderr, "cannot start devbox worker")
 		return 1

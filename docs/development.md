@@ -9,6 +9,7 @@ it, and [CLI contracts](contracts.md) before changing public behavior.
 | Path | Responsibility |
 | --- | --- |
 | `cmd/devbox` | CLI entry point, Linux process supervision and terminal handling |
+| `internal/setup` | Guided local configuration, pinned OpenTofu orchestration and setup recovery journals |
 | `internal/cli` | Argument parsing, dispatch, text/JSON output and exit codes |
 | `internal/config`, `internal/identity`, `internal/doctor` | Configuration, AWS identity and prerequisite checks |
 | `internal/foundation` | Manifest validation and verification of deployed resources |
@@ -127,3 +128,26 @@ and future plans. Plans are not proof of shipped behavior. Record actual checks
 and limitations; local mocks do not prove AWS authorization, bootstrap, SSH or
 scheduled cleanup. Live validation uses the corresponding acceptance runbook and
 an explicitly selected deployment, with instance and root-volume evidence retained.
+
+## Guided setup checks
+
+`internal/setup` owns the interactive setup workflow and its private versioned
+journal; OpenTofu continues to own state. `scripts/package-setup.py` packages the
+exact infrastructure roots and prebuilt runtime artifacts. `scripts/install.sh`
+uses published package/bundle assets and pinned upstream tools.
+
+Run `python3 scripts/test-setup-installer.py` with `bsdtar` available to exercise
+archive traversal/link rejection, checksums and installation conflicts. Run the
+Arch container checks for real packaging, then
+`bash scripts/check-setup-install.sh <fixture-directory>` to test installation
+and reruns without build tools or AWS credentials. Run
+`DEVBOX_SETUP_TOFU=/path/to/tofu go test ./internal/setup -run TestGeneratedOpenTofuConfiguration -v`
+to validate generated configuration with OpenTofu 1.12.6 and real provider schemas,
+using backend-disabled initialization without AWS calls. `make setup-bundle VERSION=0.0.0`
+creates an offline development bundle; use the same `VERSION` when building its
+CLI. Existing output archives are not overwritten.
+
+Setup tests use fake AWS and process boundaries to exercise complete provisioning,
+interrupted migration/apply, enabled-but-pending scheduling, identity and local-file
+protection. A real PTY test covers physical and repeated Ctrl-C with a draining
+child. These tests do not establish live AWS setup or unattended cleanup acceptance.

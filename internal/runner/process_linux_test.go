@@ -122,7 +122,12 @@ func TestProcessLiteralEnvironmentCwdAndStdin(t *testing.T) {
 func TestProcessExitOutputAndStartupFailures(t *testing.T) {
 	for _, exit := range []int{0, 1, 2, 4, 255} {
 		t.Run(strconv.Itoa(exit), func(t *testing.T) {
-			r := executeFixture(t, []string{"output", strconv.Itoa(exit)}, nil)
+			// Capturing and syncing both streams can exceed the fixture's 50ms
+			// drain under CI I/O contention. Keep the exact-byte assertions with
+			// an allowance below the production executor's five-second default.
+			r := executeFixture(t, []string{"output", strconv.Itoa(exit)}, func(e *Executor, _ *execprotocol.Payload) {
+				e.StopGrace = time.Second
+			})
 			if r.Workload.Status != "exited" || r.Workload.ExitCode == nil || *r.Workload.ExitCode != exit || r.Capture != "complete" {
 				t.Fatalf("result %+v", r)
 			}

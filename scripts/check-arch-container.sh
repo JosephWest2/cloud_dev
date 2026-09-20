@@ -37,6 +37,13 @@ cp cloud-dev-*.tar.gz /output/
 tar -czf "/output/cloud-dev-$ARCH_RELEASE_VERSION-aur.tar.gz" PKGBUILD .SRCINFO
 cp SOURCE_COMMIT /output/
 
+# Foundation setup ships real, matching runtime artifacts; users do not build.
+cd /work
+make runner cleanup-check
+python3 scripts/package-setup.py "$ARCH_RELEASE_VERSION" --output "/output/cloud-dev-$ARCH_RELEASE_VERSION-setup-linux-amd64.tar.gz"
+cp scripts/install.sh /output/install.sh
+python3 scripts/test-setup-installer.py
+
 # Exercise the VCS recipe against the same snapshot, including uncommitted work.
 mkdir /work/vcs
 cp /work/packaging/arch/cloud-dev-git/PKGBUILD /work/vcs/
@@ -79,4 +86,4 @@ for package in /output/*.pkg.tar.zst; do
   test "$(cat /home/builder/.config/devbox/config.toml)" = 'preserve this user configuration'
 done
 cd /output
-sha256sum ./*.pkg.tar.zst ./*.tar.gz > SHA256SUMS
+sha256sum ./*.pkg.tar.zst ./*.tar.gz install.sh SOURCE_COMMIT > SHA256SUMS

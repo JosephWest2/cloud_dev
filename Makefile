@@ -16,6 +16,10 @@ cleanup:
 cleanup-check: cleanup
 	python3 scripts/check-cleanup-package.py
 
+.PHONY: setup-bundle
+setup-bundle: runner cleanup-check
+	python3 scripts/package-setup.py $(VERSION) --output bin/cloud-dev-$(VERSION)-setup-linux-amd64.tar.gz
+
 install:
 	go install -trimpath -buildvcs=false -ldflags '$(DEVBOX_LDFLAGS)' ./cmd/devbox
 
