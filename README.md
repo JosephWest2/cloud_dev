@@ -13,12 +13,30 @@ of interrupted workers.
 
 ## Install
 
-On Arch Linux, see [Arch packages](docs/arch-packaging.md) for building a package
-with `makepkg`, installing published GitHub release packages, and optional SSH
-dependencies. Neither installation path requires an AUR account. Package names
-are `cloud-dev` and `cloud-dev-git`; the command remains `devbox`.
+### Arch Linux package (x86-64)
 
-To install directly from Go source instead:
+Download the package and checksums from the [v0.1.0 release](https://github.com/JosephWest2/cloud_dev/releases/tag/v0.1.0),
+then verify and install:
+
+```sh
+curl -fLO https://github.com/JosephWest2/cloud_dev/releases/download/v0.1.0/cloud-dev-0.1.0-1-x86_64.pkg.tar.zst
+curl -fLO https://github.com/JosephWest2/cloud_dev/releases/download/v0.1.0/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS &&
+sudo pacman -U ./cloud-dev-0.1.0-1-x86_64.pkg.tar.zst
+devbox version
+devbox --help
+```
+
+This installs the `cloud-dev` package and the `devbox` command; no Go toolchain
+or AUR account is needed to install the package. It conflicts with Jetify's
+unrelated `devbox` packages because they use the same command name.
+
+Install later releases with `pacman -U` as well; `pacman -Syu` does not fetch
+updates for this downloaded package. Continue with [AWS setup](#set-up-aws-once)
+after installation. See [Arch packages](docs/arch-packaging.md) for optional SSH
+dependencies, building with `makepkg`, and removal instructions.
+
+### Build from source
 
 You need Go 1.24 or newer, Git and Make. On Arch Linux:
 
