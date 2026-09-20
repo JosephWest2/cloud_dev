@@ -55,6 +55,28 @@ for partial setup.
 Use the operator profile printed by setup for all worker commands below; replace
 `devbox-operator` with that name.
 
+### Direct package installation
+
+Download the package and checksums from the [v0.1.0 release](https://github.com/JosephWest2/cloud_dev/releases/tag/v0.1.0),
+then verify and install:
+
+```sh
+curl -fLO https://github.com/JosephWest2/cloud_dev/releases/download/v0.1.0/cloud-dev-0.1.0-1-x86_64.pkg.tar.zst
+curl -fLO https://github.com/JosephWest2/cloud_dev/releases/download/v0.1.0/SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS &&
+sudo pacman -U ./cloud-dev-0.1.0-1-x86_64.pkg.tar.zst
+devbox version
+devbox --help
+```
+
+This installs the `cloud-dev` package and the `devbox` command; no Go toolchain
+or AUR account is needed to install the package. It conflicts with Jetify's
+unrelated `devbox` packages because they use the same command name.
+
+Install later releases with `pacman -U` as well; `pacman -Syu` does not fetch
+updates for this downloaded package. This older release uses the [manual AWS setup](docs/setup.md) workflow. See [Arch packages](docs/arch-packaging.md) for optional SSH
+dependencies, building with `makepkg`, and removal instructions.
+
 ## Use a devbox
 
 Launch one worker and list it:
