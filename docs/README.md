@@ -10,6 +10,7 @@ first worker. These guides cover the details as you need them.
 | [Foundation setup](setup.md) | Tools, AWS identities, provisioning, manifest export, upgrades and full foundation teardown |
 | [Configuration and checks](configuration.md) | Profile selection, path/option precedence, SSH prerequisites and `doctor` |
 | [Usage](usage.md) | Groups, SSH/editor access, recovery, worker lifetime, cleanup, execution and logs |
+| [Arch packaging](arch-packaging.md) | Packages without an AUR account, validation, GitHub releases and eventual AUR publication |
 | [Cleanup operations](runbooks/cleanup.md) | Scheduled cleanup health, retained failure evidence and recovery |
 
 ## Technical reference and contributing

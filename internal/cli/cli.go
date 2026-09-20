@@ -403,11 +403,11 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 				OK            bool   `json:"ok"`
 				ExitCode      int    `json:"exit_code"`
 				Version       string `json:"version"`
-			}{1, "version", true, 0, "0.1.0-dev"}); err != nil {
+			}{1, "version", true, 0, Version}); err != nil {
 				return doctor.ExitPrerequisite
 			}
 		} else {
-			if _, err := fmt.Fprintln(stdout, "devbox 0.1.0-dev"); err != nil {
+			if _, err := fmt.Fprintln(stdout, "devbox "+Version); err != nil {
 				return doctor.ExitPrerequisite
 			}
 		}

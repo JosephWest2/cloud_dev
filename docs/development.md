@@ -52,6 +52,11 @@ Without Make, build with
 To reproduce a binary, use the same commit, Go toolchain version (`go version`),
 GOOS and GOARCH. Builds exclude checkout paths and VCS metadata.
 
+`make build VERSION=1.2.3` and `make install VERSION=1.2.3` set the CLI release
+version through `internal/cli.Version`. The default remains `0.1.0-dev` for
+unversioned development builds. Text and JSON output use the same value.
+See [Arch packaging](arch-packaging.md) for package checks and release automation.
+
 ## Infrastructure and runtime artifacts
 
 Infrastructure uses OpenTofu **1.12.6** and the committed AWS provider **6.64.0**

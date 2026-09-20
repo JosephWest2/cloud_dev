@@ -1,0 +1,60 @@
+# Generated for a release by scripts/prepare-arch-release.py.
+# Maintainer: Joseph West (https://github.com/JosephWest2)
+pkgname=cloud-dev
+pkgver=@VERSION@
+pkgrel=1
+pkgdesc='Disposable AWS development machines over Systems Manager'
+arch=('x86_64')
+url='https://github.com/JosephWest2/cloud_dev'
+license=('MIT')
+depends=('glibc')
+makedepends=('go>=1.24')
+checkdepends=('openssh' 'procps-ng')
+optdepends=('openssh: SSH shells, editor access and doctor checks'
+            'aws-session-manager-plugin>=1.2.764.0: SSH transport over Systems Manager'
+            'aws-cli-v2: AWS authentication and foundation setup')
+conflicts=('cloud-dev-git' 'devbox' 'devbox-bin')
+# Avoid a separate debug package; retain Arch hardening and normal stripping.
+options=('!debug')
+source=("$pkgname-$pkgver.tar.gz::$url/releases/download/v$pkgver/$pkgname-$pkgver.tar.gz")
+sha256sums=('@SHA256@')
+
+prepare() {
+  cd "$srcdir/cloud-dev-$pkgver"
+  export GOPATH="$srcdir/go"
+  export GOTOOLCHAIN=local
+  go mod download -modcacherw
+  go mod verify
+}
+
+build() {
+  cd "$srcdir/cloud-dev-$pkgver"
+  export GOPATH="$srcdir/go" GOTOOLCHAIN=local GOPROXY=off
+  export CGO_ENABLED=1
+  export CGO_CPPFLAGS="$CPPFLAGS" CGO_CFLAGS="$CFLAGS"
+  export CGO_CXXFLAGS="$CXXFLAGS" CGO_LDFLAGS="$LDFLAGS"
+  go build -trimpath -buildvcs=false -buildmode=pie -mod=readonly -modcacherw \
+    -ldflags "-linkmode=external -X github.com/JosephWest2/cloud_dev/internal/cli.Version=$pkgver" \
+    -o devbox ./cmd/devbox
+}
+
+check() {
+  cd "$srcdir/cloud-dev-$pkgver"
+  export GOPATH="$srcdir/go" GOTOOLCHAIN=local GOPROXY=off
+  export AWS_EC2_METADATA_DISABLED=true
+  go test -mod=readonly -modcacherw ./...
+  test "$(./devbox version)" = "devbox $pkgver"
+}
+
+package() {
+  cd "$srcdir/cloud-dev-$pkgver"
+  install -Dm755 devbox "$pkgdir/usr/bin/devbox"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  local docdir="$pkgdir/usr/share/doc/$pkgname"
+  install -Dm644 README.md "$docdir/README.md"
+  install -Dm644 examples/config.toml "$docdir/examples/config.toml"
+  install -Dm644 profiles/agent.toml "$docdir/profiles/agent.toml"
+  cp -r docs "$docdir/docs"
+  find "$docdir" -type d -exec chmod 755 {} +
+  find "$docdir" -type f -exec chmod 644 {} +
+}
