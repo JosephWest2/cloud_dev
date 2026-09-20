@@ -20,7 +20,8 @@ underscores or hyphens, starting with a letter/digit.
 ## Tools and identities
 
 Use **OpenTofu 1.12.6**, **hashicorp/aws 6.64.0** (both roots enforce these exact
-versions), Go 1.24+, AWS CLI v2, and `jq`. Keep the committed provider lockfiles.
+versions), Go 1.24+, AWS CLI v2, Python 3 (artifact packaging), and `jq`. Keep the
+committed provider lockfiles.
 Install OpenTofu from its [official releases](https://github.com/opentofu/opentofu/releases/tag/v1.12.6)
 and verify release signatures/checksums using the
 [installation instructions](https://opentofu.org/docs/intro/install/).
@@ -276,8 +277,9 @@ that exact role; a permissions boundary or organization policy may additionally
 restrict it. For an SSO source profile, log in to that source profile first.
 Do not attach administrator policies to make the operator pass.
 
-Edit devbox `config.toml` (copy `examples/config.toml` if needed) to match account,
-region, deployment and owner from the export; set `aws_profile="devbox-operator"`.
+Edit devbox `config.toml` (see
+[copying the example configuration](configuration.md#configure-your-identity-and-scope))
+to match account, region, deployment and owner from the export; set `aws_profile="devbox-operator"`.
 Then, from the checkout root:
 
 ```sh
@@ -287,7 +289,8 @@ make build
 ```
 
 The explicit flag avoids the setup `AWS_PROFILE` environment overriding TOML.
-Install the local OpenSSH client and Session Manager plugin per the README.
+Install the local OpenSSH client and Session Manager plugin per the
+[local access tools guide](configuration.md#local-access-tools).
 Use a currently supported plugin (at least 1.2.764.0 as of this implementation;
 see AWS's [release history](https://docs.aws.amazon.com/systems-manager/latest/userguide/plugin-version-history.html)).
 Doctor checks executability; the human setup check must verify the version.

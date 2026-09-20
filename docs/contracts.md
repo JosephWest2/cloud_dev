@@ -50,7 +50,8 @@ The expected account is a quoted 12-digit string. Deployment and owner are
 digit. A region must have AWS region syntax; availability and partition-specific
 resource checks belong to the foundation slice. `aws_profile`, `manifest`,
 `profile_file`, and `ssh_identity_file` are optional; precedence is documented in
-the README. Access requires the local identity and matching public-key file.
+[configuration](configuration.md#configuration-precedence). Access requires the
+local identity and matching public-key file.
 Unknown TOML fields, invalid types, malformed TOML and missing/unsupported
 schema versions are rejected. This includes credential fields.
 
