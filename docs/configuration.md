@@ -1,6 +1,6 @@
 # Configuration and prerequisite checks
 
-Follow the [installation instructions](../README.md#install) and
+Follow the [installation instructions](../README.md#install-and-set-up) and
 [guided setup](guided-setup.md) for a new deployment. This reference explains
 identity selection, local tools and diagnostics.
 
