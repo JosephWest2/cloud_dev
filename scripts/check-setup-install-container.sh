@@ -7,6 +7,11 @@ if pacman -Q make >/dev/null 2>&1; then pacman -Rdd --noconfirm make; fi
 useradd --create-home installer
 printf 'installer ALL=(ALL) NOPASSWD: ALL\n' > /etc/sudoers.d/devbox-installer
 chmod 440 /etc/sudoers.d/devbox-installer
+# Host mktemp directories are private and CI's UID need not match this user.
+# Copy only public release fixtures into a readable container-owned directory.
+install -d -m755 /fixture
+cp /input/SHA256SUMS /input/cloud-dev-0.0.0-1-x86_64.pkg.tar.zst /input/cloud-dev-0.0.0-setup-linux-amd64.tar.gz /fixture/
+chmod 644 /fixture/*
 cat > /home/installer/run.sh <<'RUN'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -18,7 +23,7 @@ fetch() {
     https://api.github.com/repos/JosephWest2/cloud_dev/releases/tags/v0.0.0)
       printf '{"draft":false,"prerelease":false}\n' > "$2" ;;
     https://github.com/JosephWest2/cloud_dev/releases/download/v0.0.0/*)
-      cp -- "/input/${1##*/}" "$2" ;;
+      cp -- "/fixture/${1##*/}" "$2" ;;
     *) curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 "$1" -o "$2" ;;
   esac
 }
@@ -41,7 +46,9 @@ test "$(devbox version)" = 'devbox 0.0.0'
 test "$(session-manager-plugin --version)" = '1.2.835.0'
 test -f "$HOME/.local/share/devbox/bundles/0.0.0/bundle.json"
 "$HOME/.local/share/devbox/tools/tofu-1.12.6/tofu" version | head -1 | grep -Fx 'OpenTofu v1.12.6'
-for tool in go make jq git; do ! command -v "$tool"; done
+for tool in go make jq git; do
+  if command -v "$tool"; then exit 1; fi
+done
 set +e
 output=$(devbox setup --json)
 code=$?
