@@ -1299,7 +1299,7 @@ credentials or AWS. Duplicate/unknown options, incompatible selectors and invali
 scope fail before setup. Setup requires a terminal for mutation and has no
 `--yes`. Ordinary commands retain their existing parsing, deadlines and semantics.
 
-Setup result schema 1 contains `command="setup"`, `setup_id` when assigned, `ok`,
+Setup result schema 1 contains `command="setup"`, `cli_version`, `scope`, `setup_id` when assigned, `ok`,
 `exit_code`, safe `code`/`message`, `phase`, `partial`, `recorded`, `completed`,
 `installation`, `foundation`, `scheduling`, `recovery` when assigned, and `checks`
 (`name`, `ok`). Arrays are always emitted. Status reports recorded progress rather

@@ -95,6 +95,7 @@ type fakeCloud struct {
 	caller                                string
 	plans                                 map[string][]byte
 	mutationHook                          func(string) error
+	staleSchedule                         bool
 }
 
 func (f *fakeCloud) Caller(_ context.Context, in Inputs, profile string) (string, error) {
@@ -131,8 +132,17 @@ func (f *fakeCloud) Bucket(_ context.Context, in Inputs, key string) (string, er
 	}
 	return "empty", nil
 }
-func (f *fakeCloud) Verify(_ context.Context, _ Inputs, _ config.Manifest, configurationOnly bool, after time.Time) []foundation.Check {
+func (f *fakeCloud) Verify(_ context.Context, _ Inputs, m config.Manifest, configurationOnly bool, after time.Time) []foundation.Check {
 	f.calls = append(f.calls, "verify")
+	if len(m.Cleanup) > 0 {
+		var exported struct {
+			State string `json:"state"`
+		}
+		_ = json.Unmarshal(m.Cleanup, &exported)
+		if (exported.State == "ENABLED") != f.enabled {
+			return []foundation.Check{{Name: "cleanup_schedule", Err: errors.New("exported schedule does not match AWS")}}
+		}
+	}
 	if !configurationOnly {
 		if after.IsZero() {
 			f.t.Error("missing enablement evidence boundary")
@@ -245,6 +255,7 @@ func (f *fakeCloud) run(ctx context.Context, r Request) (Response, error) {
 			f.foundation = true
 		case "schedule":
 			f.enabled = true
+			f.staleSchedule = false
 		}
 		return Response{}, nil
 	}
@@ -252,7 +263,13 @@ func (f *fakeCloud) run(ctx context.Context, r Request) (Response, error) {
 		if a[2] == "bucket_name" {
 			return Response{Output: encodeFile(f.in.Bucket)}, nil
 		}
-		return Response{Output: encodeFile(fixtureManifest(f.t))}, nil
+		m := fixtureManifest(f.t)
+		state := "DISABLED"
+		if f.enabled && !f.staleSchedule {
+			state = "ENABLED"
+		}
+		m.Cleanup = json.RawMessage(encodeFile(map[string]string{"state": state}))
+		return Response{Output: encodeFile(m)}, nil
 	}
 	f.t.Fatalf("unexpected tool: %+v", r)
 	return Response{}, nil
@@ -561,6 +578,7 @@ func TestRealKeyCorrespondence(t *testing.T) {
 		t.Fatal(err)
 	}
 	e.deps.Run = DefaultProcess(strings.NewReader(""), io.Discard)
+	e.j.InputDigest = ""
 	if err := e.prepareKey(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -596,5 +614,122 @@ func TestTOMLAndProfilePreservation(t *testing.T) {
 	}
 	if _, err = profileSection(updated, "managed", map[string]string{"region": "us-west-2"}); err == nil {
 		t.Fatal("overwrote conflicting profile")
+	}
+}
+
+func reloadEngine(t *testing.T, e *engine) *engine {
+	t.Helper()
+	next := &engine{options: e.options, deps: e.deps, root: e.root, result: Result{Checks: []Check{}, Completed: []string{}}}
+	next.input = bufio.NewReader(strings.NewReader(strings.Repeat("yes\n", 50)))
+	if err := next.load(e.j.ID); err != nil {
+		t.Fatal(err)
+	}
+	return next
+}
+
+func TestUncertainScheduleReconcilesBeforeVerifyingStaleExport(t *testing.T) {
+	e, f := fixtureEngine(t)
+	f.mutationHook = func(phase string) error {
+		if phase == "schedule" {
+			f.enabled, f.staleSchedule = true, true
+			return context.DeadlineExceeded
+		}
+		return nil
+	}
+	if err := e.execute(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	if e.j.PendingMutation != "schedule" || !e.done("verified") {
+		t.Fatal(e.j)
+	}
+	f.mutationHook = nil
+	before := len(f.calls)
+	e = reloadEngine(t, e)
+	if err := e.execute(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := f.calls[before:]
+	apply, verify := slices.Index(calls, "apply:schedule"), slices.Index(calls, "verify")
+	if apply < 0 || verify < apply || f.staleSchedule || e.result.Scheduling != "healthy" {
+		t.Fatalf("pending enablement was not reconciled before verification: %v", calls)
+	}
+}
+
+func TestManagedPathCollisionsRejectedOnLoad(t *testing.T) {
+	for _, kind := range []string{"manifest", "public-key", "credentials", "ancestor", "hardlink"} {
+		t.Run(kind, func(t *testing.T) {
+			e, f := fixtureEngine(t)
+			switch kind {
+			case "manifest":
+				e.j.Inputs.ConfigPath = e.j.Inputs.ManifestPath
+			case "public-key":
+				e.j.Inputs.ConfigPath = e.j.Inputs.SSHKey + ".pub"
+			case "credentials":
+				e.j.Inputs.ConfigPath = e.j.Inputs.AWSCredentialsPath
+			case "ancestor":
+				e.j.Inputs.ConfigPath = filepath.Dir(e.j.Inputs.ManifestPath)
+			case "hardlink":
+				if err := os.Link(e.j.Inputs.SSHKey, e.j.Inputs.ConfigPath); err != nil {
+					t.Fatal(err)
+				}
+			}
+			b, _ := json.Marshal(e.j.Inputs)
+			e.j.InputDigest = hash(b)
+			if err := e.save(); err != nil {
+				t.Fatal(err)
+			}
+			if err := e.load(e.j.ID); err == nil {
+				t.Fatal("accepted colliding paths")
+			}
+			if len(f.calls) != 0 {
+				t.Fatal("called AWS before rejecting paths")
+			}
+		})
+	}
+}
+
+func TestHandoffCommandsPreserveLiteralConfigPath(t *testing.T) {
+	e, _ := fixtureEngine(t)
+	e.j.Inputs.ConfigPath = filepath.Join(t.TempDir(), "space ' $(touch bad) `touch bad` $HOME.toml")
+	var out bytes.Buffer
+	e.deps.Output = &out
+	if err := e.handoff(); err != nil {
+		t.Fatal(err)
+	}
+	line := strings.Split(out.String(), "\n")[0]
+	command := strings.TrimPrefix(line, "Verify: devbox ")
+	got, err := exec.Command("bash", "-c", "set -- "+command+"; printf '%s' \"$2\"").Output()
+	if err != nil || string(got) != e.j.Inputs.ConfigPath {
+		t.Fatalf("unsafe command: %s (%v)", line, err)
+	}
+}
+
+// Opt-in integration validates the generated provider overrides with the pinned
+// executable and real provider schemas; init has no backend and makes no AWS calls.
+func TestGeneratedOpenTofuConfiguration(t *testing.T) {
+	tofu := os.Getenv("DEVBOX_SETUP_TOFU")
+	if tofu == "" {
+		t.Skip("set DEVBOX_SETUP_TOFU for provider-schema validation")
+	}
+	tofu, err := filepath.Abs(tofu)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e, _ := fixtureEngine(t)
+	if err := e.setupBundle(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.writeInputs(false); err != nil {
+		t.Fatal(err)
+	}
+	for _, root := range []string{"state-bootstrap", "foundation"} {
+		for _, args := range [][]string{{"init", "-backend=false", "-lockfile=readonly", "-input=false", "-no-color"}, {"validate", "-no-color"}} {
+			cmd := exec.Command(tofu, args...)
+			cmd.Dir = filepath.Join(e.workspace, "infra", root)
+			cmd.Env = append(processEnv(os.Environ()), "AWS_EC2_METADATA_DISABLED=true", "TF_CLI_CONFIG_FILE="+filepath.Join(e.workspace, "setup.tfrc"))
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("%s %v: %v\n%s", root, args, err, out)
+			}
+		}
 	}
 }

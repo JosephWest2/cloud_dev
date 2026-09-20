@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/JosephWest2/cloud_dev/internal/access"
 	"github.com/JosephWest2/cloud_dev/internal/config"
 )
 
@@ -96,6 +97,17 @@ func (e *engine) execute(ctx context.Context) error {
 		}
 		if !e.done("foundation") {
 			if err = e.apply(ctx, "foundation", "foundation", false); err != nil {
+				return err
+			}
+		}
+		// An interrupted enablement may have changed AWS before state outputs
+		// were persisted. Reconcile its saved intent before comparing the export
+		// with AWS, using the prerequisites verified before enablement began.
+		if e.j.PendingMutation == "schedule" {
+			if !e.done("verified") || e.j.EnableRequested == nil || !*e.j.EnableRequested || e.j.EnabledAfter.IsZero() {
+				return recoveryError()
+			}
+			if err = e.apply(ctx, "foundation", "schedule", true); err != nil {
 				return err
 			}
 		}
@@ -328,11 +340,11 @@ func regexpCheckName(name string) bool {
 
 func (e *engine) handoff() error {
 	in := e.j.Inputs
-	if err := e.say("Verify: devbox --config %q doctor --aws-profile %s --timeout 5m\n", in.ConfigPath, in.OperatorProfile); err != nil {
+	if err := e.say("Verify: devbox --config %s doctor --aws-profile %s --timeout 5m\n", access.ShellQuote(in.ConfigPath), in.OperatorProfile); err != nil {
 		return err
 	}
 	if e.result.Foundation != "legacy_recovery_only" {
-		if err := e.say("First worker: devbox --config %q up agent --aws-profile %s\n", in.ConfigPath, in.OperatorProfile); err != nil {
+		if err := e.say("First worker: devbox --config %s up agent --aws-profile %s\n", access.ShellQuote(in.ConfigPath), in.OperatorProfile); err != nil {
 			return err
 		}
 	}

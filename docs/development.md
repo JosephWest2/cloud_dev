@@ -138,7 +138,12 @@ uses published package/bundle assets and pinned upstream tools.
 
 Run `python3 scripts/test-setup-installer.py` with `bsdtar` available to exercise
 archive traversal/link rejection, checksums and installation conflicts. Run the
-Arch container checks for real packaging. `make setup-bundle VERSION=0.0.0`
+Arch container checks for real packaging, then
+`bash scripts/check-setup-install.sh <fixture-directory>` to test installation
+and reruns without build tools or AWS credentials. Run
+`DEVBOX_SETUP_TOFU=/path/to/tofu go test ./internal/setup -run TestGeneratedOpenTofuConfiguration -v`
+to validate generated configuration with OpenTofu 1.12.6 and real provider schemas,
+using backend-disabled initialization without AWS calls. `make setup-bundle VERSION=0.0.0`
 creates an offline development bundle; use the same `VERSION` when building its
 CLI. Existing output archives are not overwritten.
 

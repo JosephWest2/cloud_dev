@@ -41,6 +41,9 @@ jobs:
           echo "ARCH_VERSION=$version" >> "$GITHUB_ENV"
       - name: Build, lint and exercise both package variants in Arch
         run: bash scripts/check-arch.sh "$ARCH_VERSION"
+      - name: Exercise guided installer and rerun without build tools
+        if: env.ARCH_VERSION == '0.0.0'
+        run: bash scripts/check-setup-install.sh bin-arch-check.*
       - name: Collect stable release assets
         run: |
           mkdir dist

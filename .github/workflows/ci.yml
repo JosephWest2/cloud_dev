@@ -79,3 +79,5 @@ jobs:
           tofu version
       - name: Check infrastructure and runtime artifacts
         run: make infra-check TOFU=tofu
+      - name: Validate generated setup provider configuration
+        run: DEVBOX_SETUP_TOFU="$(command -v tofu)" go test ./internal/setup -run TestGeneratedOpenTofuConfiguration -v

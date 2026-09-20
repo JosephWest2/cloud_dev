@@ -15,6 +15,26 @@ import (
 
 func hash(b []byte) string { h := sha256.Sum256(b); return hex.EncodeToString(h[:]) }
 
+func validateInputPaths(in Inputs) error {
+	paths := []string{in.ConfigPath, in.ManifestPath, in.AWSConfigPath, in.AWSCredentialsPath, in.SSHKey, in.SSHKey + ".pub"}
+	for i, path := range paths {
+		if err := safePath(path); err != nil {
+			return err
+		}
+		info, err := os.Stat(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		for _, other := range paths[:i] {
+			otherInfo, _ := os.Stat(other)
+			if path == other || strings.HasPrefix(path, other+string(os.PathSeparator)) || strings.HasPrefix(other, path+string(os.PathSeparator)) || (info != nil && otherInfo != nil && os.SameFile(info, otherInfo)) {
+				return invalid("configuration, manifest, AWS files and SSH key paths must be distinct and cannot contain one another")
+			}
+		}
+	}
+	return nil
+}
+
 // Refuse symlinks in every existing component, not only at the leaf.
 func safePath(path string) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path || strings.ContainsAny(path, "\x00\r\n") {

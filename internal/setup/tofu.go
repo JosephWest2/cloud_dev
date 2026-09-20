@@ -103,7 +103,8 @@ func (e *engine) generatedFiles(enabled bool) map[string][]byte {
 		principalPattern = "^arn:aws:sts::" + in.Account + ":assumed-role/" + regexp.QuoteMeta(name) + "/[^/]+$"
 	}
 	condition := fmt.Sprintf("${self.account_id == %q && can(regex(%q, self.arn))}", in.Account, principalPattern)
-	override := encodeFile(map[string]any{"provider": map[string]any{"aws": map[string]any{"profile": in.SetupProfile}}, "data": map[string]any{"aws_caller_identity": map[string]any{"devbox_setup": map[string]any{"lifecycle": map[string]any{"postcondition": []any{map[string]any{"condition": condition, "error_message": "Setup provider identity differs from the confirmed principal."}}}}}}})
+	override := encodeFile(map[string]any{"provider": map[string]any{"aws": map[string]any{"profile": in.SetupProfile}}})
+	identity := encodeFile(map[string]any{"data": map[string]any{"aws_caller_identity": map[string]any{"devbox_setup": map[string]any{"lifecycle": map[string]any{"postcondition": []any{map[string]any{"condition": condition, "error_message": "Setup provider identity differs from the confirmed principal."}}}}}}})
 	backend := func(key string) []byte {
 		return []byte(fmt.Sprintf("bucket = %q\nkey = %q\nregion = %q\nallowed_account_ids = [%q]\nprofile = %q\n", in.Bucket, key, in.Region, in.Account, in.SetupProfile))
 	}
@@ -111,6 +112,8 @@ func (e *engine) generatedFiles(enabled bool) map[string][]byte {
 		"setup.tfrc": []byte("disable_checkpoint = true\nprovider_installation {\n  direct {}\n}\n"),
 		"infra/state-bootstrap/setup_override.tf.json": override,
 		"infra/foundation/setup_override.tf.json":      override,
+		"infra/state-bootstrap/setup_identity.tf.json": identity,
+		"infra/foundation/setup_identity.tf.json":      identity,
 		"infra/state-bootstrap/setup.tfvars.json":      encodeFile(map[string]any{"account_id": in.Account, "bucket_name": in.Bucket}),
 		"infra/foundation/setup.tfvars.json":           encodeFile(map[string]any{"account_id": in.Account, "region": in.Region, "deployment": in.Deployment, "owner": in.Owner, "operator_principal_arn": in.Principal, "ami_id": in.AMI, "ssh_public_key": in.PublicKey, "cleanup_schedule_enabled": enabled}),
 		"infra/state-bootstrap/backend.hcl":            backend("bootstrap/terraform.tfstate"),
@@ -464,7 +467,7 @@ func (e *engine) verifyRemoteBootstrap(ctx context.Context) error {
 			return err
 		}
 	}
-	for _, name := range []string{"backend.hcl", "setup.tfvars.json", "setup_override.tf.json"} {
+	for _, name := range []string{"backend.hcl", "setup.tfvars.json", "setup_override.tf.json", "setup_identity.tf.json"} {
 		body, err := readFile(filepath.Join(e.workspace, "infra/state-bootstrap", name))
 		if err != nil {
 			return err

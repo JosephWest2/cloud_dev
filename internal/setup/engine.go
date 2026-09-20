@@ -286,10 +286,8 @@ func (e *engine) load(id string) error {
 	if !accountPattern.MatchString(in.Account) || in.Region != "us-east-2" || !labelPattern.MatchString(in.Deployment) || !labelPattern.MatchString(in.Owner) || !profilePattern.MatchString(in.SourceProfile) || !profilePattern.MatchString(in.SetupProfile) || !profilePattern.MatchString(in.OperatorProfile) {
 		return invalid("invalid recorded setup scope")
 	}
-	for _, p := range []string{in.ConfigPath, in.ManifestPath, in.AWSConfigPath, in.AWSCredentialsPath, in.SSHKey} {
-		if err := safePath(p); err != nil {
-			return err
-		}
+	if err := validateInputPaths(in); err != nil {
+		return err
 	}
 	if e.j.InputDigest != "" {
 		b, _ := json.Marshal(in)
@@ -459,6 +457,9 @@ func (e *engine) choose(ctx context.Context) error {
 	}
 	in.SSHKey, err = absolute(in.SSHKey)
 	if err != nil {
+		return err
+	}
+	if err = validateInputPaths(in); err != nil {
 		return err
 	}
 	id := newID()
@@ -650,6 +651,9 @@ func (e *engine) prepareKey(ctx context.Context) error {
 	pub := strings.Join(fields[:2], " ")
 	if _, err = sshkey.Parse(pub); err != nil {
 		return fail("ssh_key_invalid", "selected key must be Ed25519")
+	}
+	if e.j.InputDigest != "" && pub != in.PublicKey {
+		return fail("ssh_key_mismatch", "selected key changed since setup preparation; restore the recorded key before resuming")
 	}
 	existing, err := optionalFile(in.SSHKey + ".pub")
 	if err != nil {
