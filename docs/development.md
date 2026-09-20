@@ -80,6 +80,35 @@ The acceptance-helper tests are also local-only:
 python3 scripts/test-expiry-acceptance.py
 ```
 
+## Continuous integration
+
+The [CI workflow](../.github/workflows/ci.yml) runs on every pull request, pushes
+to `main`, and manual dispatch. It runs two parallel jobs on fresh Ubuntu 24.04
+checkouts, using the Go version from `go.mod` and the runner's Python 3:
+
+| Check | Commands and coverage |
+| --- | --- |
+| `Go and helpers` | `go mod download`, `make check`, `make build`, CLI `version`/`--help` smoke checks, and `python3 scripts/test-expiry-acceptance.py` |
+| `Infrastructure and runtimes` | `make infra-check TOFU=tofu` with OpenTofu 1.12.6: runner build, cleanup packaging, formatting, validation, mock-provider tests and manifest export contracts |
+
+Use the commands above to reproduce failures locally; infrastructure checks still
+require a separate clean checkout. Ordinary `make check` skips the OpenTofu export
+contract, so both CI jobs are needed. Each job logs its tool versions, has a
+20-minute timeout, and caches Go modules/builds using `go.sum`. Infrastructure
+working directories and state are not cached. New runs cancel superseded runs
+for the same event and PR or branch.
+
+CI downloads dependencies but uses no AWS credentials or deployment inputs and
+does not perform live AWS operations. Its results are offline validation, not
+live acceptance evidence. Actions are pinned to full commit SHAs with release
+comments; update both together. The workflow grants only repository read access
+and does not persist checkout credentials.
+
+Keep the two check names above stable when configuring required checks for
+`main`. Run all jobs even for documentation changes so required checks are always
+reported. Validate workflow edits with `actionlint` and confirm both jobs pass on
+the PR before merging.
+
 ## Documentation and validation
 
 Keep the [README](../README.md) focused on setup and first use. Put detailed user
