@@ -247,3 +247,36 @@ func TestUnsupportedEvidenceStillDiagnosesCoreSchedule(t *testing.T) {
 		t.Fatal(checks, f.calls)
 	}
 }
+
+func TestSetupConfigurationDoesNotWeakenDoctorHealth(t *testing.T) {
+	f, m, c, e, clients := evidenceFixture(t)
+	f.responses["DescribeAlarms"] = strings.ReplaceAll(f.responses["DescribeAlarms"], `"StateValue":"OK"`, `"StateValue":"INSUFFICIENT_DATA"`)
+	if err := checkEvidenceAlarmsMode(context.Background(), clients, e, c, true); err != nil {
+		t.Fatal("initial configuration rejected", err)
+	}
+	if checkEvidenceAlarms(context.Background(), clients, e, c) == nil {
+		t.Fatal("ordinary doctor accepted unobserved alarms")
+	}
+	f.responses["FilterLogEvents"] = `{"Events":[]}`
+	checks := verifyEvidenceMode(context.Background(), clients, m, c, true)
+	for _, check := range checks {
+		if check.Name == "cleanup_recent_completion" {
+			t.Fatal("configuration requires an impossible pre-enable run")
+		}
+	}
+	if f.calls["FilterLogEvents"] != 0 {
+		t.Fatal("pre-enable configuration queried runtime completion")
+	}
+}
+
+func TestSetupCompletionMustFollowEnablement(t *testing.T) {
+	f, m, c, _, clients := evidenceFixture(t)
+	before := time.Date(2026, 9, 14, 11, 59, 0, 0, time.UTC)
+	if err := checkRecentCompletionAfter(context.Background(), f, m, c, clients.Now(), before); err != nil {
+		t.Fatal(err)
+	}
+	after := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
+	if checkRecentCompletionAfter(context.Background(), f, m, c, clients.Now(), after) == nil {
+		t.Fatal("pre-enable schedule invocation counted as new health")
+	}
+}

@@ -1,7 +1,7 @@
 # Configuration and prerequisite checks
 
 Follow the [installation instructions](../README.md#install) and
-[foundation setup guide](setup.md) for a new deployment. This reference explains
+[guided setup](guided-setup.md) for a new deployment. This reference explains
 identity selection, local tools and diagnostics.
 
 - [Local access tools](#local-access-tools)

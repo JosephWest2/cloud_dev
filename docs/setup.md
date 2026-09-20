@@ -1,4 +1,8 @@
-# Provision and verify the durable foundation
+# Manually provision and verify the durable foundation
+
+For automated new foundations and existing-manifest client configuration, start
+with [guided setup](guided-setup.md). This guide remains the manual provisioning,
+upgrade and recovery path.
 
 This sets up the resources that future devboxes will use. It **does not launch a
 machine**. You need an AWS account and an authenticated local AWS profile first.
@@ -25,7 +29,8 @@ committed provider lockfiles.
 Install OpenTofu from its [official releases](https://github.com/opentofu/opentofu/releases/tag/v1.12.6)
 and verify release signatures/checksums using the
 [installation instructions](https://opentofu.org/docs/intro/install/).
-`tofu version` must report 1.12.6. No OpenTofu executable is required by devbox.
+`tofu version` must report 1.12.6. OpenTofu is required by `devbox setup` for new provisioning, but not by
+ordinary worker commands or existing-manifest connection.
 
 Use a **setup profile** authorized to create/delete VPC networking, IAM roles,
 instance profiles/policies, launch templates, SSM documents and the S3 state

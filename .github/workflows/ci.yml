@@ -43,6 +43,12 @@ jobs:
           ./bin/devbox --help
       - name: Test acceptance helpers
         run: python3 scripts/test-expiry-acceptance.py
+      - name: Test guided installer helpers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools
+          python3 scripts/test-setup-installer.py
+          bash -n scripts/install.sh
 
   infrastructure-and-runtimes:
     name: Infrastructure and runtimes

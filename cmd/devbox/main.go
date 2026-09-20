@@ -16,7 +16,7 @@ func main() {
 	if worker {
 		args = args[1:]
 	}
-	if cli.IsCleanupCommand(args) {
+	if cli.IsCleanupCommand(args) || cli.IsSetupCommand(args) {
 		// Go normally exits on SIGPIPE when inherited stdout/stderr is closed.
 		// Cleanup must instead receive EPIPE so a failed evidence write denies
 		// dispatch and a failed result write preserves the fallback envelope.

@@ -7,7 +7,8 @@ first worker. These guides cover the details as you need them.
 
 | Guide | Use it for |
 | --- | --- |
-| [Foundation setup](setup.md) | Tools, AWS identities, provisioning, manifest export, upgrades and full foundation teardown |
+| [Guided setup](guided-setup.md) | Installer, new foundation wizard, existing-manifest connection and interrupted-setup recovery |
+| [Manual foundation setup](setup.md) | Tools, AWS identities, provisioning, manifest export, upgrades and full foundation teardown |
 | [Configuration and checks](configuration.md) | Profile selection, path/option precedence, SSH prerequisites and `doctor` |
 | [Usage](usage.md) | Groups, SSH/editor access, recovery, worker lifetime, cleanup, execution and logs |
 | [Arch packaging](arch-packaging.md) | Packages without an AUR account, validation, GitHub releases and eventual AUR publication |
@@ -36,6 +37,8 @@ The [implementation roadmap](../implementation-plan.md),
 and [scoped plans](plans/) include historical choices and future work; consult the
 current guides and code for shipped behavior. The next interactive-workflow plan
 is [manual tmux followed by managed sessions](plans/05-interactive-sessions.md).
+The [guided installation and foundation setup plan](plans/64-guided-setup.md)
+records the design for #64; use [guided setup](guided-setup.md) for current commands.
 Tmux is not explicitly installed by current bootstrap, and `agent`, `watch` and
 `attach` commands are not implemented. Repository-ready and benchmark images
 remain planned; possible [Herdr integration](https://github.com/JosephWest2/cloud_dev/issues/59)

@@ -36,6 +36,10 @@ type EvidenceLogs interface {
 }
 
 func verifyEvidence(ctx context.Context, clients CleanupClients, m config.Manifest, c config.Cleanup) []Check {
+	return verifyEvidenceMode(ctx, clients, m, c, false)
+}
+
+func verifyEvidenceMode(ctx context.Context, clients CleanupClients, m config.Manifest, c config.Cleanup, configurationOnly bool) []Check {
 	e, err := config.DecodeEvidence(c.Evidence, m, c)
 	if err != nil {
 		return []Check{{"cleanup_evidence", err}}
@@ -59,15 +63,18 @@ func verifyEvidence(ctx context.Context, clients CleanupClients, m config.Manife
 			}
 			return nil
 		}},
-		{"cleanup_evidence_alarms", func(ctx context.Context) error { return checkEvidenceAlarms(ctx, clients, e, c) }},
+		{"cleanup_evidence_alarms", func(ctx context.Context) error { return checkEvidenceAlarmsMode(ctx, clients, e, c, configurationOnly) }},
 		{"cleanup_recent_completion", func(ctx context.Context) error {
 			now := time.Now()
 			if clients.Now != nil {
 				now = clients.Now()
 			}
-			return checkRecentCompletion(ctx, clients.EvidenceLogs, m, c, now)
+			return checkRecentCompletionAfter(ctx, clients.EvidenceLogs, m, c, now, clients.CompletedAfter)
 		}},
 	} {
+		if configurationOnly && probe.name == "cleanup_recent_completion" {
+			continue
+		}
 		bounded, cancel := context.WithTimeout(ctx, 15*time.Second)
 		err := probe.run(bounded)
 		if bounded.Err() != nil {
@@ -138,6 +145,10 @@ func checkEvidenceRoute(ctx context.Context, clients CleanupClients, e config.Cl
 	return fail
 }
 func checkEvidenceAlarms(ctx context.Context, clients CleanupClients, e config.CleanupEvidence, c config.Cleanup) error {
+	return checkEvidenceAlarmsMode(ctx, clients, e, c, false)
+}
+
+func checkEvidenceAlarmsMode(ctx context.Context, clients CleanupClients, e config.CleanupEvidence, c config.Cleanup, configurationOnly bool) error {
 	fail := errors.New("cleanup alarm/filter drift or alarm not OK; inspect exported alarms and recent successful completion")
 	if clients.CloudWatch == nil || clients.EvidenceLogs == nil {
 		return fail
@@ -166,7 +177,7 @@ func checkEvidenceAlarms(ctx context.Context, clients CleanupClients, e config.C
 			dimensions[aws.ToString(d.Name)] = aws.ToString(d.Value)
 		}
 		if aws.ToString(a.AlarmArn) != want.ARN ||
-			string(a.StateValue) != "OK" ||
+			(!configurationOnly && string(a.StateValue) != "OK") ||
 			aws.ToString(a.Namespace) != want.Namespace ||
 			aws.ToString(a.MetricName) != want.MetricName ||
 			len(dimensions) != len(a.Dimensions) ||
@@ -204,6 +215,10 @@ func checkEvidenceAlarms(ctx context.Context, clients CleanupClients, e config.C
 	return fail
 }
 func checkRecentCompletion(ctx context.Context, api EvidenceLogs, m config.Manifest, c config.Cleanup, now time.Time) error {
+	return checkRecentCompletionAfter(ctx, api, m, c, now, time.Time{})
+}
+
+func checkRecentCompletionAfter(ctx context.Context, api EvidenceLogs, m config.Manifest, c config.Cleanup, now, after time.Time) error {
 	fail := errors.New("no recent successful nonpartial scope-matched cleanup completion; inspect invocation_end and run manual cleanup if needed")
 	if api == nil {
 		return fail
@@ -262,7 +277,7 @@ func checkRecentCompletion(ctx context.Context, api EvidenceLogs, m config.Manif
 	if _, err := strconv.Atoi(r.Correlation.AttemptNumber); err != nil {
 		return fail
 	}
-	if _, err := expiry.ParseTimestamp(r.Correlation.ScheduledTime); err != nil {
+	if scheduled, err := expiry.ParseTimestamp(r.Correlation.ScheduledTime); err != nil || (!after.IsZero() && !scheduled.After(after)) {
 		return fail
 	}
 	if result.Scope != scope || !result.OK || !result.Complete || !result.ScanComplete || result.DryRun || result.ExitCode != 0 || len(result.Errors) != 0 || !slices.Contains([]string{"cleanup_complete", "cleanup_no_candidates"}, result.Code) || result.Code != r.Code {

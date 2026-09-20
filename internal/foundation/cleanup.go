@@ -37,11 +37,17 @@ type CleanupClients struct {
 	CloudWatch   EvidenceCloudWatch
 	EvidenceLogs EvidenceLogs
 	Now          func() time.Time
+	// Setup-only observation boundary; ordinary doctor leaves this zero.
+	CompletedAfter time.Time
 }
 
 // VerifyCleanup is a dedicated read-only doctor capability, never a prerequisite
 // of the shared cleanup service, inventory, explicit down or durable log reads.
 func VerifyCleanup(ctx context.Context, clients CleanupClients, m config.Manifest, raw json.RawMessage) []Check {
+	return verifyCleanup(ctx, clients, m, raw, false)
+}
+
+func verifyCleanup(ctx context.Context, clients CleanupClients, m config.Manifest, raw json.RawMessage, configurationOnly bool) []Check {
 	c, err := config.DecodeCleanup(raw, m)
 	if err != nil {
 		return []Check{{"cleanup_configuration", err}}
@@ -65,10 +71,10 @@ func VerifyCleanup(ctx context.Context, clients CleanupClients, m config.Manifes
 		checks = append(checks, Check{probe.name, err})
 	}
 	// A descriptor or successful deployment is never proof of recent execution.
-	if c.Schedule.State != "ENABLED" {
+	if !configurationOnly && c.Schedule.State != "ENABLED" {
 		checks = append(checks, Check{"cleanup_enabled", errors.New("cleanup schedule disabled")})
 	}
-	checks = append(checks, verifyEvidence(ctx, clients, m, c)...)
+	checks = append(checks, verifyEvidenceMode(ctx, clients, m, c, configurationOnly)...)
 	return checks
 }
 func checkCleanupFunction(ctx context.Context, api CleanupLambda, m config.Manifest, c config.Cleanup) error {

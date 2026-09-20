@@ -11,64 +11,49 @@ IPv4. The bundled `agent` machine profile uses Spot instances by default;
 `--on-demand` opts into On-Demand. There is no automatic fallback or replacement
 of interrupted workers.
 
-## Install
+## Install and set up
 
-On Arch Linux, see [Arch packages](docs/arch-packaging.md) for building a package
-with `makepkg`, installing published GitHub release packages, and optional SSH
-dependencies. Neither installation path requires an AUR account. Package names
-are `cloud-dev` and `cloud-dev-git`; the command remains `devbox`.
-
-To install directly from Go source instead:
-
-You need Go 1.24 or newer, Git and Make. On Arch Linux:
+On Arch Linux x86-64, use the [guided installer and setup](docs/guided-setup.md).
+Choose a numbered GitHub release containing `install.sh` and the matching setup
+bundle, download and inspect its installer, then run:
 
 ```sh
-sudo pacman -S --needed go git make openssh jq
+bash install.sh --version VERSION
 ```
 
-Build and install from a checkout:
+Replace `VERSION` with the selected release. The installer verifies downloads,
+installs the CLI and local dependencies, and prepares matching foundation
+artifacts. Releases predating guided setup do not contain these assets.
+No source checkout, Go, Python or manual artifact build is needed for this path.
+See [Arch packages](docs/arch-packaging.md) for direct package/source installation.
+
+Authenticate an existing AWS profile with your usual AWS login or SSO workflow,
+then run:
 
 ```sh
-git clone https://github.com/JosephWest2/cloud_dev.git
-cd cloud_dev
-go mod download
-make build
-mkdir -p "$HOME/.local/bin"
-GOBIN="$HOME/.local/bin" make install
-export PATH="$HOME/.local/bin:$PATH"
-devbox --help
+devbox setup --aws-profile YOUR_SOURCE_PROFILE
 ```
 
-Persist that PATH setting in your shell configuration. The machine profile is
-embedded in the binary; ordinary CLI use does not require the checkout.
+The wizard asks for your expected account, deployment and stable owner, prepares
+a dedicated SSH key and configuration, shows the AWS changes for approval,
+provisions the v6 foundation, and verifies it through the restricted operator
+role. It offers separately confirmed scheduled-expiry enablement. It creates no
+worker. Keep the printed setup ID to resume after an interruption.
 
-## Set up AWS once
-
-You need an AWS account and an authenticated AWS profile. Follow the
-[foundation setup guide](docs/setup.md) before launching your first worker. It
-walks through installing AWS CLI v2 and OpenTofu 1.12.6, provisioning shared AWS
-resources, creating a dedicated SSH key, and exporting the deployment manifest.
-All new launches require the current **v6 foundation**.
-
-For SSH access, install OpenSSH and the
-[AWS Session Manager plugin](https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-(version 1.2.764.0 or newer, with plugin logging disabled).
-See [local access tools](docs/configuration.md#local-access-tools) for details.
-
-The setup guide also walks through copying [the example config](examples/config.toml)
-to `~/.config/devbox/config.toml` (or `$XDG_CONFIG_HOME/devbox/config.toml`) and
-setting your account, region, deployment, stable owner ID, operator profile and
-SSH key path. Credentials stay in your normal AWS configuration.
-
-After setup, verify the deployment with the restricted operator profile:
+To connect an existing deployment instead:
 
 ```sh
-devbox doctor --aws-profile devbox-operator --timeout 60s
+devbox setup --manifest /path/to/deployment.json --aws-profile YOUR_PROFILE
 ```
 
-Use your operator profile's name if different. The explicit flag takes precedence
-over any `AWS_PROFILE` left over from setup. For existing deployments, follow the
-[upgrade instructions](docs/setup.md#upgrade-to-the-multi-az-spot-foundation-29).
+This configures the local client without provisioning infrastructure. Existing
+foundation adoption/upgrades and full teardown remain in the
+[manual foundation guide](docs/setup.md). See [configuration](docs/configuration.md)
+for credential/profile precedence and [guided recovery](docs/guided-setup.md#resume-and-recover)
+for partial setup.
+
+Use the operator profile printed by setup for all worker commands below; replace
+`devbox-operator` with that name.
 
 ## Use a devbox
 
