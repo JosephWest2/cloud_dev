@@ -1,5 +1,13 @@
 # CLI contracts
 
+## Build version
+
+`devbox version` prints `devbox VERSION`; `devbox --json version` retains the
+v1 result envelope with the same `version` string. Release builds inject this
+value at link time. Direct development builds default to `0.1.0-dev`; Arch Git
+packages report their revision-based package version. The version command
+requires no user configuration, AWS identity or network access.
+
 ## Expiry integration (#43)
 
 [The approved expiry contract](plans/04-expiry-contract.md) governs new launches.

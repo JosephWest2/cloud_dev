@@ -13,6 +13,13 @@ of interrupted workers.
 
 ## Install
 
+On Arch Linux, see [Arch packages](docs/arch-packaging.md) for building a package
+with `makepkg`, installing published GitHub release packages, and optional SSH
+dependencies. Neither installation path requires an AUR account. Package names
+are `cloud-dev` and `cloud-dev-git`; the command remains `devbox`.
+
+To install directly from Go source instead:
+
 You need Go 1.24 or newer, Git and Make. On Arch Linux:
 
 ```sh

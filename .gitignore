@@ -1,4 +1,9 @@
 /bin/
+/bin-arch-check.*/
+/packaging/arch/**/src/
+/packaging/arch/**/pkg/
+/packaging/arch/**/cloud_dev/
+/packaging/arch/**/*.pkg.tar.*
 *.tfstate
 *.tfstate.*
 .terraform/

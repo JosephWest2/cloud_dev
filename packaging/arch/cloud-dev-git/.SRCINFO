@@ -1,0 +1,24 @@
+pkgbase = cloud-dev-git
+	pkgdesc = Disposable AWS development machines over Systems Manager
+	pkgver = 0.r0.g0000000
+	pkgrel = 1
+	url = https://github.com/JosephWest2/cloud_dev
+	arch = x86_64
+	license = MIT
+	checkdepends = openssh
+	checkdepends = procps-ng
+	makedepends = go>=1.24
+	makedepends = git
+	depends = glibc
+	optdepends = openssh: SSH shells, editor access and doctor checks
+	optdepends = aws-session-manager-plugin>=1.2.764.0: SSH transport over Systems Manager
+	optdepends = aws-cli-v2: AWS authentication and foundation setup
+	provides = cloud-dev=0.r0.g0000000
+	conflicts = cloud-dev
+	conflicts = devbox
+	conflicts = devbox-bin
+	options = !debug
+	source = cloud_dev::git+https://github.com/JosephWest2/cloud_dev.git
+	sha256sums = SKIP
+
+pkgname = cloud-dev-git

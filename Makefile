@@ -1,7 +1,10 @@
 .PHONY: build install check runner cleanup cleanup-check
 
+VERSION ?= 0.1.0-dev
+DEVBOX_LDFLAGS = -X github.com/JosephWest2/cloud_dev/internal/cli.Version=$(VERSION)
+
 build:
-	go build -trimpath -buildvcs=false -o bin/devbox ./cmd/devbox
+	go build -trimpath -buildvcs=false -ldflags '$(DEVBOX_LDFLAGS)' -o bin/devbox ./cmd/devbox
 
 runner:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -buildvcs=false -o bin/devbox-runner-linux-amd64 ./cmd/devbox-runner
@@ -14,7 +17,7 @@ cleanup-check: cleanup
 	python3 scripts/check-cleanup-package.py
 
 install:
-	go install -trimpath -buildvcs=false ./cmd/devbox
+	go install -trimpath -buildvcs=false -ldflags '$(DEVBOX_LDFLAGS)' ./cmd/devbox
 
 check:
 	@test -z "$$(gofmt -l cmd internal profiles)" || (gofmt -l cmd internal profiles; exit 1)

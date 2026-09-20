@@ -1,0 +1,88 @@
+name: Arch packaging
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: Arch packages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Select package version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=0.0.0
+          if [[ "$REF_TYPE" == tag ]]; then
+            if [[ ! "$REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo 'Release tags must have the form v1.2.3' >&2
+              exit 1
+            fi
+            version=${REF_NAME#v}
+          fi
+          echo "ARCH_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Build, lint and exercise both package variants in Arch
+        run: bash scripts/check-arch.sh "$ARCH_VERSION"
+      - name: Collect stable release assets
+        run: |
+          mkdir dist
+          cp bin-arch-check.*/cloud-dev-"$ARCH_VERSION"-1-x86_64.pkg.tar.zst dist/
+          cp bin-arch-check.*/cloud-dev-"$ARCH_VERSION".tar.gz dist/
+          cp bin-arch-check.*/cloud-dev-"$ARCH_VERSION"-aur.tar.gz dist/
+          cp bin-arch-check.*/SOURCE_COMMIT dist/
+          test "$(cat dist/SOURCE_COMMIT)" = "$(git rev-parse HEAD)"
+          cd dist
+          sha256sum ./*.pkg.tar.zst ./*.tar.gz SOURCE_COMMIT > SHA256SUMS
+      - name: Upload packages and source recipes
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: arch-packages
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Attach packages to draft release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - name: Download tested assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: arch-packages
+          path: dist
+      - name: Create draft and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --draft --verify-tag \
+              --title "devbox $RELEASE_TAG" \
+              --notes 'Arch Linux packages, source archive and AUR recipe. See docs/arch-packaging.md for installation and verification.'
+          fi
+          # Preserve existing assets on reruns; do not silently replace a release.
+          gh release upload "$RELEASE_TAG" dist/*
