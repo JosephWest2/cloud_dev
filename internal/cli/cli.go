@@ -429,6 +429,8 @@ func runWithCommands(ctx context.Context, args []string, stdout, stderr io.Write
 		}
 	}
 
+	ctx = prepareCommandLogin(ctx, path, overrides, command, jsonMode, stderr)
+
 	if !timeoutSet && (command == "up" || command == "exec" || isAccess) {
 		timeout = 5 * time.Minute
 	}

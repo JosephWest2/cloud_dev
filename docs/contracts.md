@@ -1354,3 +1354,26 @@ run in separate process groups so physical Ctrl-C reaches the worker first; the
 worker delivers one graceful interrupt, drains up to 90 seconds, and then cleans
 up the child group. Setup's supervisor allows that drain. Existing exec detach,
 SSH terminal handling and cleanup output behavior retain their own contracts.
+
+## Interactive AWS authentication
+
+After argument/configuration validation and before command deadlines, terminal
+invocations may probe a selected browser credential source with AWS CLI
+`configure export-credentials` (stdout discarded). Recognized expired or missing
+session diagnostics trigger at most one `aws login` or `aws sso login` attempt.
+Only explicit profile chains and the documented export-credentials bridge are
+followed; arbitrary credential processes are never interpreted as login commands.
+Static/environment credentials retain their existing behavior. Network failures,
+permission failures and account mismatches do not trigger browser login.
+
+Authentication has separate bounds: 15 seconds for the credential probe and five
+minutes for login. Login inherits supervised process-group cancellation and uses
+terminal stdin and stderr, never command stdout. This explicit AWS login UI is
+separate from SDK/provider diagnostics, which remain suppressed. Login failure is
+carried into AWS loading and existing command result/exit contracts; no operation
+is replayed. Normal expected-account and exact-target checks still run afterward.
+
+`--json`, nonterminal stdin, `proxy`, `ssh-config` and `logs` never start automatic
+login. Guided setup invokes the same preflight on its recorded source profile
+before executing stages, including resume; recorded `setup status` never invokes
+it. Setup's cloud/local-publication confirmations remain independent of login.

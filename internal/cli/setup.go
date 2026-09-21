@@ -3,7 +3,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/JosephWest2/cloud_dev/internal/identity"
 	"io"
 	"os"
 	"strings"
@@ -176,7 +178,20 @@ func runSetupCommand(ctx context.Context, args []string, stdout, stderr io.Write
 	if runner == nil {
 		runner = setup.Run
 	}
-	return emit(runner(ctx, options, setup.Dependencies{Input: os.Stdin, Output: stderr, Terminal: downInputIsTerminal}))
+	deps := setup.Dependencies{Input: os.Stdin, Output: stderr, Terminal: downInputIsTerminal}
+	if !jsonMode && downInputIsTerminal() {
+		deps.Authenticate = func(ctx context.Context, in setup.Inputs) error {
+			c := in.Config()
+			c.AWSProfile = in.SourceProfile
+			err := identity.RefreshLogin(ctx, c, os.Stdin, stderr)
+			var failure *identity.Failure
+			if errors.As(err, &failure) {
+				return &setup.Failure{Code: failure.Code, Message: failure.Message, Exit: 1}
+			}
+			return err
+		}
+	}
+	return emit(runner(ctx, options, deps))
 }
 
 const setupHelp = `Usage: devbox setup [options]

@@ -45,8 +45,11 @@ and source/artifact bytes together. Production use should select a tested releas
 
 ## Create a foundation
 
-First authenticate an existing AWS profile with your normal AWS login or SSO
-workflow. Account creation and interactive authentication remain with AWS tools.
+First configure an existing AWS profile with your normal AWS login or SSO
+workflow. Setup automatically invokes the matching AWS browser login when a
+recognized session is expired or missing. Complete authentication in the browser;
+setup then verifies the selected account as usual. `--json` requires authentication
+beforehand. Account creation and sign-in remain with AWS tools.
 Then run:
 
 ```sh

@@ -45,6 +45,9 @@ func safeError(err error) error {
 }
 
 func Load(ctx context.Context, c config.Config) (aws.Config, error) {
+	if err, ok := ctx.Value(loginFailureKey{}).(error); ok {
+		return aws.Config{}, err
+	}
 	opts := []func(*awsconfig.LoadOptions) error{
 		awsconfig.WithRegion(c.Region),
 		awsconfig.WithLogger(logging.Nop{}),
