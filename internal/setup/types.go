@@ -144,6 +144,7 @@ type Cloud interface {
 }
 
 type Dependencies struct {
+	Authenticate        func(context.Context, Inputs) error
 	Run                 RunProcess
 	Cloud               Cloud
 	Input               io.Reader

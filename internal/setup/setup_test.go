@@ -733,3 +733,35 @@ func TestGeneratedOpenTofuConfiguration(t *testing.T) {
 		}
 	}
 }
+
+func TestResumeAuthenticationFailureStopsStages(t *testing.T) {
+	e, f := fixtureEngine(t)
+	e.root = filepath.Join(t.TempDir(), "devbox", "setup")
+	e.workspace = filepath.Join(e.root, e.j.ID)
+	if err := e.save(); err != nil {
+		t.Fatal(err)
+	}
+	deps := e.deps
+	deps.StateHome = filepath.Dir(filepath.Dir(e.root))
+	deps.Terminal = func() bool { return true }
+	calls := 0
+	deps.Authenticate = func(_ context.Context, in Inputs) error {
+		calls++
+		if in.SourceProfile != "source" {
+			t.Fatalf("unexpected source %q", in.SourceProfile)
+		}
+		return context.Canceled
+	}
+	options := e.options
+	options.Resume = e.j.ID
+	r := Run(context.Background(), options, deps)
+	if calls != 1 || r.ExitCode != 4 || len(f.calls) != 0 {
+		t.Fatalf("auth=%d result=%+v cloud=%v", calls, r, f.calls)
+	}
+	options.Resume = ""
+	options.Status = e.j.ID
+	r = Run(context.Background(), options, deps)
+	if !r.OK || calls != 1 {
+		t.Fatal("status attempted authentication")
+	}
+}

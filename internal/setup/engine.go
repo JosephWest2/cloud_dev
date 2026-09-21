@@ -114,6 +114,9 @@ func Run(ctx context.Context, options Options, deps Dependencies) Result {
 	} else {
 		err = e.choose(ctx)
 	}
+	if err == nil && deps.Authenticate != nil {
+		err = deps.Authenticate(ctx, e.j.Inputs)
+	}
 	if err == nil {
 		err = e.execute(ctx)
 	}

@@ -26,7 +26,7 @@ deployments. The owner is a fixed identifier you choose, not an inferred local
 username or a changing SSO/role session name. Keep it across reinstalls and
 credential refreshes so future inventory can find the same machines.
 
-Authenticate using your normal AWS setup. For IAM Identity Center profiles,
+Configure your AWS profile using your normal AWS setup. For IAM Identity Center profiles,
 the AWS CLI can configure and refresh a login:
 
 ```sh
@@ -80,6 +80,24 @@ A role profile may explicitly use `credential_source=Environment`. If no profile
 is selected, the normal SDK default chain applies, including environment
 credentials. `doctor` always verifies the resulting account with STS
 `GetCallerIdentity`. The selection behavior is tested against the pinned SDK.
+When an interactive command finds an expired or missing browser session, devbox
+runs `aws login --profile SOURCE` (or `aws sso login --profile SOURCE` for IAM
+Identity Center). AWS CLI opens the browser; finish signing in and devbox continues
+with its normal account and resource checks. Valid sessions do not prompt again.
+Devbox follows `source_profile` and the documented `aws configure
+export-credentials` bridge to authenticate the source, rather than the operator
+role. It does not infer a login method for static credentials, environment-only
+credentials, or arbitrary credential helpers. Network and permission errors do
+not start login.
+
+Automatic login requires terminal stdin and is disabled for `--json`, `proxy`,
+`ssh-config`, and `logs`. Scripts must authenticate beforehand. The credential
+probe has a 15-second limit; browser login has a separate five-minute limit before
+the ordinary command deadline starts. Ctrl-C stops login. Login output goes to
+stderr, while credential-export output is discarded. A failed login prevents AWS
+client loading; commands are never replayed after a mutation. AWS CLI v2 must be
+on PATH for this convenience; missing tools retain ordinary credential diagnostics.
+
 Browser-based `aws login` profiles need the documented [process bridge](setup.md#4-configure-the-restricted-operator-and-run-doctor) when used as the operator role's source with the pinned Go SDK; `doctor` provides an actionable error.
 See [AWS SDK configuration](https://docs.aws.amazon.com/sdk-for-go/v2/developer-guide/configure-gosdk.html).
 
@@ -99,7 +117,8 @@ identity fails, unless the deadline expires or the command is canceled; remainin
 executable probes are then explicitly skipped.
 Invalid configuration/profile schemas prevent even the STS identity call.
 A missing/wrong-scope/unsupported manifest or failed identity check prevents
-deployed-resource calls. `doctor` is read-only; `up` and `down` perform lifecycle
+deployed-resource calls. `doctor` makes no AWS resource mutations; interactive authentication can refresh
+local AWS session credentials. `up` and `down` perform lifecycle
 mutations, and `exec` submits a remote command and its durable request.
 
 Install the **AWS Session Manager plugin**, then verify
@@ -129,8 +148,8 @@ runtime bootstrap/SSH, or prove effective IAM authorization. Historical foundati
 acceptance is [documented separately](acceptance/07-foundation.md).
 
 Checks default to a 20-second deadline (`--timeout` accepts up to 5 minutes).
-Each local executable probe is capped at 5 seconds within that deadline. Refresh expired
-credentials outside devbox, then retry. Credential helpers must be ready to run
+Each local executable probe is capped at 5 seconds within that deadline. For noninteractive commands, refresh expired credentials outside devbox, then
+retry. Credential helpers must be ready to run
 without an interactive prompt: their stderr is discarded to keep arbitrary
 provider output and secrets out of devbox diagnostics. Raw TOML/JSON parser
 errors, SDK errors, account ARNs, and credential values are never printed.

@@ -140,6 +140,7 @@ func runCleanupCommand(ctx context.Context, args []string, stdout, stderr io.Wri
 			return fail(err.Error())
 		}
 	}
+	ctx = prepareCommandLogin(ctx, path, overrides, "cleanup", jsonMode, stderr)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	if runner == nil {

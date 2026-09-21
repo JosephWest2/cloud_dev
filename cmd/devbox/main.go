@@ -33,7 +33,8 @@ func main() {
 func runCLI(args []string) int {
 	// Keep SDK credential_process stderr outside the public diagnostic stream.
 	// The SDK explicitly gives helpers os.Stderr (including arbitrary provider
-	// errors and MFA prompts). devbox requires authentication before invocation.
+	// errors and MFA prompts). Interactive browser login uses a separate, explicit
+	// AWS CLI process attached to the retained terminal writer.
 	// Set this once, before any goroutines; retain the real writer for our own
 	// allowlisted diagnostics. Do not mutate process streams inside library code.
 	diagnostics := os.Stderr

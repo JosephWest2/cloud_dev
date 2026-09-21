@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"time"
@@ -61,6 +62,10 @@ func runCleanup(ctx context.Context, path string, overrides config.Overrides, dr
 	}
 	a, err := deps.LoadAWS(ctx, c)
 	if err != nil {
+		var authentication *identity.Failure
+		if errors.As(err, &authentication) && authentication.Code == "timeout" {
+			return fail("cleanup_interrupted", "AWS login timed out or was interrupted; retry cleanup.", 4)
+		}
 		return fail("cleanup_failed", "Cannot load AWS credentials; check the selected profile and refresh its credentials.", 1)
 	}
 	if ctx.Err() != nil {

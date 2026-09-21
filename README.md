@@ -27,12 +27,15 @@ artifacts. Releases predating guided setup do not contain these assets.
 No source checkout, Go, Python or manual artifact build is needed for this path.
 See [Arch packages](docs/arch-packaging.md) for direct package/source installation.
 
-Authenticate an existing AWS profile with your usual AWS login or SSO workflow,
-then run:
+Configure an AWS browser-login or SSO profile, then run:
 
 ```sh
 devbox setup --aws-profile YOUR_SOURCE_PROFILE
 ```
+
+If the configured browser session is missing or expired, setup opens AWS login
+and continues after you sign in. Interactive worker commands do the same; JSON
+and scripted commands require authentication beforehand.
 
 The wizard asks for your expected account, deployment and stable owner, prepares
 a dedicated SSH key and configuration, shows the AWS changes for approval,
